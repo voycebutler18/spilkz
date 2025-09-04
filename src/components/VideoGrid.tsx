@@ -1,7 +1,7 @@
+// src/components/VideoGrid.tsx
 import { useState, useRef, useEffect } from 'react';
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { 
   Play, 
@@ -63,12 +63,9 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
   const [newComment, setNewComment] = useState('');
   const [loadingComments, setLoadingComments] = useState(false);
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
-  
-  // Generate consistent session ID for this page load
   const sessionIdRef = useRef(`${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
 
   useEffect(() => {
-    // Initialize stats
     const stats: any = {};
     spliks.forEach(splik => {
       stats[splik.id] = {
@@ -78,11 +75,8 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
       };
     });
     setVideoStats(stats);
-
-    // Check liked status
     checkLikedStatus();
 
-    // Subscribe to realtime updates with better filtering
     const channel = supabase
       .channel('video-grid-updates')
       .on(
@@ -95,7 +89,6 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
         (payload) => {
           if (payload.new) {
             const newData = payload.new as any;
-            // Update stats for the specific video
             setVideoStats(prev => ({
               ...prev,
               [newData.id]: {
@@ -136,25 +129,20 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
       video.pause();
       setPlayingVideo(null);
     } else {
-      // Pause any currently playing video
       if (playingVideo && videoRefs.current[playingVideo]) {
         videoRefs.current[playingVideo].pause();
       }
-      
-      // Reset video to start and play
       video.currentTime = 0;
       video.play();
       setPlayingVideo(splikId);
-      
-      // Track view with consistent session ID and get current user
+
       const { data: { user } } = await supabase.auth.getUser();
       const result = await supabase.rpc('increment_view_with_session', {
         p_splik_id: splikId,
         p_session_id: sessionIdRef.current,
         p_viewer_id: user?.id || null
       });
-      
-      // Update local view count if view was tracked
+
       if (result.data) {
         const viewData = result.data as any;
         if (viewData.new_view && viewData.view_count) {
@@ -173,11 +161,9 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
   const handleTimeUpdate = (splikId: string) => {
     const video = videoRefs.current[splikId];
     if (!video) return;
-
-    // Stop video after 3 seconds
     if (video.currentTime >= 3) {
       video.pause();
-      video.currentTime = 0; // Reset to beginning
+      video.currentTime = 0;
       setPlayingVideo(null);
     }
   };
@@ -288,7 +274,6 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
     const diff = Date.now() - new Date(date).getTime();
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const days = Math.floor(hours / 24);
-    
     if (days > 0) return `${days}d ago`;
     if (hours > 0) return `${hours}h ago`;
     return 'Just now';
@@ -303,14 +288,14 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
               <video
                 ref={(el) => { if (el) videoRefs.current[splik.id] = el; }}
                 src={splik.video_url}
-                poster={splik.thumbnail_url}
+                poster={splik.thumbnail_url || undefined}
                 className="w-full h-full object-cover"
                 loop={false}
                 muted={mutedVideos.has(splik.id)}
                 playsInline
                 onTimeUpdate={() => handleTimeUpdate(splik.id)}
               />
-              
+
               {/* Live View Count Badge */}
               <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/70 backdrop-blur px-3 py-1.5 rounded-full">
                 <Eye className="h-4 w-4 text-white" />
@@ -319,7 +304,7 @@ export function VideoGrid({ spliks, showCreatorInfo = true, onDeleteComment }: V
                 </span>
                 <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
               </div>
-              
+
               {/* Play/Pause Overlay */}
               <div 
                 className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
