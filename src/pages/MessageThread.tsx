@@ -33,18 +33,11 @@ export default function MessageThread() {
     return me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
-  // compute the latest outgoing message that has been read
-  const lastSeenOutgoing = useMemo(() => {
-    if (!me) return null;
-    const readMine = msgs.filter((m) => m.sender_id === me && m.read_at);
-    if (!readMine.length) return null;
-    readMine.sort((a, b) => {
-      const ta = new Date(a.read_at || a.created_at).getTime();
-      const tb = new Date(b.read_at || b.created_at).getTime();
-      return ta - tb;
-    });
-    return readMine[readMine.length - 1];
-  }, [msgs, me]);
+  // The absolute last message in the thread
+  const lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
+  // Only show "Seen" if the last message was sent by me AND has read_at
+  const showSeenOnLast =
+    !!lastMsg && !!me && lastMsg.sender_id === me && !!lastMsg.read_at;
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
@@ -69,12 +62,15 @@ export default function MessageThread() {
 
       setMsgs(data || []);
 
-      // mark my incoming as read
+      // Mark incoming (to me) as read when I open the thread
       const toMark = (data || [])
         .filter((m) => m.recipient_id === me && !m.read_at)
         .map((m) => m.id);
       if (toMark.length) {
-        await supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", toMark);
+        await supabase
+          .from("messages")
+          .update({ read_at: new Date().toISOString() })
+          .in("id", toMark);
       }
     };
 
@@ -82,20 +78,21 @@ export default function MessageThread() {
 
     const channel = supabase
       .channel(`dm-${threadKey}`, { config: { presence: { key: me } } })
-      // new messages
+      // new message
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `thread_key=eq.${threadKey}` },
         (payload) => {
           const m = payload.new as Msg;
           setMsgs((prev) => [...prev, m]);
-          // auto-mark incoming as read when viewing
+
+          // If I’m viewing and receive a message, mark it read immediately
           if (m.recipient_id === me && !m.read_at) {
             supabase.from("messages").update({ read_at: new Date().toISOString() }).eq("id", m.id);
           }
         }
       )
-      // read receipts / edits
+      // updates (read receipts etc.)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "messages", filter: `thread_key=eq.${threadKey}` },
@@ -141,15 +138,10 @@ export default function MessageThread() {
     const sendTyping = (typing: boolean) =>
       ch.send({ type: "broadcast", event: "typing", payload: { userId: me, typing } });
 
-    const start = setTimeout(() => {
-      if (text) sendTyping(true);
-    }, 120);
+    const start = setTimeout(() => { if (text) sendTyping(true); }, 120);
     const stop = setTimeout(() => sendTyping(false), 900);
 
-    return () => {
-      clearTimeout(start);
-      clearTimeout(stop);
-    };
+    return () => { clearTimeout(start); clearTimeout(stop); };
   }, [text, me, otherId, threadKey]);
 
   const send = async () => {
@@ -189,7 +181,7 @@ export default function MessageThread() {
       return;
     }
 
-    // fallback fetch if realtime isn’t configured
+    // fallback refresh if realtime isn’t configured
     const { data: latest, error: selErr } = await supabase
       .from("messages")
       .select("*")
@@ -217,6 +209,9 @@ export default function MessageThread() {
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {msgs.map((m) => {
               const mine = m.sender_id === me;
+              const isLast = lastMsg && m.id === lastMsg.id;
+              const timestamp = new Date(m.created_at).toLocaleTimeString();
+
               return (
                 <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                   <div className="max-w-[80vw] sm:max-w-[60%]">
@@ -232,18 +227,13 @@ export default function MessageThread() {
                     <div
                       className={["mt-1 text-[10px] text-muted-foreground", mine ? "text-right" : "text-left"].join(" ")}
                     >
-                      {new Date(m.created_at).toLocaleTimeString()}
+                      {timestamp}
+                      {mine && isLast && m.read_at ? " • Seen" : ""}
                     </div>
                   </div>
                 </div>
               );
             })}
-            {/* Seen indicator under latest outgoing read message */}
-            {lastSeenOutgoing && (
-              <div className="text-[10px] text-muted-foreground text-right pr-1">
-                Seen {new Date(lastSeenOutgoing.read_at || lastSeenOutgoing.created_at).toLocaleTimeString()}
-              </div>
-            )}
             <div ref={bottomRef} />
           </div>
 
@@ -255,7 +245,7 @@ export default function MessageThread() {
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") send();
-              }}  // <-- FIXED: ends with }}
+              }}
             />
             <Button onClick={send}>Send</Button>
           </div>
