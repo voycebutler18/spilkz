@@ -1,0 +1,13 @@
+project_id = "izeheflwfguwinizihmx"
+
+[functions.send-welcome-email]
+verify_jwt = false
+
+[functions.create-boost-payment]
+verify_jwt = true
+
+[functions.confirm-boost-payment]
+verify_jwt = true
+
+[functions.check-boost-expiration]
+verify_jwt = false
