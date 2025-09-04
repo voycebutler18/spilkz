@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom'; // ADDED useNavigate
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import Footer from "@/components/layout/Footer";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, Eye } from "lucide-react";
+import { MapPin, Calendar, Film, Users, Eye, MessageSquare } from "lucide-react"; // ADDED MessageSquare
 import { toast } from "sonner";
 
 interface Profile {
@@ -32,6 +32,7 @@ interface Profile {
 
 export function CreatorProfile() {
   const { username } = useParams();
+  const navigate = useNavigate(); // ADDED navigate
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +107,7 @@ export function CreatorProfile() {
         .eq('username', username)
         .single();
 
-      if (error) throw error;
+    if (error) throw error;
       setProfile(data);
       
       if (data) {
@@ -211,11 +212,22 @@ export function CreatorProfile() {
                 </div>
                 
                 {currentUserId !== profile.id && (
-                  <FollowButton 
-                    profileId={profile.id}
-                    username={profile.username}
-                    className="ml-4"
-                  />
+                  <>
+                    <FollowButton 
+                      profileId={profile.id}
+                      username={profile.username}
+                      className="ml-4"
+                    />
+                    {/* ADDED message button next to Follow */}
+                    <Button
+                      variant="secondary"
+                      className="ml-2 flex items-center gap-2"
+                      onClick={() => navigate(`/messages/${profile.id}`)}
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      Message
+                    </Button>
+                  </>
                 )}
               </div>
               
