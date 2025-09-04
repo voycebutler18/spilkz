@@ -54,9 +54,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isMuted, setIsMuted] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
-  const [commentsCount, setCommentsCount] = useState(
-    splik.comments_count || 0
-  );
+  const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
   const [viewCount, setViewCount] = useState(
     (splik as any).view_count || splik.views || 0
   );
@@ -72,9 +70,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   useEffect(() => {
     const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user);
 
       if (user) {
@@ -87,6 +83,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         setIsLiked(!!data);
       }
     };
+
     getUser();
     checkIfFavorited();
 
@@ -175,9 +172,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const checkIfFavorited = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     const { data } = await supabase
@@ -191,9 +186,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const toggleFavorite = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
       toast({
@@ -252,23 +245,20 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     });
   };
 
-  const handleReport = () => {
-    setShowReportModal(true);
-  };
+  const handleReport = () => setShowReportModal(true);
 
-  const handleBlock = () => {
+  const handleBlock = () =>
     toast({
       title: "User blocked",
       description: "You won't see content from this user anymore",
     });
-  };
 
   const formatCount = (count: number | undefined | null) => {
     const safe = count ?? 0;
     if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(1)}M`;
     if (safe >= 1_000) return `${(safe / 1_000).toFixed(1)}K`;
     return safe.toString();
-  };
+    };
 
   const handlePlayToggle = () => {
     const video = videoRef.current;
@@ -288,6 +278,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     const video = videoRef.current;
     if (!video) return;
 
+    // Cap preview at 3s
     if (video.currentTime >= 3) {
       video.pause();
       video.currentTime = 0;
@@ -315,6 +306,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
+      {/* BLACK MASK to cover any stray "0" at the very top-left */}
+      <div className="pointer-events-none absolute top-1 left-2 h-5 w-10 bg-black rounded z-30" />
+
       {/* Boosted Badge */}
       {isBoosted && (
         <div className="absolute top-3 left-3 z-20">
@@ -330,13 +324,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         className="relative bg-black overflow-hidden group"
         style={{ height: videoHeight, maxHeight: "80vh" }}
       >
-        {/* --- NEW: watermark/logo always visible at top center --- */}
-        <img
-          src="/placeholder.svg" // replace with /logo.svg if you prefer
-          alt="Splikz"
-          className="pointer-events-none select-none absolute top-2 left-1/2 -translate-x-1/2 h-7 opacity-90 drop-shadow-md z-20"
-        />
-
         <video
           ref={videoRef}
           src={splik.video_url}
@@ -371,7 +358,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               toggleMute();
             }}
           >
-            {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+            {isMuted ? (
+              <VolumeX className="h-4 w-4" />
+            ) : (
+              <Volume2 className="h-4 w-4" />
+            )}
           </Button>
         )}
 
