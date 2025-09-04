@@ -32,7 +32,7 @@ interface Profile {
 
 export function CreatorProfile() {
   const { username } = useParams();
-  const navigate = useNavigate(); // ADDED navigate
+  const navigate = useNavigate(); // ADDED
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +107,7 @@ export function CreatorProfile() {
         .eq('username', username)
         .single();
 
-    if (error) throw error;
+      if (error) throw error;
       setProfile(data);
       
       if (data) {
@@ -212,27 +212,30 @@ export function CreatorProfile() {
                 </div>
                 
                 {currentUserId !== profile.id && (
-                  <>
-                    <FollowButton 
-                      profileId={profile.id}
-                      username={profile.username}
-                      className="ml-4"
-                    />
-                    {/* ADDED message button next to Follow */}
-                    <Button
-                      variant="secondary"
-                      className="ml-2 flex items-center gap-2"
-                      onClick={() => navigate(`/messages/${profile.id}`)}
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                      Message
-                    </Button>
-                  </>
+                  <FollowButton 
+                    profileId={profile.id}
+                    username={profile.username}
+                    className="ml-4"
+                  />
                 )}
               </div>
               
               {profile.bio && (
                 <p className="text-foreground mb-4">{profile.bio}</p>
+              )}
+
+              {/* ADDED: separate Message button under bio, visible to other users */}
+              {currentUserId !== profile.id && (
+                <div className="mb-4">
+                  <Button
+                    variant="secondary"
+                    className="flex items-center gap-2"
+                    onClick={() => navigate(`/messages/${profile.id}`)}
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    Message
+                  </Button>
+                </div>
               )}
               
               <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-4">
