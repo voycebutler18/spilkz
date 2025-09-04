@@ -1,4 +1,6 @@
+// src/components/CommentsModal.tsx
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -49,15 +51,16 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
       fetchComments();
       getCurrentUser();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, splikId]);
 
   const getCurrentUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
         .single();
       setCurrentUser({ ...user, profile });
     }
@@ -67,32 +70,28 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('comments')
-        .select('*')
-        .eq('splik_id', splikId)
-        .order('created_at', { ascending: false });
+        .from("comments")
+        .select("*")
+        .eq("splik_id", splikId)
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
 
-      // Fetch profiles for each comment
+      // attach profiles
       const commentsWithProfiles = await Promise.all(
         (data || []).map(async (comment) => {
           const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', comment.user_id)
+            .from("profiles")
+            .select("*")
+            .eq("id", comment.user_id)
             .single();
-          
-          return {
-            ...comment,
-            profile
-          };
+          return { ...comment, profile };
         })
       );
 
       setComments(commentsWithProfiles);
     } catch (error: any) {
-      console.error('Error fetching comments:', error);
+      console.error("Error fetching comments:", error);
       toast({
         title: "Error",
         description: "Failed to load comments",
@@ -110,32 +109,31 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
     setSubmitting(true);
     try {
       const { data, error } = await supabase
-        .from('comments')
+        .from("comments")
         .insert({
           splik_id: splikId,
           user_id: currentUser.id,
-          content: newComment.trim()
+          content: newComment.trim(),
         })
         .select()
         .single();
 
       if (error) throw error;
 
-      // Add the new comment with profile to the list
-      const newCommentWithProfile = {
+      const newCommentWithProfile: Comment = {
         ...data,
-        profile: currentUser.profile
+        profile: currentUser.profile,
       };
 
       setComments([newCommentWithProfile, ...comments]);
       setNewComment("");
-      
+
       toast({
         title: "Comment posted!",
         description: "Your comment has been added",
       });
     } catch (error: any) {
-      console.error('Error posting comment:', error);
+      console.error("Error posting comment:", error);
       toast({
         title: "Error",
         description: "Failed to post comment",
@@ -148,10 +146,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
 
   const getDisplayName = (profile: any) => {
     if (!profile) return "Unknown User";
-    return profile.display_name || 
-           profile.first_name || 
-           profile.username || 
-           "Unknown User";
+    return profile.display_name || profile.first_name || profile.username || "Unknown User";
   };
 
   const getInitials = (profile: any) => {
@@ -159,16 +154,22 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
     return name.substring(0, 2).toUpperCase();
   };
 
+  // Build best route for a commenter
+  const profileHref = (c: Comment) => {
+    if (c.profile?.username) return `/creator/${c.profile.username}`;
+    return `/profile/${c.user_id}`;
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md max-h-[80vh] flex flex-col">
+      <DialogContent className="sm:max-w-md max-h[80vh] max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Comments</DialogTitle>
           <DialogDescription>
-            {comments.length} {comments.length === 1 ? 'comment' : 'comments'} on this splik
+            {comments.length} {comments.length === 1 ? "comment" : "comments"} on this splik
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
           {/* Comments list */}
           <ScrollArea className="flex-1 pr-4">
@@ -184,20 +185,34 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
               <div className="space-y-4">
                 {comments.map((comment) => (
                   <div key={comment.id} className="flex space-x-3">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={comment.profile?.avatar_url} />
-                      <AvatarFallback>{getInitials(comment.profile)}</AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 space-y-1">
+                    {/* Clickable avatar */}
+                    <Link
+                      to={profileHref(comment)}
+                      onClick={onClose}
+                      className="shrink-0 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary rounded-full"
+                      aria-label={`Go to ${getDisplayName(comment.profile)}'s profile`}
+                    >
+                      <Avatar className="h-8 w-8">
+                        <AvatarImage src={comment.profile?.avatar_url} />
+                        <AvatarFallback>{getInitials(comment.profile)}</AvatarFallback>
+                      </Avatar>
+                    </Link>
+
+                    <div className="flex-1 space-y-1 min-w-0">
                       <div className="flex items-center space-x-2">
-                        <span className="font-semibold text-sm">
+                        {/* Clickable display name */}
+                        <Link
+                          to={profileHref(comment)}
+                          onClick={onClose}
+                          className="font-semibold text-sm hover:underline truncate"
+                        >
                           {getDisplayName(comment.profile)}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
+                        </Link>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
                           {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
                         </span>
                       </div>
-                      <p className="text-sm">{comment.content}</p>
+                      <p className="text-sm break-words">{comment.content}</p>
                     </div>
                   </div>
                 ))}
@@ -219,16 +234,8 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
                 disabled={submitting}
                 className="flex-1"
               />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={!newComment.trim() || submitting}
-              >
-                {submitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
+              <Button type="submit" size="icon" disabled={!newComment.trim() || submitting}>
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </form>
           ) : (
