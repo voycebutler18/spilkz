@@ -29,6 +29,10 @@ import ForCreators from "./pages/business/ForCreators";
 import Press from "./pages/business/Press";
 import Prompts from "./pages/Prompts";
 
+// ADDED: messaging pages
+import MessagesInbox from "./pages/MessagesInbox";
+import MessageThread from "./pages/MessageThread";
+
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -62,6 +66,11 @@ const App = () => (
           <Route path="/brands" element={<ForBrands />} />
           <Route path="/creators" element={<ForCreators />} />
           <Route path="/press" element={<Press />} />
+
+          {/* ADDED: messaging routes */}
+          <Route path="/messages" element={<MessagesInbox />} />
+          <Route path="/messages/:otherId" element={<MessageThread />} />
+
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
