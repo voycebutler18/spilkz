@@ -301,6 +301,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
+      {/* CARD-LEVEL MASK — covers ANY stray text (like that 0) above the video */}
+      <div className="absolute inset-x-0 top-0 h-4 bg-black z-[25] pointer-events-none" />
+
       {/* BOOSTED BADGE */}
       {isBoosted && (
         <div className="absolute top-3 left-3 z-20">
@@ -316,7 +319,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         className="relative bg-black overflow-hidden group"
         style={{ height: videoHeight, maxHeight: "80vh" }}
       >
-        {/* FULL-WIDTH TOP STRIP — covers any stray characters (like that “0”) */}
+        {/* IN-VIDEO MASK — keep the top of the video itself black */}
         <div className="absolute inset-x-0 top-0 h-8 bg-black z-[30] pointer-events-none" />
 
         <video
@@ -357,7 +360,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         )}
 
-        {/* Views badge (kept visible; sits above the black strip) */}
+        {/* Views badge (z-40 so it stays above the masks) */}
         <div className="absolute top-3 left-3 z-[40] flex items-center gap-2 bg-black/70 backdrop-blur px-3 py-1.5 rounded-full">
           <Eye className="h-4 w-4 text-white" />
           <span className="text-white font-semibold text-sm">
