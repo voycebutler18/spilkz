@@ -67,7 +67,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Get current user + initial liked state
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user);
@@ -138,7 +137,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         await supabase.from("likes").insert({ user_id: currentUser.id, splik_id: splik.id });
       }
       onSplik?.();
-    } catch (e) {
+    } catch {
       setIsLiked(!next);
       setLikesCount((p) => (!next ? p + 1 : Math.max(0, p - 1)));
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
@@ -236,7 +235,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* Boosted Badge */}
       {isBoosted && (
         <div className="absolute top-3 left-3 z-20">
           <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
@@ -251,18 +249,19 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         className="relative bg-black group z-10 overflow-visible"
         style={{ height: videoHeight, maxHeight: "80vh" }}
       >
-        {/* TOP MASK — extended wider & taller to cover any stray pixel/char */}
+        {/* TOP MASK — extended to fully cover any stray content */}
         <div className="pointer-events-none absolute -top-8 -left-8 -right-8 h-12 bg-black z-[60]" />
 
-        {/* Center Watermark (brand) — super subtle; fades out on hover/play */}
+        {/* WATERMARK (logo) — stays visible before play, no fade on hover */}
         {!isPlaying && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-20 transition-opacity duration-300 group-hover:opacity-0">
-            {/* If you have a real file, replace with:
-                <img src="/logo.svg" alt="Splikz" className="w-28 opacity-15" />
-             */}
-            <div className="select-none text-4xl sm:text-5xl font-extrabold opacity-10 bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-              Splikz
-            </div>
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-50">
+            {/* Put your file in /public/splikz-logo.svg */}
+            <img
+              src="/splikz-logo.svg"
+              alt="Splikz"
+              className="w-28 sm:w-36 opacity-30"
+              draggable={false}
+            />
           </div>
         )}
 
@@ -313,14 +312,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
         </div>
 
-        {/* Amplified Badge */}
         {splik.amplified_until && new Date(splik.amplified_until) > new Date() && (
           <Badge className="absolute top-3 right-3 bg-gradient-to-r from-neon to-violet-glow text-white border-0 z-40">
             Amplified
           </Badge>
         )}
 
-        {/* Tag */}
         {splik.tag && (
           <div className="absolute bottom-3 left-3 z-40">
             <Badge variant="secondary" className="bg-background/80 backdrop-blur">
@@ -330,7 +327,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         )}
       </div>
 
-      {/* Creator Info + Menu */}
+      {/* Creator Row */}
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
