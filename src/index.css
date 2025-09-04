@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Splikz Brand Colors */
+    --violet: 272 91% 58%;
+    --violet-glow: 272 100% 75%;
+    --teal: 174 100% 45%;
+    --teal-glow: 174 100% 65%;
+    --slate: 220 14% 20%;
+    --neon: 45 100% 51%;
+    
+    /* Core System Colors */
+    --background: 0 0% 100%;
+    --foreground: 220 14% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 14% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 14% 20%;
+
+    --primary: 272 91% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 174 100% 45%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 14% 46%;
+
+    --accent: 174 100% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 220 14% 91%;
+    --input: 220 14% 91%;
+    --ring: 272 91% 58%;
+
+    --radius: 0.75rem;
+    
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--violet)), hsl(var(--teal)));
+    --gradient-subtle: linear-gradient(180deg, hsl(var(--background)), hsl(var(--muted)));
+    --gradient-amplified: linear-gradient(135deg, hsl(var(--neon)), hsl(var(--violet-glow)));
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(var(--slate) / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(var(--slate) / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(var(--slate) / 0.1);
+    --shadow-glow: 0 0 40px hsl(var(--violet-glow) / 0.3);
+    
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 220 14% 26%;
+    --sidebar-primary: 272 91% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 95%;
+    --sidebar-accent-foreground: 220 14% 20%;
+    --sidebar-border: 220 14% 91%;
+    --sidebar-ring: 272 91% 58%;
+  }
+
+  .dark {
+    /* Dark mode overrides */
+    --background: 220 14% 8%;
+    --foreground: 0 0% 95%;
+
+    --card: 220 14% 12%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 220 14% 12%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 272 91% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 174 100% 45%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 14% 18%;
+    --muted-foreground: 220 14% 65%;
+
+    --accent: 174 100% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 18%;
+    --input: 220 14% 18%;
+    --ring: 272 91% 58%;
+    
+    /* Dark mode gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--violet)), hsl(var(--teal)));
+    --gradient-subtle: linear-gradient(180deg, hsl(var(--background)), hsl(220 14% 12%));
+    --gradient-amplified: linear-gradient(135deg, hsl(var(--neon)), hsl(var(--violet-glow)));
+    
+    /* Dark mode shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.1);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.2);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.3);
+    --shadow-glow: 0 0 40px hsl(var(--violet-glow) / 0.5);
+    
+    --sidebar-background: 220 14% 10%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 272 91% 58%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 14% 15%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 220 14% 15%;
+    --sidebar-ring: 272 91% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
