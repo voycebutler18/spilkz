@@ -302,7 +302,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       )}
     >
       {/* CARD-LEVEL MASK — covers ANY stray text (like that 0) above the video */}
-      <div className="absolute inset-x-0 top-0 h-full bg-black z-[25] pointer-events-none" />
+      <div className="absolute inset-x-0 top-0 h-8 bg-black z-[25] pointer-events-none" />
 
       {/* BOOSTED BADGE */}
       {isBoosted && (
