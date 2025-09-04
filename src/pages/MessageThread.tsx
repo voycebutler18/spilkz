@@ -33,12 +33,11 @@ export default function MessageThread() {
     return me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
-  // compute the latest sent-by-me message that has been read
+  // compute the latest outgoing message that has been read
   const lastSeenOutgoing = useMemo(() => {
     if (!me) return null;
-    const readMine = msgs.filter(m => m.sender_id === me && m.read_at);
+    const readMine = msgs.filter((m) => m.sender_id === me && m.read_at);
     if (!readMine.length) return null;
-    // get most recent by read_at (fallback to created_at)
     readMine.sort((a, b) => {
       const ta = new Date(a.read_at || a.created_at).getTime();
       const tb = new Date(b.read_at || b.created_at).getTime();
@@ -70,15 +69,12 @@ export default function MessageThread() {
 
       setMsgs(data || []);
 
-      // mark my incoming messages as read when I view the thread
+      // mark my incoming as read
       const toMark = (data || [])
-        .filter(m => m.recipient_id === me && !m.read_at)
-        .map(m => m.id);
+        .filter((m) => m.recipient_id === me && !m.read_at)
+        .map((m) => m.id);
       if (toMark.length) {
-        await supabase
-          .from("messages")
-          .update({ read_at: new Date().toISOString() })
-          .in("id", toMark);
+        await supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", toMark);
       }
     };
 
@@ -92,26 +88,26 @@ export default function MessageThread() {
         { event: "INSERT", schema: "public", table: "messages", filter: `thread_key=eq.${threadKey}` },
         (payload) => {
           const m = payload.new as Msg;
-          setMsgs(prev => [...prev, m]);
-          // auto-mark incoming as read if I’m currently viewing the thread
+          setMsgs((prev) => [...prev, m]);
+          // auto-mark incoming as read when viewing
           if (m.recipient_id === me && !m.read_at) {
             supabase.from("messages").update({ read_at: new Date().toISOString() }).eq("id", m.id);
           }
         }
       )
-      // read receipts and edits
+      // read receipts / edits
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "messages", filter: `thread_key=eq.${threadKey}` },
         (payload) => {
           const m = payload.new as Msg;
-          setMsgs(prev => prev.map(p => (p.id === m.id ? m : p)));
+          setMsgs((prev) => prev.map((p) => (p.id === m.id ? m : p)));
         }
       )
       // presence
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState();
-        const others = Object.keys(state).filter(uid => uid === otherId);
+        const others = Object.keys(state).filter((uid) => uid === otherId);
         setOtherOnline(others.length > 0);
       })
       .on("presence", { event: "join" }, ({ key }) => {
@@ -145,10 +141,15 @@ export default function MessageThread() {
     const sendTyping = (typing: boolean) =>
       ch.send({ type: "broadcast", event: "typing", payload: { userId: me, typing } });
 
-    const start = setTimeout(() => { if (text) sendTyping(true); }, 120);
+    const start = setTimeout(() => {
+      if (text) sendTyping(true);
+    }, 120);
     const stop = setTimeout(() => sendTyping(false), 900);
 
-    return () => { clearTimeout(start); clearTimeout(stop); };
+    return () => {
+      clearTimeout(start);
+      clearTimeout(stop);
+    };
   }, [text, me, otherId, threadKey]);
 
   const send = async () => {
@@ -157,7 +158,7 @@ export default function MessageThread() {
 
     // optimistic bubble
     const optimisticId =
-      (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `tmp_${Date.now()}`);
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `tmp_${Date.now()}`;
     const optimisticMsg: Msg = {
       id: optimisticId,
       sender_id: me,
@@ -168,7 +169,7 @@ export default function MessageThread() {
       read_at: null,
     };
 
-    setMsgs(prev => [...prev, optimisticMsg]);
+    setMsgs((prev) => [...prev, optimisticMsg]);
     setText("");
 
     const { error } = await supabase.from("messages").insert({
@@ -178,7 +179,7 @@ export default function MessageThread() {
     });
 
     if (error) {
-      setMsgs(prev => prev.filter(m => m.id !== optimisticId));
+      setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
       console.error(error);
       if (error.message?.toLowerCase().includes("row-level security") || error.code === "42501") {
         toast.error("You’re not allowed to send this message (blocked or not authorized).");
@@ -188,7 +189,7 @@ export default function MessageThread() {
       return;
     }
 
-    // fallback refresh if realtime update is not configured
+    // fallback fetch if realtime isn’t configured
     const { data: latest, error: selErr } = await supabase
       .from("messages")
       .select("*")
@@ -228,14 +229,16 @@ export default function MessageThread() {
                     >
                       {m.body}
                     </div>
-                    <div className={["mt-1 text-[10px] text-muted-foreground", mine ? "text-right" : "text-left"].join(" ")}>
+                    <div
+                      className={["mt-1 text-[10px] text-muted-foreground", mine ? "text-right" : "text-left"].join(" ")}
+                    >
                       {new Date(m.created_at).toLocaleTimeString()}
                     </div>
                   </div>
                 </div>
               );
             })}
-            {/* Single Seen indicator under the latest outgoing message that's been read */}
+            {/* Seen indicator under latest outgoing read message */}
             {lastSeenOutgoing && (
               <div className="text-[10px] text-muted-foreground text-right pr-1">
                 Seen {new Date(lastSeenOutgoing.read_at || lastSeenOutgoing.created_at).toLocaleTimeString()}
@@ -252,7 +255,7 @@ export default function MessageThread() {
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") send();
-              })}
+              }}  // <-- FIXED: ends with }}
             />
             <Button onClick={send}>Send</Button>
           </div>
