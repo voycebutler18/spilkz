@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import MobileMenu from "./MobileMenu";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
+import DMNavButton from "@/components/DM/DMNavButton"; // ADDED
 
 const Header = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -81,6 +82,7 @@ const Header = () => {
           <div className="hidden md:flex items-center space-x-2">
             {user ? (
               <>
+                <DMNavButton /> {/* ADDED — Messages inbox with unread badge */}
                 <Button variant="ghost" asChild>
                   <Link to="/dashboard">
                     <User className="h-4 w-4 mr-2" />
