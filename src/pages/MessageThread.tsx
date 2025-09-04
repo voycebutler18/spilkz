@@ -290,7 +290,7 @@ export default function MessageThread() {
     }
   };
 
-  // 14) Message status (kept, but NOT shown anymore)
+  // 14) Message status (kept function, not shown)
   const getMessageStatus = (msg: Msg) => {
     if (msg.sender_id !== me) return null;
     if (msg.read_at) return <CheckCheck className="w-3 h-3 text-blue-500" />;
@@ -606,7 +606,7 @@ export default function MessageThread() {
                   <Paperclip className="w-4 h-4" />
                 </Button>
 
-                {/* Message input */}
+                {/* Message input — FIXED: black text on white in light mode */}
                 <div className="flex-1 relative">
                   <Input
                     ref={inputRef}
@@ -619,8 +619,11 @@ export default function MessageThread() {
                         send();
                       }
                     }}
-                    className="bg-slate-700/60 border-slate-600/50 text-white placeholder-slate-400 rounded-xl pr-12 h-10 resize-none focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50"
-                    style={{ minHeight: '40px' }}
+                    className="bg-white text-black placeholder-slate-500 border-slate-300
+                               dark:bg-slate-700/60 dark:text-white dark:placeholder-slate-400 dark:border-slate-600/50
+                               rounded-xl pr-12 h-10 resize-none
+                               focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50"
+                    style={{ minHeight: "40px" }}
                   />
                 </div>
 
