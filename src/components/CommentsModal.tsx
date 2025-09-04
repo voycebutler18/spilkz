@@ -1,6 +1,4 @@
-// src/components/CommentsModal.tsx
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -16,19 +14,23 @@ import { Loader2, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow } from "date-fns";
+import { Link } from "react-router-dom";
 
-interface Comment {
+type Profile = {
+  id: string;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  username?: string | null;
+  avatar_url?: string | null;
+};
+
+interface CommentRow {
   id: string;
   content: string;
   created_at: string;
   user_id: string;
-  profile?: {
-    display_name?: string;
-    first_name?: string;
-    last_name?: string;
-    username?: string;
-    avatar_url?: string;
-  };
+  profile?: Profile | null;
 }
 
 interface CommentsModalProps {
@@ -38,98 +40,72 @@ interface CommentsModalProps {
   splikTitle?: string;
 }
 
-const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: CommentsModalProps) => {
-  const [comments, setComments] = useState<Comment[]>([]);
+const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
+  const [comments, setComments] = useState<CommentRow[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<{ id: string; profile?: Profile } | null>(null);
   const { toast } = useToast();
 
+  const buildProfilePath = (p?: Profile | null, fallbackUserId?: string) => {
+    if (p?.username) return `/creator/${p.username}`;
+    return `/profile/${p?.id || fallbackUserId}`;
+  };
+
+  const displayName = (p?: Profile | null) =>
+    p?.display_name || p?.first_name || p?.username || "Unknown User";
+
+  const initials = (p?: Profile | null) =>
+    (displayName(p).substring(0, 2) || "UU").toUpperCase();
+
   useEffect(() => {
-    if (isOpen) {
-      fetchComments();
-      getOrCreateCurrentUserProfile();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, splikId]);
+    if (!isOpen) return;
+    (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth.user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id,display_name,first_name,last_name,username,avatar_url")
+          .eq("id", auth.user.id)
+          .maybeSingle();
+        setCurrentUser({ id: auth.user.id, profile: (profile as Profile) || undefined });
+      }
+    })();
+  }, [isOpen]);
 
-  // Ensure *current* user has a profile row (nice safety for legacy users)
-  const getOrCreateCurrentUserProfile = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+  useEffect(() => {
+    if (!isOpen) return;
+    (async () => {
+      setLoading(true);
+      try {
+        const { data: rows, error } = await supabase
+          .from("comments")
+          .select("*")
+          .eq("splik_id", splikId)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
 
-    // Try to load a profile
-    let { data: profile } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle();
+        const hydrated: CommentRow[] = await Promise.all(
+          (rows || []).map(async (c) => {
+            const { data: p } = await supabase
+              .from("profiles")
+              .select("id,display_name,first_name,last_name,username,avatar_url")
+              .eq("id", c.user_id)
+              .maybeSingle();
+            return { ...c, profile: (p as Profile) || null };
+          })
+        );
 
-    // If none exists (older accounts), create a minimal one
-    if (!profile) {
-      const base =
-        (user.user_metadata as any)?.username ||
-        user.email?.split("@")[0] ||
-        "user";
-      const clean = base.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "user";
-      const candidate = `${clean}${Math.floor(Math.random() * 10000)
-        .toString()
-        .padStart(4, "0")}`;
-
-      const { data: created } = await supabase
-        .from("profiles")
-        .insert({
-          id: user.id,
-          username: candidate,
-          display_name:
-            (user.user_metadata as any)?.full_name || candidate,
-          created_at: new Date().toISOString(),
-        })
-        .select("*")
-        .single();
-
-      profile = created ?? null;
-    }
-
-    setCurrentUser({ ...user, profile });
-  };
-
-  const fetchComments = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("comments")
-        .select("*")
-        .eq("splik_id", splikId)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      // Attach each commenter's profile (if some are missing, links still work via /profile/:id)
-      const commentsWithProfiles = await Promise.all(
-        (data || []).map(async (comment) => {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", comment.user_id)
-            .maybeSingle();
-          return { ...comment, profile: profile || undefined };
-        })
-      );
-
-      setComments(commentsWithProfiles);
-    } catch (error: any) {
-      console.error("Error fetching comments:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load comments",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+        setComments(hydrated);
+      } catch (e) {
+        console.error(e);
+        toast({ title: "Error", description: "Failed to load comments", variant: "destructive" });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [isOpen, splikId, toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,47 +122,20 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
         })
         .select()
         .single();
-
       if (error) throw error;
 
-      const newCommentWithProfile: Comment = {
-        ...data,
-        profile: currentUser.profile,
-      };
-
-      setComments([newCommentWithProfile, ...comments]);
+      setComments((prev) => [
+        { ...(data as any), profile: currentUser.profile || null },
+        ...prev,
+      ]);
       setNewComment("");
-
-      toast({
-        title: "Comment posted!",
-        description: "Your comment has been added",
-      });
-    } catch (error: any) {
-      console.error("Error posting comment:", error);
-      toast({
-        title: "Error",
-        description: "Failed to post comment",
-        variant: "destructive",
-      });
+      toast({ title: "Comment posted!", description: "Your comment has been added" });
+    } catch (e) {
+      console.error(e);
+      toast({ title: "Error", description: "Failed to post comment", variant: "destructive" });
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const getDisplayName = (profile: any) => {
-    if (!profile) return "Unknown User";
-    return profile.display_name || profile.first_name || profile.username || "Unknown User";
-  };
-
-  const getInitials = (profile: any) => {
-    const name = getDisplayName(profile);
-    return name.substring(0, 2).toUpperCase();
-  };
-
-  // Best route for a commenter: /creator/:username if present, otherwise /profile/:id
-  const profileHref = (c: Comment) => {
-    if (c.profile?.username) return `/creator/${c.profile.username}`;
-    return `/profile/${c.user_id}`;
   };
 
   return (
@@ -195,7 +144,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
         <DialogHeader>
           <DialogTitle>Comments</DialogTitle>
           <DialogDescription>
-            {comments.length} {comments.length === 1 ? "comment" : "comments"} on this splik
+            {comments.length} {comments.length === 1 ? "comment" : "comments"}
           </DialogDescription>
         </DialogHeader>
 
@@ -206,54 +155,53 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : comments.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No comments yet. Be the first to comment!
-              </div>
+              <div className="text-center py-8 text-muted-foreground">No comments yet.</div>
             ) : (
               <div className="space-y-4">
-                {comments.map((comment) => (
-                  <div key={comment.id} className="flex space-x-3">
-                    {/* Clickable avatar */}
-                    <Link
-                      to={profileHref(comment)}
-                      onClick={onClose}
-                      className="shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-                      aria-label={`Go to ${getDisplayName(comment.profile)}'s profile`}
-                    >
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={comment.profile?.avatar_url} />
-                        <AvatarFallback>{getInitials(comment.profile)}</AvatarFallback>
-                      </Avatar>
-                    </Link>
+                {comments.map((c) => {
+                  const path = buildProfilePath(c.profile, c.user_id);
+                  return (
+                    <div key={c.id} className="flex space-x-3">
+                      {/* Avatar (clickable) */}
+                      <Link to={path} className="shrink-0">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={c.profile?.avatar_url || undefined} />
+                          <AvatarFallback>{initials(c.profile)}</AvatarFallback>
+                        </Avatar>
+                      </Link>
 
-                    <div className="flex-1 space-y-1 min-w-0">
-                      <div className="flex items-center space-x-2">
-                        {/* Clickable name */}
-                        <Link
-                          to={profileHref(comment)}
-                          onClick={onClose}
-                          className="font-semibold text-sm hover:underline truncate"
-                        >
-                          {getDisplayName(comment.profile)}
-                        </Link>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
-                        </span>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center space-x-2">
+                          {/* Display name (clickable) */}
+                          <Link
+                            to={path}
+                            className="font-semibold text-sm hover:underline"
+                          >
+                            {displayName(c.profile)}
+                          </Link>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDistanceToNow(new Date(c.created_at), { addSuffix: true })}
+                          </span>
+                        </div>
+                        <p className="text-sm">{c.content}</p>
                       </div>
-                      <p className="text-sm break-words">{comment.content}</p>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </ScrollArea>
 
+          {/* Input row */}
           {currentUser ? (
             <form onSubmit={handleSubmit} className="flex items-center space-x-2 pt-4 border-t">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src={currentUser.profile?.avatar_url} />
-                <AvatarFallback>{getInitials(currentUser.profile)}</AvatarFallback>
-              </Avatar>
+              <Link to={buildProfilePath(currentUser.profile, currentUser.id)} className="shrink-0">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={currentUser.profile?.avatar_url || undefined} />
+                  <AvatarFallback>{initials(currentUser.profile)}</AvatarFallback>
+                </Avatar>
+              </Link>
+
               <Input
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
