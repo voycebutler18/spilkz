@@ -15,7 +15,7 @@ const FROM =
   Deno.env.get("RESEND_FROM") || "Splikz <onboarding@resend.dev>";
 
 // If your “Creator Dashboard” route is different, edit this path only.
-const CTA_PATH = "/creator-dashboard"; // e.g. "/dashboard" or "/"
+const CTA_PATH = "/";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
