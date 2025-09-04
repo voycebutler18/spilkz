@@ -49,21 +49,50 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
   useEffect(() => {
     if (isOpen) {
       fetchComments();
-      getCurrentUser();
+      getOrCreateCurrentUserProfile();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, splikId]);
 
-  const getCurrentUser = async () => {
+  // Ensure *current* user has a profile row (nice safety for legacy users)
+  const getOrCreateCurrentUserProfile = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: profile } = await supabase
+    if (!user) return;
+
+    // Try to load a profile
+    let { data: profile } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    // If none exists (older accounts), create a minimal one
+    if (!profile) {
+      const base =
+        (user.user_metadata as any)?.username ||
+        user.email?.split("@")[0] ||
+        "user";
+      const clean = base.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 16) || "user";
+      const candidate = `${clean}${Math.floor(Math.random() * 10000)
+        .toString()
+        .padStart(4, "0")}`;
+
+      const { data: created } = await supabase
         .from("profiles")
+        .insert({
+          id: user.id,
+          username: candidate,
+          display_name:
+            (user.user_metadata as any)?.full_name || candidate,
+          created_at: new Date().toISOString(),
+        })
         .select("*")
-        .eq("id", user.id)
         .single();
-      setCurrentUser({ ...user, profile });
+
+      profile = created ?? null;
     }
+
+    setCurrentUser({ ...user, profile });
   };
 
   const fetchComments = async () => {
@@ -77,15 +106,15 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
 
       if (error) throw error;
 
-      // attach profiles
+      // Attach each commenter's profile (if some are missing, links still work via /profile/:id)
       const commentsWithProfiles = await Promise.all(
         (data || []).map(async (comment) => {
           const { data: profile } = await supabase
             .from("profiles")
             .select("*")
             .eq("id", comment.user_id)
-            .single();
-          return { ...comment, profile };
+            .maybeSingle();
+          return { ...comment, profile: profile || undefined };
         })
       );
 
@@ -154,7 +183,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
     return name.substring(0, 2).toUpperCase();
   };
 
-  // Build best route for a commenter
+  // Best route for a commenter: /creator/:username if present, otherwise /profile/:id
   const profileHref = (c: Comment) => {
     if (c.profile?.username) return `/creator/${c.profile.username}`;
     return `/profile/${c.user_id}`;
@@ -162,7 +191,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md max-h[80vh] max-h-[80vh] flex flex-col">
+      <DialogContent className="sm:max-w-md max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Comments</DialogTitle>
           <DialogDescription>
@@ -171,7 +200,6 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
         </DialogHeader>
 
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
-          {/* Comments list */}
           <ScrollArea className="flex-1 pr-4">
             {loading ? (
               <div className="flex items-center justify-center py-8">
@@ -189,7 +217,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
                     <Link
                       to={profileHref(comment)}
                       onClick={onClose}
-                      className="shrink-0 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary rounded-full"
+                      className="shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
                       aria-label={`Go to ${getDisplayName(comment.profile)}'s profile`}
                     >
                       <Avatar className="h-8 w-8">
@@ -200,7 +228,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
 
                     <div className="flex-1 space-y-1 min-w-0">
                       <div className="flex items-center space-x-2">
-                        {/* Clickable display name */}
+                        {/* Clickable name */}
                         <Link
                           to={profileHref(comment)}
                           onClick={onClose}
@@ -220,7 +248,6 @@ const CommentsModal = ({ isOpen, onClose, splikId, splikTitle = "Splik" }: Comme
             )}
           </ScrollArea>
 
-          {/* Comment input */}
           {currentUser ? (
             <form onSubmit={handleSubmit} className="flex items-center space-x-2 pt-4 border-t">
               <Avatar className="h-8 w-8">
