@@ -28,22 +28,23 @@ export default function MessageThread() {
   const [otherOnline, setOtherOnline] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  // Ensure we know who I am BEFORE loading messages (prevents “all same side” flash)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
+  }, []);
+
+  // Build the stable thread key
   const threadKey = useMemo(() => {
     if (!me || !otherId) return null;
     return me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
-  // The absolute last message in the thread
+  // The last message in the thread (overall)
   const lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
-  // Only show "Seen" if the last message was sent by me AND has read_at
-  const showSeenOnLast =
-    !!lastMsg && !!me && lastMsg.sender_id === me && !!lastMsg.read_at;
+  // Show Seen only if the very last message is MINE and it has read_at
+  const showSeenOnLast = !!lastMsg && !!me && lastMsg.sender_id === me && !!lastMsg.read_at;
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
-  }, []);
-
-  // Load + realtime
+  // Initial load + realtime
   useEffect(() => {
     if (!threadKey || !me || !otherId) return;
 
@@ -62,7 +63,7 @@ export default function MessageThread() {
 
       setMsgs(data || []);
 
-      // Mark incoming (to me) as read when I open the thread
+      // Mark all messages addressed TO ME as read now that the thread is open
       const toMark = (data || [])
         .filter((m) => m.recipient_id === me && !m.read_at)
         .map((m) => m.id);
@@ -78,7 +79,7 @@ export default function MessageThread() {
 
     const channel = supabase
       .channel(`dm-${threadKey}`, { config: { presence: { key: me } } })
-      // new message
+      // New message arrives
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `thread_key=eq.${threadKey}` },
@@ -86,13 +87,13 @@ export default function MessageThread() {
           const m = payload.new as Msg;
           setMsgs((prev) => [...prev, m]);
 
-          // If I’m viewing and receive a message, mark it read immediately
+          // If I am the recipient and I have this thread open, mark it read immediately
           if (m.recipient_id === me && !m.read_at) {
             supabase.from("messages").update({ read_at: new Date().toISOString() }).eq("id", m.id);
           }
         }
       )
-      // updates (read receipts etc.)
+      // Updates (e.g., read receipts)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "messages", filter: `thread_key=eq.${threadKey}` },
@@ -101,7 +102,7 @@ export default function MessageThread() {
           setMsgs((prev) => prev.map((p) => (p.id === m.id ? m : p)));
         }
       )
-      // presence
+      // Presence
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState();
         const others = Object.keys(state).filter((uid) => uid === otherId);
@@ -113,7 +114,7 @@ export default function MessageThread() {
       .on("presence", { event: "leave" }, ({ key }) => {
         if (key === otherId) setOtherOnline(false);
       })
-      // typing
+      // Typing indicator
       .on("broadcast", { event: "typing" }, (payload) => {
         const { userId, typing } = payload.payload as { userId: string; typing: boolean };
         if (userId === otherId) setOtherTyping(Boolean(typing));
@@ -129,9 +130,11 @@ export default function MessageThread() {
     };
   }, [threadKey, me, otherId]);
 
-  useEffect(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), [msgs.length]);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [msgs.length]);
 
-  // typing broadcast (debounced)
+  // Typing broadcast (debounced)
   useEffect(() => {
     if (!me || !otherId || !threadKey) return;
     const ch = supabase.channel(`dm-${threadKey}`);
@@ -140,7 +143,6 @@ export default function MessageThread() {
 
     const start = setTimeout(() => { if (text) sendTyping(true); }, 120);
     const stop = setTimeout(() => sendTyping(false), 900);
-
     return () => { clearTimeout(start); clearTimeout(stop); };
   }, [text, me, otherId, threadKey]);
 
@@ -148,7 +150,7 @@ export default function MessageThread() {
     if (!me || !otherId || !text.trim()) return;
     const body = text.trim();
 
-    // optimistic bubble
+    // Optimistic UI so it appears instantly
     const optimisticId =
       typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `tmp_${Date.now()}`;
     const optimisticMsg: Msg = {
@@ -160,7 +162,6 @@ export default function MessageThread() {
       thread_key: threadKey!,
       read_at: null,
     };
-
     setMsgs((prev) => [...prev, optimisticMsg]);
     setText("");
 
@@ -173,15 +174,11 @@ export default function MessageThread() {
     if (error) {
       setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
       console.error(error);
-      if (error.message?.toLowerCase().includes("row-level security") || error.code === "42501") {
-        toast.error("You’re not allowed to send this message (blocked or not authorized).");
-      } else {
-        toast.error("Couldn’t send message. Please try again.");
-      }
+      toast.error("Couldn’t send message.");
       return;
     }
 
-    // fallback refresh if realtime isn’t configured
+    // Fallback refresh (in case realtime UPDATEs aren’t configured)
     const { data: latest, error: selErr } = await supabase
       .from("messages")
       .select("*")
@@ -189,6 +186,19 @@ export default function MessageThread() {
       .order("created_at", { ascending: true });
     if (!selErr && latest) setMsgs(latest);
   };
+
+  // If we still don’t know who I am, don’t render the list yet (avoids wrong alignment flash)
+  if (me === null) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="max-w-3xl mx-auto px-4 py-10 text-center text-sm text-muted-foreground">
+          Loading…
+        </div>
+        <Footer />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -208,26 +218,30 @@ export default function MessageThread() {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {msgs.map((m) => {
-              const mine = m.sender_id === me;
-              const isLast = lastMsg && m.id === lastMsg.id;
-              const timestamp = new Date(m.created_at).toLocaleTimeString();
+              const mine = m.sender_id === me; // TRUE = my bubble (right, violet), FALSE = their bubble (left, teal)
+              const isLast = lastMsg && m.id === lastMsg.id; // last overall message
+              const ts = new Date(m.created_at).toLocaleTimeString();
 
               return (
                 <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                   <div className="max-w-[80vw] sm:max-w-[60%]">
                     <div
                       className={[
-                        "inline-block w-fit max-w-full",
-                        "rounded-2xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words",
-                        mine ? "bg-primary text-primary-foreground" : "bg-accent text-foreground",
+                        "inline-block w-fit max-w-full whitespace-pre-wrap break-words leading-relaxed",
+                        "rounded-2xl px-3 py-2 text-sm",
+                        // Explicit colors for crystal-clear separation:
+                        mine ? "bg-violet-600 text-white" : "bg-teal-400 text-white",
                       ].join(" ")}
                     >
                       {m.body}
                     </div>
                     <div
-                      className={["mt-1 text-[10px] text-muted-foreground", mine ? "text-right" : "text-left"].join(" ")}
+                      className={[
+                        "mt-1 text-[10px] text-muted-foreground",
+                        mine ? "text-right" : "text-left",
+                      ].join(" ")}
                     >
-                      {timestamp}
+                      {ts}
                       {mine && isLast && m.read_at ? " • Seen" : ""}
                     </div>
                   </div>
@@ -243,9 +257,7 @@ export default function MessageThread() {
               placeholder="Write a message…"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") send();
-              }}
+              onKeyDown={(e) => { if (e.key === "Enter") send(); }}
             />
             <Button onClick={send}>Send</Button>
           </div>
