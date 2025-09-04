@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Home, MapPin, Calendar, Play, Heart, Users, Loader2 } from "lucide-react";
+import {Home, MapPin, Calendar, Play, Heart, Users, Loader2, MessageSquare } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import VideoGrid from "@/components/dashboard/VideoGrid";
 import Header from "@/components/layout/Header";
@@ -16,319 +16,397 @@ import FollowButton from "@/components/FollowButton";
 const Profile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [profile, setProfile] = useState<any>(null);
-  const [spliks, setSpliks] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [spliksLoading, setSpliksLoading] = useState(false);
+
   const { toast } = useToast();
-
+  const [profile, setProfile] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [isOwnProfile, setIsOwnProfile] = useState(false);
-
-  const fetchProfile = async () => {
-    try {
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-
-      if (!profileData) {
-        toast({
-          title: "Profile not found",
-          description: "This user profile doesn't exist",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Redirect to creator profile if username exists
-      if (profileData.username) {
-        navigate(`/creator/${profileData.username}`, { replace: true });
-        return;
-      }
-
-      setProfile(profileData);
-      
-      // Check if this is the current user's profile
-      const { data: { user } } = await supabase.auth.getUser();
-      setCurrentUser(user);
-      setIsOwnProfile(user?.id === profileData.id);
-    } catch (error: any) {
-      console.error('Error fetching profile:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load profile",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchSpliks = async () => {
-    if (!id) return;
-    
-    setSpliksLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('spliks')
-        .select('*')
-        .eq('user_id', id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setSpliks(data || []);
-    } catch (error: any) {
-      console.error('Error fetching spliks:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load videos",
-        variant: "destructive",
-      });
-    } finally {
-      setSpliksLoading(false);
-    }
-  };
+  const [isLoading, setIsLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [formData, setFormData] = useState({
+    display_name: "",
+    bio: "",
+    location: "",
+    joined_date: "",
+    profile_image_url: "",
+  });
+  const [videoCounts, setVideoCounts] = useState({
+    live: 0,
+    vod: 0,
+    clips: 0,
+  });
 
   useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setIsLoading(true);
+
+        // Get current user
+        const { data: authData } = await supabase.auth.getUser();
+        setCurrentUser(authData.user);
+
+        // Fetch profile data
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", id)
+          .single();
+
+        if (profileError) throw profileError;
+        setProfile(profileData);
+
+        // Initialize form data
+        setFormData({
+          display_name: profileData.display_name || "",
+          bio: profileData.bio || "",
+          location: profileData.location || "",
+          joined_date: profileData.joined_date || "",
+          profile_image_url: profileData.profile_image_url || "",
+        });
+
+        // Fetch video counts
+        const { data: contentData, error: contentError } = await supabase
+          .from("content")
+          .select("content_type")
+          .eq("creator_id", id);
+
+        if (contentError) throw contentError;
+
+        const counts = contentData?.reduce((acc: any, item: any) => {
+          if (item.content_type === "live") acc.live++;
+          if (item.content_type === "vod") acc.vod++;
+          if (item.content_type === "clip") acc.clips++;
+          return acc;
+        }, { live: 0, vod: 0, clips: 0 }) || { live: 0, vod: 0, clips: 0 };
+
+        setVideoCounts(counts);
+      } catch (error) {
+        console.error("Error fetching profile:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load profile. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     if (id) {
-      fetchProfile();
-      fetchSpliks();
+      fetchData();
     }
-  }, [id]);
+  }, [id, toast]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
+  const isOwnProfile = currentUser?.id === profile?.id;
 
-  if (!profile) {
+  const handleSave = async () => {
+    try {
+      setIsSaving(true);
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          display_name: formData.display_name,
+          bio: formData.bio,
+          location: formData.location,
+          joined_date: formData.joined_date,
+          profile_image_url: formData.profile_image_url,
+        })
+        .eq("id", profile.id);
+
+      if (error) throw error;
+
+      setProfile({
+        ...profile,
+        display_name: formData.display_name,
+        bio: formData.bio,
+        location: formData.location,
+        joined_date: formData.joined_date,
+        profile_image_url: formData.profile_image_url,
+      });
+
+      setIsEditing(false);
+
+      toast({
+        title: "Success",
+        description: "Your profile has been updated.",
+      });
+    } catch (error) {
+      console.error("Error saving profile:", error);
+      toast({
+        title: "Error",
+        description: "Failed to save profile. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-background">
         <Header />
-        <div className="flex flex-col items-center justify-center min-h-[60vh]">
-          <h2 className="text-2xl font-bold mb-4">Profile not found</h2>
-          <Link to="/">
-            <Button variant="outline">
-              <Home className="h-4 w-4 mr-2" />
-              Go Home
-            </Button>
-          </Link>
+        <div className="container mx-auto px-4 py-8">
+          <div className="flex justify-center items-center h-[60vh]">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
         </div>
         <Footer />
       </div>
     );
   }
 
-  const getInitials = () => {
-    const firstName = profile?.first_name || '';
-    const lastName = profile?.last_name || '';
-    return `${firstName[0] || ''}${lastName[0] || ''}`.toUpperCase() || 'U';
-  };
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="container mx-auto px-4 py-8">
+          <Card className="max-w-2xl mx-auto">
+            <CardHeader>
+              <CardTitle>Profile Not Found</CardTitle>
+              <CardDescription>The requested profile could not be found.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild>
+                <Link to="/">Go back home</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
-      <main className="container mx-auto px-4 py-8">
-        {/* Profile Header */}
-        <div className="mb-8">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex flex-col md:flex-row items-center md:items-start gap-6">
-                {isOwnProfile ? (
-                  <ProfilePictureUpload
-                    profileId={profile.id}
-                    currentAvatarUrl={profile.avatar_url}
-                    displayName={`${profile.first_name || ''} ${profile.last_name || ''}`}
-                    onUploadComplete={(url) => {
-                      setProfile({ ...profile, avatar_url: url });
-                    }}
-                  />
-                ) : (
-                  <Avatar className="h-24 w-24">
-                    <AvatarImage src={profile.avatar_url} />
-                    <AvatarFallback className="text-2xl">
-                      {getInitials()}
-                    </AvatarFallback>
-                  </Avatar>
-                )}
-                
-                <div className="flex-1 text-center md:text-left">
-                  <h1 className="text-3xl font-bold mb-2">
-                    {profile.display_name || profile.username || 
-                     (isOwnProfile && profile.first_name && profile.last_name ? 
-                      `${profile.first_name} ${profile.last_name}` : 
-                      'Anonymous User')}
-                  </h1>
-                  
-                  <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-muted-foreground mb-4">
-                    {isOwnProfile && profile.city && (
-                      <div className="flex items-center gap-1">
+      <div className="container mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Left Column - Profile Info */}
+          <div className="lg:col-span-4">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex flex-col items-center">
+                  <div className="mb-4">
+                    {isOwnProfile ? (
+                      <ProfilePictureUpload
+                        url={formData.profile_image_url}
+                        onUpload={(url) => setFormData({ ...formData, profile_image_url: url })}
+                      />
+                    ) : (
+                      <Avatar className="h-32 w-32">
+                        <AvatarImage src={profile.profile_image_url || ""} />
+                        <AvatarFallback className="text-2xl">
+                          {profile.display_name?.[0]?.toUpperCase() || "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                    )}
+                  </div>
+
+                  {!isEditing ? (
+                    <>
+                      <h2 className="text-2xl font-bold mb-1">{profile.display_name || "Unnamed User"}</h2>
+                      <p className="text-muted-foreground mb-4">@{profile.username}</p>
+
+                      <div className="flex items-center gap-2 text-muted-foreground mb-2">
                         <MapPin className="h-4 w-4" />
-                        <span>{profile.city}</span>
+                        <span>{profile.location || "Unknown location"}</span>
                       </div>
-                    )}
-                    {isOwnProfile && profile.age && (
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-2 text-muted-foreground mb-6">
                         <Calendar className="h-4 w-4" />
-                        <span>{profile.age} years old</span>
+                        <span>Joined {profile.joined_date || "Unknown date"}</span>
                       </div>
-                    )}
-                  </div>
 
-                  {/* Stats */}
-                  <div className="flex flex-wrap gap-8 justify-center md:justify-start mb-4">
-                    <div className="text-center min-w-[80px]">
-                      <div className="text-2xl font-bold">{spliks.length}</div>
-                      <div className="text-sm text-muted-foreground">Videos</div>
-                    </div>
-                    <div className="text-center min-w-[80px]">
-                      <div className="text-2xl font-bold">{profile.followers_count || 0}</div>
-                      <div className="text-sm text-muted-foreground">Followers</div>
-                    </div>
-                    <div className="text-center min-w-[80px]">
-                      <div className="text-2xl font-bold">{profile.following_count || 0}</div>
-                      <div className="text-sm text-muted-foreground">Following</div>
-                    </div>
-                  </div>
+                      <p className="text-center mb-6">{profile.bio || "No bio provided."}</p>
 
-                  {/* Follow Button */}
-                  {!isOwnProfile && (
+                      {isOwnProfile ? (
+                        <Button onClick={() => setIsEditing(true)} className="w-full">Edit Profile</Button>
+                      ) : (
+                        <div className="flex flex-col gap-2 w-full">
+                          <Button asChild className="w-full">
+                            <Link to={`/creator/${profile.username}`}>
+                              <Home className="h-4 w-4 mr-2" />
+                              View Creator Page
+                            </Link>
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-full space-y-4">
+                        <div>
+                          <label className="text-sm font-medium">Display Name</label>
+                          <input
+                            type="text"
+                            value={formData.display_name}
+                            onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                            className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Username</label>
+                          <input
+                            type="text"
+                            value={profile.username}
+                            disabled
+                            className="w-full mt-1 px-3 py-2 border rounded-md bg-muted text-muted-foreground"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Location</label>
+                          <input
+                            type="text"
+                            value={formData.location}
+                            onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                            className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Joined Date</label>
+                          <input
+                            type="text"
+                            value={formData.joined_date}
+                            onChange={(e) => setFormData({ ...formData, joined_date: e.target.value })}
+                            className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Bio</label>
+                          <textarea
+                            value={formData.bio}
+                            onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                            className="w-full mt-1 px-3 py-2 border rounded-md bg-background min-h-[120px]"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={handleSave} disabled={isSaving}>
+                            {isSaving ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Saving...
+                              </>
+                            ) : (
+                              "Save Changes"
+                            )}
+                          </Button>
+                          <Button variant="outline" onClick={() => setIsEditing(false)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Stats Card */}
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle>Stats</CardTitle>
+                <CardDescription>Your content performance</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">{videoCounts.live}</div>
+                    <div className="text-sm text-muted-foreground">Live</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">{videoCounts.vod}</div>
+                    <div className="text-sm text-muted-foreground">VODs</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">{videoCounts.clips}</div>
+                    <div className="text-sm text-muted-foreground">Clips</div>
+                  </div>
+                </div>
+
+                {/* Follow + Message actions for visitors */}
+                {!isOwnProfile && (
+                  <div className="mt-6 flex items-center gap-2 justify-center md:justify-start">
                     <FollowButton 
                       profileId={profile.id}
                       username={profile.username}
                       variant="default"
                       size="lg"
                     />
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Content Tabs */}
-        <Tabs defaultValue="videos" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 max-w-md mx-auto">
-            <TabsTrigger value="videos">Videos</TabsTrigger>
-            <TabsTrigger value="about">About</TabsTrigger>
-            <TabsTrigger value="liked">Liked</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="videos" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Videos</CardTitle>
-                <CardDescription>
-                  All videos from this creator
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {spliksLoading ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                  </div>
-                ) : spliks.length > 0 ? (
-                  <VideoGrid 
-                    spliks={spliks} 
-                    onDelete={() => {}}
-                    hideActions={true}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Play className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
-                    <p className="text-muted-foreground">
-                      This creator hasn't uploaded any videos
-                    </p>
+                    <Button
+                      variant="secondary"
+                      size="lg"
+                      onClick={() => navigate(`/messages/${profile.id}`)}
+                      className="flex items-center gap-2"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      Message
+                    </Button>
                   </div>
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          </div>
 
-          <TabsContent value="about" className="space-y-4">
+          {/* Right Column - Content Tabs */}
+          <div className="lg:col-span-8">
             <Card>
               <CardHeader>
-                <CardTitle>About</CardTitle>
-                <CardDescription>
-                  Information about this creator
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {profile.display_name || profile.username ? (
-                    <div>
-                      <h4 className="font-medium mb-1">Display Name</h4>
-                      <p className="text-muted-foreground">
-                        {profile.display_name || profile.username}
-                      </p>
-                    </div>
-                  ) : null}
-                  {isOwnProfile && profile.first_name && profile.last_name && (
-                    <div>
-                      <h4 className="font-medium mb-1">Name</h4>
-                      <p className="text-muted-foreground">
-                        {profile.first_name} {profile.last_name}
-                      </p>
-                    </div>
-                  )}
-                  {isOwnProfile && profile.city && (
-                    <div>
-                      <h4 className="font-medium mb-1">Location</h4>
-                      <p className="text-muted-foreground">{profile.city}</p>
-                    </div>
-                  )}
-                  {isOwnProfile && profile.age && (
-                    <div>
-                      <h4 className="font-medium mb-1">Age</h4>
-                      <p className="text-muted-foreground">{profile.age} years old</p>
-                    </div>
-                  )}
+                <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="font-medium mb-1">Member Since</h4>
-                    <p className="text-muted-foreground">
-                      {new Date(profile.created_at).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric'
-                      })}
-                    </p>
+                    <CardTitle>{isOwnProfile ? "Your Content" : `${profile.display_name || profile.username}'s Content`}</CardTitle>
+                    <CardDescription>Explore videos and streams</CardDescription>
                   </div>
+                  {isOwnProfile && (
+                    <div className="flex gap-2">
+                      <Button asChild variant="outline">
+                        <Link to="/studio/upload">
+                          <Play className="h-4 w-4 mr-2" />
+                          Upload Video
+                        </Link>
+                      </Button>
+                      <Button asChild>
+                        <Link to="/studio/live">
+                          Go Live
+                        </Link>
+                      </Button>
+                    </div>
+                  )}
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="liked" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Liked Videos</CardTitle>
-                <CardDescription>
-                  Videos this creator has liked
-                </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Heart className="h-12 w-12 text-muted-foreground mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No liked videos</h3>
-                  <p className="text-muted-foreground">
-                    Liked videos will appear here
-                  </p>
-                </div>
+                <Tabs defaultValue="vod">
+                  <TabsList className="grid grid-cols-3 w-full">
+                    <TabsTrigger value="vod" className="flex items-center gap-2">
+                      <Play className="h-4 w-4" />
+                      VODs
+                    </TabsTrigger>
+                    <TabsTrigger value="live" className="flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      Live
+                    </TabsTrigger>
+                    <TabsTrigger value="clips" className="flex items-center gap-2">
+                      <Heart className="h-4 w-4" />
+                      Clips
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="vod" className="mt-4">
+                    <VideoGrid creatorId={profile.id} type="vod" />
+                  </TabsContent>
+                  <TabsContent value="live" className="mt-4">
+                    <VideoGrid creatorId={profile.id} type="live" />
+                  </TabsContent>
+                  <TabsContent value="clips" className="mt-4">
+                    <VideoGrid creatorId={profile.id} type="clip" />
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
-      </main>
-
+          </div>
+        </div>
+      </div>
       <Footer />
     </div>
   );
