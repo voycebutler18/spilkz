@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Heart, MessageCircle, Share2, Bookmark, MoreVertical, Volume2, VolumeX, Send } from "lucide-react";
+import { Heart, MessageCircle, Share2, Bookmark, MoreVertical, Volume2, VolumeX, Send, Play, Pause } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -73,6 +73,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
+  const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
+  const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
+  const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
   useEffect(() => {
     const load = async () => {
@@ -84,6 +87,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         if (error) throw error;
         setSpliks(data || []);
+
+        // Initialize muted state to false (unmuted by default)
+        const mutedState: Record<number, boolean> = {};
+        const pauseState: Record<number, boolean> = {};
+        (data || []).forEach((_, index) => {
+          mutedState[index] = false; // Start unmuted
+          pauseState[index] = true; // Show pause button by default
+        });
+        setMuted(mutedState);
+        setShowPauseButton(pauseState);
 
         // preload likes for this user
         if (user?.id) {
@@ -102,12 +115,24 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     load();
   }, [user?.id]);
 
-  /* ========== SIMPLIFIED AUTOPLAY ========== */
+  // Function to mute all other videos
+  const muteOtherVideos = (exceptIndex: number) => {
+    videoRefs.current.forEach((video, index) => {
+      if (video && index !== exceptIndex) {
+        video.muted = true;
+        video.pause();
+        setIsPlaying(prev => ({ ...prev, [index]: false }));
+      }
+    });
+  };
+
+  /* ========== ENHANCED AUTOPLAY WITH SOUND MANAGEMENT ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     let currentPlayingVideo: HTMLVideoElement | null = null;
+    let currentPlayingIndex: number = -1;
 
     const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
@@ -121,10 +146,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           // Pause current playing video if it's different
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
+            setIsPlaying(prev => ({ ...prev, [currentPlayingIndex]: false }));
           }
 
+          // Mute all other videos
+          muteOtherVideos(index);
+
           // Setup and play the new video
-          video.muted = muted[index] ?? true;
+          video.muted = muted[index] ?? false; // Use current mute state, default to unmuted
           video.playsInline = true;
           
           // Handle trim_start for 3s loop
@@ -145,7 +174,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           try {
             await video.play();
             currentPlayingVideo = video;
+            currentPlayingIndex = index;
             setActiveIndex(index);
+            setIsPlaying(prev => ({ ...prev, [index]: true }));
+            setShowPauseButton(prev => ({ ...prev, [index]: true }));
           } catch (error) {
             console.log("Autoplay prevented:", error);
             // Fallback: show first frame
@@ -157,8 +189,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         // If video is less than 50% visible and it's currently playing, pause it
         else if (entry.intersectionRatio < 0.5 && video === currentPlayingVideo) {
           video.pause();
+          video.muted = true; // Mute when out of view
+          setIsPlaying(prev => ({ ...prev, [index]: false }));
           if (currentPlayingVideo === video) {
             currentPlayingVideo = null;
+            currentPlayingIndex = -1;
           }
         }
       }
@@ -180,11 +215,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     // Cleanup
     return () => {
       observer.disconnect();
-      // Pause all videos
+      // Pause all videos and clear timeouts
       videoRefs.current.forEach((video) => {
         if (video && !video.paused) {
           video.pause();
         }
+      });
+      Object.values(pauseTimeoutRefs.current).forEach(timeout => {
+        if (timeout) clearTimeout(timeout);
       });
     };
   }, [spliks.length, muted, spliks]);
@@ -199,9 +237,56 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const toggleMute = (i: number) => {
     const v = videoRefs.current[i];
     if (!v) return;
-    const next = !(muted[i] ?? true);
-    v.muted = next;
-    setMuted((m) => ({ ...m, [i]: next }));
+    
+    const newMutedState = !(muted[i] ?? false);
+    
+    if (!newMutedState) {
+      // If unmuting this video, mute all others
+      muteOtherVideos(i);
+    }
+    
+    v.muted = newMutedState;
+    setMuted((m) => ({ ...m, [i]: newMutedState }));
+  };
+
+  const handlePlayPause = (index: number) => {
+    const video = videoRefs.current[index];
+    if (!video) return;
+
+    const currentlyPlaying = isPlaying[index] ?? false;
+
+    if (currentlyPlaying) {
+      // Pause the video
+      video.pause();
+      setIsPlaying(prev => ({ ...prev, [index]: false }));
+      
+      // Hide pause button immediately when clicked
+      setShowPauseButton(prev => ({ ...prev, [index]: false }));
+      
+      // Clear any existing timeout
+      if (pauseTimeoutRefs.current[index]) {
+        clearTimeout(pauseTimeoutRefs.current[index]);
+      }
+      
+      // Show pause button again after 2 seconds
+      pauseTimeoutRefs.current[index] = setTimeout(() => {
+        setShowPauseButton(prev => ({ ...prev, [index]: true }));
+      }, 2000);
+    } else {
+      // Play the video
+      muteOtherVideos(index);
+      
+      // Handle trim_start
+      const startAt = Number(spliks[index]?.trim_start ?? 0);
+      if (startAt > 0) {
+        video.currentTime = startAt;
+      }
+      
+      video.muted = muted[index] ?? false;
+      video.play().catch(console.error);
+      setIsPlaying(prev => ({ ...prev, [index]: true }));
+      setShowPauseButton(prev => ({ ...prev, [index]: true }));
+    }
   };
 
   /* -------------------------- social actions -------------------------- */
@@ -288,6 +373,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
       {spliks.map((s, i) => {
+        const videoIsPlaying = isPlaying[i] ?? false;
+        const shouldShowPauseButton = showPauseButton[i] ?? true;
+
         return (
           <section
             key={s.id}
@@ -317,7 +405,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               </div>
 
               {/* video */}
-              <div className="relative bg-black aspect-[9/16] max-h-[600px]">
+              <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
                 {/* top mask */}
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
@@ -327,7 +415,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   poster={s.thumbnail_url ?? undefined}
                   className="w-full h-full object-cover"
                   playsInline
-                  muted={muted[i] ?? true}
+                  muted={muted[i] ?? false}
                   preload="metadata"
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
                   onLoadedData={() => {
@@ -344,12 +432,36 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   }}
                 />
 
-                {/* play hint when paused (if ever) */}
+                {/* Center play/pause controls */}
                 <div
-                  className="absolute inset-0 flex items-center justify-center bg-black/0"
-                  onClick={() => scrollTo(i)} // single tap recenters/ensures snap
+                  className="absolute inset-0 flex items-center justify-center"
+                  onClick={() => handlePlayPause(i)}
                 >
-                  <div className="bg-white/80 rounded-full p-3 opacity-0 pointer-events-none" />
+                  {videoIsPlaying ? (
+                    shouldShowPauseButton && (
+                      <button
+                        aria-label="Pause"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePlayPause(i);
+                        }}
+                      >
+                        <Pause className="h-10 w-10 text-white drop-shadow-lg" />
+                      </button>
+                    )
+                  ) : (
+                    <button
+                      aria-label="Play"
+                      className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePlayPause(i);
+                      }}
+                    >
+                      <Play className="h-8 w-8 text-white ml-1" />
+                    </button>
+                  )}
                 </div>
 
                 {/* mute toggle */}
@@ -358,7 +470,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     e.stopPropagation();
                     toggleMute(i);
                   }}
-                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
+                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
                 >
                   {muted[i] ? (
                     <VolumeX className="h-4 w-4 text-white" />
@@ -366,6 +478,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     <Volume2 className="h-4 w-4 text-white" />
                   )}
                 </button>
+
+                {/* Video title overlay */}
+                {s.title && (
+                  <div className="absolute bottom-3 left-3 z-20">
+                    <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
+                      <p className="text-white text-sm font-medium truncate">{s.title}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* actions */}
@@ -376,14 +497,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => handleLike(s.id)}
-                      className={likedIds.has(s.id) ? "text-red-500" : ""}
+                      className={likedIds.has(s.id) ? "text-red-500 hover:text-red-600" : "hover:text-red-500"}
                     >
                       <Heart
                         className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`}
                       />
                     </Button>
 
-                    <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
+                    <Button 
+                      size="icon" 
+                      variant="ghost" 
+                      onClick={() => openComments(s)}
+                      className="hover:text-blue-500"
+                    >
                       <MessageCircle className="h-6 w-6" />
                     </Button>
 
@@ -395,12 +521,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
+                      className="hover:text-green-500"
                     >
                       <Share2 className="h-6 w-6" />
                     </Button>
                   </div>
 
-                  <Button size="icon" variant="ghost">
+                  <Button size="icon" variant="ghost" className="hover:text-yellow-500">
                     <Bookmark className="h-6 w-6" />
                   </Button>
                 </div>
