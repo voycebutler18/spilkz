@@ -22,18 +22,19 @@ import { Switch } from "@/components/ui/switch";
 import {
   BarChart3,
   Video,
-  Eye,
   Users,
   TrendingUp,
   Settings,
   Plus,
   Bookmark,
   Lock,
-  Unlock
+  Unlock,
+  Heart,
+  MessageCircle
 } from "lucide-react";
 import { toast } from "sonner";
 
-// NEW: delete button for each video (make sure this file exists as shared earlier)
+// If you use this, make sure it exists as before
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
@@ -50,10 +51,10 @@ interface Profile {
 }
 
 interface DashboardStats {
-  totalViews: number;
   totalSpliks: number;
   followers: number;
-  engagementRate: number;
+  totalReactions: number;         // NEW: likes + comments (no views)
+  avgReactionsPerVideo: number;   // NEW: totalReactions / totalSpliks
 }
 
 const CreatorDashboard = () => {
@@ -62,10 +63,10 @@ const CreatorDashboard = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
   const [stats, setStats] = useState<DashboardStats>({
-    totalViews: 0,
     totalSpliks: 0,
     followers: 0,
-    engagementRate: 0
+    totalReactions: 0,
+    avgReactionsPerVideo: 0
   });
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
@@ -78,34 +79,26 @@ const CreatorDashboard = () => {
 
   useEffect(() => {
     checkAuth();
-
-    // keep your realtime + polling exactly how you had it
     const cleanup = setupRealtimeUpdates();
     return () => {
-      // ensure cleanup fires on unmount
       if (typeof cleanup === "function") cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setupRealtimeUpdates = () => {
-    // Update stats every 5 seconds
+    // refresh dashboard periodically
     const interval = setInterval(() => {
       if (profile) {
         fetchStats();
       }
     }, 5000);
 
-    // Subscribe to realtime changes
     const channel = supabase
       .channel("dashboard-updates")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "spliks"
-        },
+        { event: "*", schema: "public", table: "spliks" },
         () => {
           fetchSpliks();
           fetchStats();
@@ -113,11 +106,7 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "profiles"
-        },
+        { event: "*", schema: "public", table: "profiles" },
         (payload) => {
           const newProfile = payload.new as Profile;
           if (newProfile && newProfile.id === profile?.id) {
@@ -135,15 +124,11 @@ const CreatorDashboard = () => {
   };
 
   const checkAuth = async () => {
-    const {
-      data: { user }
-    } = await supabase.auth.getUser();
-
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       navigate("/login");
       return;
     }
-
     await fetchProfile(user.id);
     await fetchSpliks();
   };
@@ -184,13 +169,11 @@ const CreatorDashboard = () => {
   };
 
   const fetchSpliks = async () => {
-    const {
-      data: { user }
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     try {
-      // First fetch spliks
+      // Fetch user's videos
       const { data: spliksData, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
@@ -199,7 +182,7 @@ const CreatorDashboard = () => {
 
       if (spliksError) throw spliksError;
 
-      // Then fetch the profile
+      // Fetch lightweight profile for display in grid cards
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("username, display_name, avatar_url")
@@ -210,7 +193,6 @@ const CreatorDashboard = () => {
         console.error("Error fetching profile for spliks:", profileError);
       }
 
-      // Combine the data
       const data =
         spliksData?.map((splik) => ({
           ...splik,
@@ -219,25 +201,23 @@ const CreatorDashboard = () => {
 
       setSpliks(data || []);
 
-      // Calculate total views + engagement
-      const totalViews =
-        data?.reduce((acc: number, splik: any) => acc + (splik.views || 0), 0) ||
-        0;
-      const totalInteractions =
+      // —— NO VIEWS: reactions-only metrics ——
+      const totalReactions =
         data?.reduce(
-          (acc: number, splik: any) =>
-            acc + (splik.likes_count || 0) + (splik.comments_count || 0),
+          (acc: number, s: any) =>
+            acc + (s.likes_count || 0) + (s.comments_count || 0),
           0
         ) || 0;
 
+      const totalSpliks = data?.length || 0;
+      const avgReactionsPerVideo =
+        totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
+
       setStats((prev) => ({
         ...prev,
-        totalViews,
-        totalSpliks: data?.length || 0,
-        engagementRate:
-          totalViews > 0
-            ? Math.round((totalInteractions / totalViews) * 100)
-            : 0
+        totalSpliks,
+        totalReactions,
+        avgReactionsPerVideo
       }));
     } catch (error) {
       console.error("Error fetching videos:", error);
@@ -249,9 +229,7 @@ const CreatorDashboard = () => {
   };
 
   const handleProfileUpdate = async () => {
-    const {
-      data: { user }
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     try {
@@ -282,9 +260,7 @@ const CreatorDashboard = () => {
   const togglePrivacy = async (
     field: "followers_private" | "following_private"
   ) => {
-    const {
-      data: { user }
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user || !profile) return;
 
     const newValue = !profile[field];
@@ -299,9 +275,7 @@ const CreatorDashboard = () => {
 
       setProfile({ ...profile, [field]: newValue });
       toast.success(
-        `${
-          field === "followers_private" ? "Followers" : "Following"
-        } privacy updated`
+        `${field === "followers_private" ? "Followers" : "Following"} privacy updated`
       );
     } catch (error) {
       console.error("Error updating privacy:", error);
@@ -310,9 +284,7 @@ const CreatorDashboard = () => {
   };
 
   const handleDeleted = (id: string) => {
-    // instant UI update
     setSpliks((prev) => prev.filter((s) => s.id !== id));
-    // refresh stats/list in the background
     fetchSpliks();
   };
 
@@ -321,7 +293,7 @@ const CreatorDashboard = () => {
       <div className="min-h-screen bg-background">
         <Header />
         <div className="flex items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
         <Footer />
       </div>
@@ -349,7 +321,7 @@ const CreatorDashboard = () => {
           </div>
         </div>
 
-        {/* Stats Grid */}
+        {/* Stats Grid (no views) */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Card>
             <CardHeader className="pb-2">
@@ -369,16 +341,19 @@ const CreatorDashboard = () => {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Views
+                Total Reactions
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-2xl font-bold">{stats.totalViews}</div>
-                <Eye className="h-5 w-5 text-primary" />
+                <div className="text-2xl font-bold">{stats.totalReactions}</div>
+                <div className="flex items-center gap-2 text-primary">
+                  <Heart className="h-5 w-5" />
+                  <MessageCircle className="h-5 w-5" />
+                </div>
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                Views across all videos
+                Likes + comments across all videos
               </p>
             </CardContent>
           </Card>
@@ -394,25 +369,23 @@ const CreatorDashboard = () => {
                 <div className="text-2xl font-bold">{stats.followers}</div>
                 <Users className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Build your community
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Build your community</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Engagement
+                Avg Reactions / Video
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-2xl font-bold">{stats.engagementRate}%</div>
+                <div className="text-2xl font-bold">{stats.avgReactionsPerVideo}</div>
                 <TrendingUp className="h-5 w-5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                Average engagement rate
+                Average engagement per post
               </p>
             </CardContent>
           </Card>
@@ -429,10 +402,9 @@ const CreatorDashboard = () => {
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
               <>
-                {/* keep your existing grid */}
                 <VideoGrid spliks={spliks} />
 
-                {/* lightweight manage list with Delete buttons (non-invasive) */}
+                {/* Simple manage list with Delete buttons */}
                 <Card className="mt-6">
                   <CardHeader>
                     <CardTitle className="text-base">Manage Videos</CardTitle>
@@ -481,8 +453,8 @@ const CreatorDashboard = () => {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
                     <div>
-                      <p className="text-sm text-muted-foreground">This Week's Views</p>
-                      <p className="text-2xl font-bold">{stats.totalViews}</p>
+                      <p className="text-sm text-muted-foreground">This Week’s Reactions</p>
+                      <p className="text-2xl font-bold">{stats.totalReactions}</p>
                     </div>
                     <Badge variant="secondary">Live</Badge>
                   </div>
@@ -509,9 +481,7 @@ const CreatorDashboard = () => {
                       <Input
                         id="username"
                         value={formData.username}
-                        onChange={(e) =>
-                          setFormData({ ...formData, username: e.target.value })
-                        }
+                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                         placeholder="@username"
                       />
                       <p className="text-xs text-muted-foreground mt-1">
@@ -591,11 +561,7 @@ const CreatorDashboard = () => {
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          {profile?.followers_private ? (
-                            <Lock className="h-4 w-4" />
-                          ) : (
-                            <Unlock className="h-4 w-4" />
-                          )}
+                          {profile?.followers_private ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                           <div>
                             <p className="font-medium text-sm">Followers List</p>
                             <p className="text-xs text-muted-foreground">
@@ -613,11 +579,7 @@ const CreatorDashboard = () => {
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          {profile?.following_private ? (
-                            <Lock className="h-4 w-4" />
-                          ) : (
-                            <Unlock className="h-4 w-4" />
-                          )}
+                          {profile?.following_private ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                           <div>
                             <p className="font-medium text-sm">Following List</p>
                             <p className="text-xs text-muted-foreground">
