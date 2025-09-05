@@ -22,6 +22,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
+import { createDiscoveryFeed, applyDiscoveryFeedRotation, type SplikWithScore } from "@/lib/feed";
 
 const categories = [
   { id: "funny", label: "Funny", icon: Smile, color: "text-yellow-500" },
@@ -30,54 +31,6 @@ const categories = [
   { id: "wow", label: "Wow", icon: Flame, color: "text-orange-500" },
   { id: "sports", label: "Sports", icon: Trophy, color: "text-green-500" },
 ];
-
-// Helper functions for dynamic rotation (same as Index.tsx)
-const hashString = (str: string): number => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash);
-};
-
-const seededRandom = (seed: number): number => {
-  const x = Math.sin(seed) * 10000;
-  return x - Math.floor(x);
-};
-
-const applyDiscoveryRotation = (spliks: any[], userId: string | null = null, category: string | null = null) => {
-  if (!spliks.length) return [];
-
-  // Discovery rotation changes more frequently (every 30 minutes)
-  const now = new Date();
-  const currentHalfHour = Math.floor(now.getMinutes() / 30);
-  const currentHour = now.getHours();
-  const currentDay = now.getDate();
-  const userSeed = userId ? hashString(userId) : 0;
-  const categorySeed = category ? hashString(category) : 0;
-  const timeSeed = currentHalfHour + (currentHour * 2) + (currentDay * 48);
-  const combinedSeed = userSeed + categorySeed + timeSeed;
-
-  // Apply discovery-focused weighting
-  const weightedSpliks = spliks.map((splik, index) => {
-    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
-    const diversityScore = seededRandom(combinedSeed + index + splik.id.charCodeAt(0)) * 80; // High randomness for discovery
-    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 1.5;
-    const recencyBonus = ageInHours < 24 ? 20 : ageInHours < 168 ? 10 : 0; // Bonus for content < 1 week old
-    const categoryMatch = category && (splik.tag?.toLowerCase().includes(category)) ? 30 : 0;
-    
-    return {
-      ...splik,
-      discoveryScore: diversityScore + engagementScore + recencyBonus + categoryMatch
-    };
-  });
-
-  return weightedSpliks
-    .sort((a, b) => b.discoveryScore - a.discoveryScore)
-    .slice(0, 50); // More content for discovery
-};
 
 const Explore = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -111,9 +64,13 @@ const Explore = () => {
   /** Fetch Trending with Dynamic Rotation */
   const fetchTrendingData = async (showRefreshToast: boolean = false) => {
     try {
-      setRefreshing(true);
+      if (showRefreshToast) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       
-      // Get all spliks for rotation
+      // Get all spliks for discovery rotation
       const { data: allSpliks, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
@@ -122,7 +79,15 @@ const Explore = () => {
 
       if (!spliksError && allSpliks) {
         // Apply discovery rotation algorithm
-        const rotatedSpliks = applyDiscoveryRotation(allSpliks, user?.id, selectedCategory);
+        const rotatedSpliks = createDiscoveryFeed(
+          allSpliks as SplikWithScore[],
+          { 
+            userId: user?.id, 
+            category: selectedCategory,
+            feedType: 'discovery',
+            maxResults: 40 
+          }
+        );
         
         // Get profiles for rotated content
         const withProfiles = await Promise.all(
@@ -147,21 +112,32 @@ const Explore = () => {
         .from("profiles")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(60);
 
       if (!creatorsError && allCreators) {
         // Rotate creators as well
-        const rotatedCreators = applyDiscoveryRotation(
-          allCreators.map(c => ({ ...c, likes_count: c.followers_count || 0 })), 
-          user?.id
-        ).slice(0, 12);
+        const rotatedCreators = applyDiscoveryFeedRotation(
+          allCreators.map(c => ({ 
+            ...c, 
+            likes_count: c.followers_count || 0,
+            comments_count: 0,
+            boost_score: 0,
+            tag: '',
+            user_id: c.id
+          })) as SplikWithScore[], 
+          { 
+            userId: user?.id,
+            feedType: 'discovery',
+            maxResults: 15 
+          }
+        );
         
-        setRisingCreators(rotatedCreators);
+        setRisingCreators(rotatedCreators.slice(0, 12));
       }
 
       if (showRefreshToast) {
         toast({
-          title: "Discovery refreshed",
+          title: "Discovery refreshed!",
           description: "Showing you new trending content",
         });
       }
@@ -192,11 +168,18 @@ const Explore = () => {
         .limit(100);
 
       if (!error && spliksData) {
-        // Apply location-based rotation (placeholder - same as trending for now)
-        const rotatedSpliks = applyDiscoveryRotation(spliksData, user?.id, "nearby");
+        // Apply location-based rotation
+        const rotatedSpliks = applyDiscoveryFeedRotation(
+          spliksData as SplikWithScore[], 
+          { 
+            userId: user?.id, 
+            feedType: 'nearby',
+            maxResults: 30 
+          }
+        );
         
         const withProfiles = await Promise.all(
-          rotatedSpliks.slice(0, 30).map(async (s) => {
+          rotatedSpliks.map(async (s) => {
             const { data: p } = await supabase
               .from("profiles")
               .select("*")
@@ -251,7 +234,7 @@ const Explore = () => {
   };
 
   /**
-   * ======= ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES =======
+   * ======= ENHANCED AUTOPLAY MANAGER =======
    */
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
@@ -450,6 +433,17 @@ const Explore = () => {
       return splik;
     }));
 
+    setNearbySpliks(prev => prev.map(splik => {
+      if (splik.id === splikId) {
+        return {
+          ...splik,
+          likes_count: (splik.likes_count || 0) + 1,
+          user_has_liked: true
+        };
+      }
+      return splik;
+    }));
+
     // Send to backend
     try {
       await supabase.rpc('handle_like', { splik_id: splikId });
@@ -457,6 +451,16 @@ const Explore = () => {
       console.error('Error liking splik:', error);
       // Revert optimistic update on error
       setTrendingSpliks(prev => prev.map(splik => {
+        if (splik.id === splikId) {
+          return {
+            ...splik,
+            likes_count: Math.max(0, (splik.likes_count || 0) - 1),
+            user_has_liked: false
+          };
+        }
+        return splik;
+      }));
+      setNearbySpliks(prev => prev.map(splik => {
         if (splik.id === splikId) {
           return {
             ...splik,
@@ -557,8 +561,9 @@ const Explore = () => {
           {/* TRENDING — single page scroll, one card per row, autoplay managed by IntersectionObserver */}
           <TabsContent value="trending" className="space-y-6">
             {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Discovering trending content...</p>
               </div>
             ) : trendingSpliks.length === 0 ? (
               <Card>
@@ -571,15 +576,15 @@ const Explore = () => {
                       : "Be the first to post a trending splik!"
                     }
                   </p>
-                  <Button onClick={handleRefresh} variant="outline">
-                    Refresh Discovery
+                  <Button onClick={handleRefresh} variant="outline" disabled={refreshing}>
+                    {refreshing ? 'Refreshing...' : 'Refresh Discovery'}
                   </Button>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="text-center text-sm text-muted-foreground mb-4">
-                  Showing {trendingSpliks.length} trending videos
+                  Showing {trendingSpliks.length} trending videos • Updates every 30 minutes
                   {selectedCategory && (
                     <span className="ml-1">in {categories.find(c => c.id === selectedCategory)?.label}</span>
                   )}
@@ -601,7 +606,7 @@ const Explore = () => {
                       />
                     ))}
                 </div>
-                <div className="text-center py-4">
+                <div className="text-center py-6 border-t border-border/40">
                   <Button 
                     onClick={handleRefresh}
                     variant="outline"
@@ -609,7 +614,7 @@ const Explore = () => {
                     className="flex items-center gap-2"
                   >
                     <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                    Discover More
+                    {refreshing ? 'Discovering...' : 'Discover More'}
                   </Button>
                 </div>
               </>
@@ -619,8 +624,9 @@ const Explore = () => {
           {/* RISING creators (grid, no autoplay needed) */}
           <TabsContent value="rising" className="space-y-6">
             {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Finding rising creators...</p>
               </div>
             ) : risingCreators.length === 0 ? (
               <Card>
@@ -628,15 +634,15 @@ const Explore = () => {
                   <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No Rising Creators</h3>
                   <p className="text-muted-foreground mb-4">Join now to become a rising star!</p>
-                  <Button onClick={handleRefresh} variant="outline">
-                    Refresh Creators
+                  <Button onClick={handleRefresh} variant="outline" disabled={refreshing}>
+                    {refreshing ? 'Refreshing...' : 'Refresh Creators'}
                   </Button>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="text-center text-sm text-muted-foreground mb-4">
-                  Discover {risingCreators.length} rising creators
+                  Discover {risingCreators.length} rising creators • Rotated for variety
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                   {risingCreators.map((creator, i) => (
@@ -711,8 +717,9 @@ const Explore = () => {
                 </CardContent>
               </Card>
             ) : loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Finding nearby content...</p>
               </div>
             ) : nearbySpliks.length === 0 ? (
               <Card>
@@ -720,15 +727,15 @@ const Explore = () => {
                   <MapPin className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No Nearby Splikz</h3>
                   <p className="text-muted-foreground mb-4">No videos from creators near you yet</p>
-                  <Button onClick={handleRefresh} variant="outline">
-                    Refresh Nearby
+                  <Button onClick={handleRefresh} variant="outline" disabled={refreshing}>
+                    {refreshing ? 'Refreshing...' : 'Refresh Nearby'}
                   </Button>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="text-center text-sm text-muted-foreground mb-4">
-                  Showing {nearbySpliks.length} nearby videos
+                  Showing {nearbySpliks.length} nearby videos • Rotated for discovery
                 </div>
                 <div ref={nearbyFeedRef} className="space-y-8">
                   {nearbySpliks.map((s) => (
@@ -741,7 +748,7 @@ const Explore = () => {
                     />
                   ))}
                 </div>
-                <div className="text-center py-4">
+                <div className="text-center py-6 border-t border-border/40">
                   <Button 
                     onClick={handleRefresh}
                     variant="outline"
