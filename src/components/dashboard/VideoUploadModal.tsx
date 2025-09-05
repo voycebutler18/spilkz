@@ -612,17 +612,32 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               </div>
 
-              {/* Format warning for non-MP4 files with better messaging */}
+              {/* Enhanced Format warning with conversion suggestion */}
               {file && file.type !== 'video/mp4' && (
                 <Alert className="border-orange-500/20 bg-orange-500/5">
                   <AlertCircle className="h-4 w-4 text-orange-500" />
                   <AlertDescription className="text-sm">
                     <strong>Format Notice:</strong> 
                     {file.type === 'video/quicktime' ? (
-                      <> MOV files may have playback issues in browsers but will upload successfully. Consider converting to MP4 for better compatibility.</>
+                      <> MOV files may use codecs not fully supported by all browsers. If preview shows a black screen, the video can still be uploaded and will work on most devices. For maximum compatibility, consider converting to H.264 MP4.</>
                     ) : (
-                      <> {file.type.split('/')[1].toUpperCase()} files may have playback issues. For best compatibility, use MP4 format.</>
+                      <> {file.type.split('/')[1].toUpperCase()} files may have playback issues. For best compatibility, use H.264 MP4 format.</>
                     )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Additional MOV-specific help */}
+              {file && (file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')) && (
+                <Alert className="border-blue-500/20 bg-blue-500/5">
+                  <AlertCircle className="h-4 w-4 text-blue-500" />
+                  <AlertDescription className="text-sm">
+                    <strong>MOV File Tips:</strong> 
+                    <ul className="list-disc list-inside mt-1 space-y-1">
+                      <li>If you see a black screen, try clicking play - audio may work even if video doesn't preview</li>
+                      <li>The upload will succeed even if preview fails</li>
+                      <li>Videos shot on iPhone/Mac work best when exported as "High Efficiency" or converted to MP4</li>
+                    </ul>
                   </AlertDescription>
                 </Alert>
               )}
