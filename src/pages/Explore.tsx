@@ -1,4 +1,3 @@
-// src/pages/Explore.tsx
 import { useState, useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,51 +15,12 @@ import {
   Loader2,
 } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
-import FollowButton from "@/components/FollowButton";
-import { supabase } from "@/integrations/supabase/client";
+import { FollowButton } from "@/components/FollowButton";
+import { supabase, type Splik, type Profile } from "@/lib/supabase";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-
-/* ---------- helpers (same “fresh but rotated” vibe as home) ---------- */
-
-type ProfileLite = {
-  id: string;
-  username: string | null;
-  display_name: string | null;
-  avatar_url: string | null;
-  followers_count?: number | null;
-};
-
-type Splik = {
-  id: string;
-  user_id: string;
-  created_at: string;
-  tag?: string | null;
-  // …other fields your SplikCard uses…
-  profiles?: ProfileLite; // supabase relation alias
-  profile?: ProfileLite;  // normalized for SplikCard
-};
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function recentThenShuffle<T extends { created_at: string }>(rows: T[], limit: number): T[] {
-  const sorted = rows
-    .slice()
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  const head = sorted.slice(0, Math.max(limit, 30));
-  return shuffle(head).slice(0, limit);
-}
-
-/* -------------------------------------------------------------------- */
 
 const categories = [
   { id: "funny", label: "Funny", icon: Smile, color: "text-yellow-500" },
@@ -70,112 +30,93 @@ const categories = [
   { id: "sports", label: "Sports", icon: Trophy, color: "text-green-500" },
 ];
 
-const FEED_LIMIT = 30;
-
 const Explore = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [trendingSpliks, setTrendingSpliks] = useState<(Splik & { profile?: ProfileLite })[]>([]);
-  const [risingCreators, setRisingCreators] = useState<ProfileLite[]>([]);
-  const [nearbySpliks, setNearbySpliks] = useState<(Splik & { profile?: ProfileLite })[]>([]);
+  const [trendingSpliks, setTrendingSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
+  const [risingCreators, setRisingCreators] = useState<Profile[]>([]);
+  const [nearbySpliks, setNearbySpliks] = useState<(Splik & { profile?: Profile })[]>([]);
   const [loading, setLoading] = useState(true);
   const [locationPermission, setLocationPermission] =
     useState<"granted" | "denied" | "prompt">("prompt");
   const { toast } = useToast();
 
-  // One feed container per section for autoplay (no nested scroller)
+  // One feed container for autoplay (no nested scroller)
   const trendingFeedRef = useRef<HTMLDivElement | null>(null);
   const nearbyFeedRef = useRef<HTMLDivElement | null>(null);
 
-  /* -------------------------- load Trending + Rising -------------------------- */
+  /** Fetch Trending + Rising */
   useEffect(() => {
     const fetchTrendingData = async () => {
-      setLoading(true);
       try {
-        // Pull spliks with JOINed profiles to avoid N+1
         const { data: spliksData, error: spliksError } = await supabase
           .from("spliks")
-          .select(
-            `
-            *,
-            profiles:profiles (
-              id, username, display_name, avatar_url, followers_count
-            )
-          `
-          )
+          .select("*")
           .order("created_at", { ascending: false })
-          .limit(200);
+          .limit(30);
 
-        if (spliksError) throw spliksError;
+        if (!spliksError && spliksData) {
+          const withProfiles = await Promise.all(
+            spliksData.map(async (s) => {
+              const { data: p } = await supabase
+                .from("profiles")
+                .select("*")
+                .eq("id", s.user_id)
+                .maybeSingle();
+              
+              return {
+                ...s,
+                profile: p || undefined
+              };
+            })
+          );
+          setTrendingSpliks(withProfiles || []);
+        }
 
-        const normalized = (spliksData || []).map((s: Splik) => ({
-          ...s,
-          profile: s.profiles ?? undefined,
-        }));
-
-        // “latest but rotated”
-        setTrendingSpliks(recentThenShuffle(normalized, FEED_LIMIT));
-
-        // Rising creators: newest accounts w/ follower count
         const { data: creatorsData, error: creatorsError } = await supabase
           .from("profiles")
-          .select("id, username, display_name, avatar_url, followers_count")
+          .select("*")
           .order("created_at", { ascending: false })
-          .limit(12);
+          .limit(8);
 
-        if (creatorsError) throw creatorsError;
-
-        setRisingCreators((creatorsData || []) as ProfileLite[]);
+        if (!creatorsError) setRisingCreators(creatorsData || []);
       } catch (e) {
         console.error(e);
-        toast({
-          title: "Error",
-          description: "Failed to load Explore",
-          variant: "destructive",
-        });
       } finally {
         setLoading(false);
       }
     };
 
     fetchTrendingData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [toast]);
 
-  /* -------------------------- load Nearby (placeholder) -------------------------- */
+  /** Fetch Nearby (placeholder: same as trending for now) */
   const fetchNearbySpliks = async () => {
     try {
-      const { data, error } = await supabase
+      const { data: spliksData, error } = await supabase
         .from("spliks")
-        .select(
-          `
-          *,
-          profiles:profiles (
-            id, username, display_name, avatar_url, followers_count
-          )
-        `
-        )
+        .select("*")
         .order("created_at", { ascending: false })
-        .limit(200);
+        .limit(30);
 
-      if (error) throw error;
-
-      const normalized = (data || []).map((s: Splik) => ({
-        ...s,
-        profile: s.profiles ?? undefined,
-      }));
-
-      setNearbySpliks(recentThenShuffle(normalized, FEED_LIMIT));
+      if (!error && spliksData) {
+        const withProfiles = await Promise.all(
+          spliksData.map(async (s) => {
+            const { data: p } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("id", s.user_id)
+              .maybeSingle();
+            return { ...s, profile: p || undefined };
+          })
+        );
+        setNearbySpliks(withProfiles || []);
+      }
     } catch (e) {
       console.error(e);
-      toast({
-        title: "Error",
-        description: "Failed to load nearby videos",
-        variant: "destructive",
-      });
     }
   };
 
-  /* -------------------------- location permission -------------------------- */
+  /** Location permission */
   const requestLocationPermission = async () => {
     if (!("geolocation" in navigator)) {
       toast({
@@ -205,129 +146,199 @@ const Explore = () => {
     );
   };
 
-  /* -------------------------- Autoplay manager (with mobile fixes) -------------------------- */
+  /**
+   * ======= ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES =======
+   * **Autoplay**: The most-visible video plays automatically; others pause. 
+   * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
+   */
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
       if (!host) return;
 
+      // Track visibility ratios and current playing video
       const videoVisibility = new Map<HTMLVideoElement, number>();
       let currentPlayingVideo: HTMLVideoElement | null = null;
       let isProcessing = false;
 
+      // Mobile video setup helper
       const setupVideoForMobile = (video: HTMLVideoElement) => {
         video.muted = true;
         video.playsInline = true;
-        video.setAttribute("webkit-playsinline", "true");
-        video.preload = "metadata";
-        video.load();
-        const onLoaded = () => {
-          if (video.currentTime === 0) video.currentTime = 0.1;
-        };
-        video.addEventListener("loadeddata", onLoaded, { once: true });
+        video.setAttribute('webkit-playsinline', 'true');
+        video.preload = 'metadata';
+        video.load(); // Force load to show first frame
+        
+        // Ensure first frame is visible
+        video.addEventListener('loadeddata', () => {
+          if (video.currentTime === 0) {
+            video.currentTime = 0.1;
+          }
+        }, { once: true });
       };
 
-      const getAllVideos = () =>
-        Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
+      const getAllVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
 
       const pauseAllVideos = (exceptVideo?: HTMLVideoElement) => {
-        getAllVideos().forEach((v) => {
-          if (v !== exceptVideo && !v.paused) v.pause();
+        getAllVideos().forEach((video) => {
+          if (video !== exceptVideo && !video.paused) {
+            video.pause();
+          }
         });
       };
 
       const findMostVisibleVideo = (): HTMLVideoElement | null => {
-        const pairs = Array.from(videoVisibility.entries());
-        if (!pairs.length) return null;
-        pairs.sort((a, b) => b[1] - a[1]);
-        const [video, ratio] = pairs[0];
-        return ratio >= 0.6 ? video : null;
+        const visibilityEntries = Array.from(videoVisibility.entries());
+        if (visibilityEntries.length === 0) return null;
+
+        // Sort by visibility ratio descending
+        const sortedVideos = visibilityEntries.sort((a, b) => b[1] - a[1]);
+        const mostVisible = sortedVideos[0];
+        
+        // Only return if visibility is above threshold
+        return mostVisible && mostVisible[1] >= 0.6 ? mostVisible[0] : null;
       };
 
       const handleVideoPlayback = async () => {
         if (isProcessing) return;
         isProcessing = true;
-        try {
-          const target = findMostVisibleVideo();
 
+        try {
+          const targetVideo = findMostVisibleVideo();
+          
+          // If current video falls below 45% visibility, pause it
           if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
           }
 
-          if (target && target !== currentPlayingVideo) {
-            pauseAllVideos(target);
-            setupVideoForMobile(target);
+          // Switch to new target video if different from current
+          if (targetVideo && targetVideo !== currentPlayingVideo) {
+            // Pause all other videos first
+            pauseAllVideos(targetVideo);
+            
+            // Configure video for mobile autoplay
+            setupVideoForMobile(targetVideo);
 
-            if (target.readyState < 2) {
-              target.load();
-              await new Promise((r) => setTimeout(r, 100));
+            // Mobile fix: ensure video has loaded enough data to display
+            if (targetVideo.readyState < 2) { // HAVE_CURRENT_DATA
+              targetVideo.load();
+              // Small delay to let load complete
+              await new Promise(resolve => setTimeout(resolve, 100));
             }
-            if (target.currentTime === 0 && target.duration > 0) target.currentTime = 0.1;
 
+            // Force load first frame on mobile if needed
+            if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
+              targetVideo.currentTime = 0.1;
+            }
+            
+            // Attempt to play (muted first for autoplay policies)
             try {
-              await target.play();
-              currentPlayingVideo = target;
-            } catch {
-              if (!target.muted) {
-                target.muted = true;
+              await targetVideo.play();
+              currentPlayingVideo = targetVideo;
+            } catch (playError) {
+              console.log("Autoplay prevented, trying muted:", playError);
+              // If blocked, try with muted
+              if (!targetVideo.muted) {
+                targetVideo.muted = true;
                 try {
-                  await target.play();
-                  currentPlayingVideo = target;
-                } catch {
-                  if (target.currentTime === 0) target.currentTime = 0.1;
+                  await targetVideo.play();
+                  currentPlayingVideo = targetVideo;
+                } catch (mutedError) {
+                  console.log("Video autoplay blocked even when muted:", mutedError);
+                  // Fallback: at least show the first frame
+                  if (targetVideo.currentTime === 0) {
+                    targetVideo.currentTime = 0.1;
+                  }
                 }
               } else {
-                if (target.currentTime === 0) target.currentTime = 0.1;
+                // Video is already muted but still failed - show first frame
+                if (targetVideo.currentTime === 0) {
+                  targetVideo.currentTime = 0.1;
+                }
               }
             }
-          } else if (!target && currentPlayingVideo) {
+          } else if (!targetVideo && currentPlayingVideo) {
+            // No sufficiently visible video - pause current
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
           }
+        } catch (error) {
+          console.error("Error handling video playback:", error);
         } finally {
           isProcessing = false;
         }
       };
 
-      const io = new IntersectionObserver(
+      // Create intersection observer with multiple thresholds for smooth tracking
+      const intersectionObserver = new IntersectionObserver(
         (entries) => {
           for (const entry of entries) {
             const video = entry.target as HTMLVideoElement;
             videoVisibility.set(video, entry.intersectionRatio);
           }
+          
+          // Handle playback changes
           handleVideoPlayback();
         },
-        {
-          root: null,
-          threshold: [0, 0.25, 0.45, 0.6, 0.75, 1],
-          rootMargin: "10px",
+        { 
+          root: null, 
+          threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0],
+          rootMargin: "10px" // Better mobile performance
         }
       );
 
-      const init = () => {
+      // Initialize videos and start observing
+      const initializeVideos = () => {
         getAllVideos().forEach((video) => {
-          if (!video.hasAttribute("data-mobile-initialized")) {
+          // Set up mobile-friendly video attributes
+          if (!video.hasAttribute('data-mobile-initialized')) {
             setupVideoForMobile(video);
-            video.setAttribute("data-mobile-initialized", "true");
+            video.setAttribute('data-mobile-initialized', 'true');
           }
+          
+          // Initialize visibility tracking
           if (!videoVisibility.has(video)) {
             videoVisibility.set(video, 0);
-            io.observe(video);
+            intersectionObserver.observe(video);
           }
         });
       };
 
-      const mo = new MutationObserver(() => {
-        setTimeout(init, 100);
+      // Watch for dynamically added videos (SplikCards loading)
+      const mutationObserver = new MutationObserver((mutations) => {
+        let hasNewVideos = false;
+        
+        mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const element = node as Element;
+              // Check if the added node contains videos
+              const videos = element.querySelectorAll ? element.querySelectorAll("video") : [];
+              if (videos.length > 0) {
+                hasNewVideos = true;
+              }
+            }
+          });
+        });
+
+        if (hasNewVideos) {
+          // Small delay to ensure DOM is fully updated
+          setTimeout(initializeVideos, 100);
+        }
       });
 
-      setTimeout(init, 100);
-      mo.observe(host, { childList: true, subtree: true });
+      // Start observing
+      setTimeout(initializeVideos, 100); // Initial delay for DOM readiness
+      mutationObserver.observe(host, { 
+        childList: true, 
+        subtree: true 
+      });
 
+      // Cleanup function
       return () => {
-        io.disconnect();
-        mo.disconnect();
+        intersectionObserver.disconnect();
+        mutationObserver.disconnect();
         pauseAllVideos();
         videoVisibility.clear();
         currentPlayingVideo = null;
@@ -372,13 +383,12 @@ const Explore = () => {
           <div className="flex flex-wrap gap-2">
             {categories.map((c) => {
               const Icon = c.icon;
-              const active = selectedCategory === c.id;
               return (
                 <Badge
                   key={c.id}
-                  variant={active ? "default" : "outline"}
+                  variant={selectedCategory === c.id ? "default" : "outline"}
                   className="cursor-pointer py-2 px-3 text-sm"
-                  onClick={() => setSelectedCategory(active ? null : c.id)}
+                  onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}
                 >
                   <Icon className={`h-4 w-4 mr-1 ${c.color}`} />
                   {c.label}
@@ -387,7 +397,7 @@ const Explore = () => {
             })}
           </div>
 
-          {/* TRENDING — single column list with autoplay */}
+          {/* TRENDING — single page scroll, one card per row, autoplay managed by IntersectionObserver */}
           <TabsContent value="trending" className="space-y-6">
             {loading ? (
               <div className="flex items-center justify-center py-12">
@@ -407,16 +417,22 @@ const Explore = () => {
                   .filter((s) =>
                     !selectedCategory
                       ? true
-                      : (s.tag || "").toLowerCase().includes(selectedCategory)
+                      : (s as any).tag?.toLowerCase().includes(selectedCategory)
                   )
                   .map((s) => (
-                    <SplikCard key={s.id} splik={s} onSplik={() => {}} onReact={() => {}} onShare={() => {}} />
+                    <SplikCard
+                      key={s.id}
+                      splik={s}
+                      onSplik={() => {}}
+                      onReact={() => {}}
+                      onShare={() => {}}
+                    />
                   ))}
               </div>
             )}
           </TabsContent>
 
-          {/* RISING creators (grid) */}
+          {/* RISING creators (grid, no autoplay needed) */}
           <TabsContent value="rising" className="space-y-6">
             {loading ? (
               <div className="flex items-center justify-center py-12">
@@ -436,7 +452,7 @@ const Explore = () => {
                   <Card key={creator.id} className="overflow-hidden hover:shadow-lg transition-shadow">
                     <CardContent className="p-4">
                       <Link
-                        to={`/creator/${creator.username || creator.id}`}
+                        to={`/creator/${creator.username || (creator as any).handle || creator.id}`}
                         className="block mb-3"
                       >
                         <div className="flex items-center space-x-3">
@@ -444,7 +460,9 @@ const Explore = () => {
                             <img
                               src={
                                 creator.avatar_url ||
-                                `https://api.dicebear.com/7.x/avataaars/svg?seed=${creator.username || creator.id}`
+                                `https://api.dicebear.com/7.x/avataaars/svg?seed=${
+                                  creator.username || creator.id
+                                }`
                               }
                               alt={creator.display_name || creator.username || "User"}
                               className="h-12 w-12 rounded-full ring-2 ring-primary/20"
@@ -458,7 +476,7 @@ const Explore = () => {
                               {creator.display_name || creator.username || "Unknown"}
                             </p>
                             <p className="text-sm text-muted-foreground">
-                              @{creator.username || "unknown"}
+                              @{creator.username || (creator as any).handle || "unknown"}
                             </p>
                           </div>
                         </div>
@@ -467,7 +485,7 @@ const Explore = () => {
                         <Badge variant="secondary">{creator.followers_count || 0} followers</Badge>
                         <FollowButton
                           profileId={creator.id}
-                          username={creator.username || undefined}
+                          username={creator.username || (creator as any).handle}
                           size="sm"
                         />
                       </div>
@@ -478,7 +496,7 @@ const Explore = () => {
             )}
           </TabsContent>
 
-          {/* NEARBY — single column list with autoplay (after enabling location) */}
+          {/* NEARBY — single page scroll, autoplay same as Trending */}
           <TabsContent value="nearby" className="space-y-6">
             {locationPermission !== "granted" ? (
               <Card>
@@ -506,7 +524,13 @@ const Explore = () => {
             ) : (
               <div ref={nearbyFeedRef} className="space-y-8">
                 {nearbySpliks.map((s) => (
-                  <SplikCard key={s.id} splik={s} onSplik={() => {}} onReact={() => {}} onShare={() => {}} />
+                  <SplikCard
+                    key={s.id}
+                    splik={s}
+                    onSplik={() => {}}
+                    onReact={() => {}}
+                    onShare={() => {}}
+                  />
                 ))}
               </div>
             )}
