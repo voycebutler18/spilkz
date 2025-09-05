@@ -28,6 +28,9 @@ import { Progress } from "@/components/ui/progress";
 import { VideoRangeSlider } from "./VideoRangeSlider";
 import { Slider } from "@/components/ui/slider";
 
+// NEW: ffmpeg.wasm imports
+import { createFFmpeg, fetchFile } from "@ffmpeg/ffmpeg";
+
 /** Simple env detection (no deps) */
 const isIOS =
   typeof navigator !== "undefined" &&
@@ -65,6 +68,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
 
+  // NEW: ffmpeg/transcode state
+  const [transcoding, setTranscoding] = useState(false);
+  const [transcodeProgress, setTranscodeProgress] = useState(0);
+  const ffmpegRef = useRef<ReturnType<typeof createFFmpeg> | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number>();
@@ -94,6 +102,53 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         return "video/mp4";
     }
   };
+
+  // NEW: lazy-load ffmpeg
+  const getFFmpeg = useCallback(async () => {
+    if (ffmpegRef.current) return ffmpegRef.current;
+    const ffmpeg = createFFmpeg({
+      log: false,
+      // corePath: "/ffmpeg/ffmpeg-core.js", // optional: host it yourself
+    });
+    ffmpeg.setProgress(({ ratio }) => {
+      if (ratio) setTranscodeProgress(Math.min(99, Math.round(ratio * 100)));
+    });
+    await ffmpeg.load();
+    ffmpegRef.current = ffmpeg;
+    return ffmpeg;
+  }, []);
+
+  // NEW: MOV → MP4 proxy for preview
+  const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
+    setTranscoding(true);
+    setTranscodeProgress(1);
+    try {
+      const ffmpeg = await getFFmpeg();
+      const inputName = "input.mov";
+      const outputName = "output.mp4";
+
+      ffmpeg.FS("writeFile", inputName, await fetchFile(movFile));
+
+      await ffmpeg.run(
+        "-i", inputName,
+        "-vf", "scale='min(1280,iw)':-2",
+        "-r", "30",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        outputName
+      );
+
+      const data = ffmpeg.FS("readFile", outputName);
+      return new Blob([data.buffer], { type: "video/mp4" });
+    } finally {
+      setTranscoding(false);
+      setTranscodeProgress(0);
+    }
+  }, [getFFmpeg]);
 
   /** Auth */
   useEffect(() => {
@@ -144,9 +199,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (selectedFile.size > maxFileSize) {
         toast({
           title: "File too large",
-          description: `On ${isMobile ? "mobile" : "desktop"}, the max size is ${
-            isMobile ? "150MB" : "500MB"
-          }.`,
+          description: `On ${isMobile ? "mobile" : "desktop"}, the max size is ${isMobile ? "150MB" : "500MB"}.`,
           variant: "destructive",
         });
         setProcessingVideo(false);
@@ -158,19 +211,74 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
         setTitle(fileName);
 
-        // --- IMPORTANT: Skip preview for MOV entirely (prevents white-screen crash) ---
+        // CHANGED: handle MOV by creating an MP4 preview proxy instead of disabling preview
         if (isMOV(selectedFile)) {
-          setVideoPreview(null);               // no createObjectURL (avoid decoding)
-          setShowTrimmer(false);               // no trimming UI without preview
-          setOriginalDuration(MAX_VIDEO_DURATION);
-          setTrimRange([0, MAX_VIDEO_DURATION]);
-          setVideoError(
-            "MOV preview disabled for stability. You can still upload and it will play after upload."
-          );
+          try {
+            toast({
+              title: "Preparing preview…",
+              description: "Converting MOV to MP4 for smooth preview.",
+            });
+            const mp4Blob = await transcodeMovToMp4(selectedFile);
+            const url = URL.createObjectURL(mp4Blob);
+            setVideoPreview(url);
+
+            // Probe metadata from proxy
+            const probe = document.createElement("video");
+            probe.preload = "metadata";
+            probe.src = url;
+
+            await new Promise<void>((resolve, reject) => {
+              let settled = false;
+              const finish = (ok: boolean, err?: any) => {
+                if (settled) return;
+                settled = true;
+                probe.src = "";
+                probe.removeAttribute("src");
+                probe.load();
+                ok ? resolve() : reject(err);
+              };
+
+              probe.onloadedmetadata = () => {
+                const duration = probe.duration;
+                if (!isFinite(duration) || duration <= 0) {
+                  finish(false, new Error("Invalid video duration"));
+                  return;
+                }
+                setOriginalDuration(duration);
+                if (duration > MAX_VIDEO_DURATION) {
+                  setShowTrimmer(true);
+                  setTrimRange([0, MAX_VIDEO_DURATION]);
+                  toast({
+                    title: "Select your 3-second clip",
+                    description: `Your video is ${duration.toFixed(1)}s long. Use the trimmer to pick any 3s segment.`,
+                  });
+                } else {
+                  setShowTrimmer(false);
+                  setTrimRange([0, duration]);
+                }
+                finish(true);
+              };
+
+              probe.onerror = () =>
+                finish(false, new Error("Failed to read MP4 preview metadata."));
+              setTimeout(
+                () => finish(false, new Error("Video metadata timeout")),
+                8000
+              );
+            });
+          } catch (e: any) {
+            console.error(e);
+            setVideoPreview(null);
+            setShowTrimmer(false);
+            setOriginalDuration(MAX_VIDEO_DURATION);
+            setTrimRange([0, MAX_VIDEO_DURATION]);
+            setVideoError("We couldn't prepare a preview for this MOV. You can still upload it.");
+          }
+          setProcessingVideo(false);
           return;
         }
 
-        // For non-MOV: create preview and probe metadata safely
+        // Non-MOV: normal preview
         const url = URL.createObjectURL(selectedFile);
         setVideoPreview(url);
 
@@ -183,7 +291,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           const finish = (ok: boolean, err?: any) => {
             if (settled) return;
             settled = true;
-            // free probe
             probe.src = "";
             probe.removeAttribute("src");
             probe.load();
@@ -230,10 +337,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         setProcessingVideo(false);
       }
     },
-    [toast, maxFileSize, videoPreview]
+    [toast, maxFileSize, videoPreview, transcodeMovToMp4]
   );
 
-  /** Bind preview element events (non-MOV only) */
+  /** Bind preview element events (non-null preview only) */
   useEffect(() => {
     if (!videoRef.current || !videoPreview) return;
 
@@ -263,7 +370,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     };
   }, [videoPreview, trimRange]);
 
-  /** Loop inside trim range (non-MOV only) */
+  /** Loop inside trim range */
   useEffect(() => {
     if (!videoRef.current || !isPlaying) return;
     const el = videoRef.current;
@@ -402,6 +509,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setIsPlaying(false);
       setVideoReady(false);
       setVideoError(null);
+      setShowTrimmer(false);
+      setTrimRange([0, 3]);
 
       onUploadComplete();
       onClose();
@@ -496,24 +605,32 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Alert>
               )}
 
+              {/* NEW: MOV transcode progress */}
+              {transcoding && (
+                <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+                  <p className="text-sm font-medium">Converting MOV to MP4 for preview…</p>
+                  <p className="text-xs text-muted-foreground mt-1">{transcodeProgress}%</p>
+                </div>
+              )}
+
               {/* Preview area */}
               <div className="flex justify-center">
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
                   <div className="relative" style={{ paddingBottom: "177.78%" }}>
-                    {/* For MOV: show a safe placeholder instead of decoding */}
-                    {isMOV(file) ? (
+                    {/* If no preview yet and not transcoding, show placeholder */}
+                    {!videoPreview && !transcoding ? (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
                         <Film className="h-10 w-10 opacity-70 mb-2" />
-                        <p className="text-sm font-medium">MOV preview disabled</p>
-                        <p className="text-xs text-white/70 text-center mt-1">
-                          This prevents crashes on some devices. You can still upload and it will play after upload.
-                        </p>
+                        <p className="text-sm font-medium">Preparing preview…</p>
                       </div>
-                    ) : (
+                    ) : null}
+
+                    {videoPreview && !transcoding ? (
                       <>
                         <video
                           ref={videoRef}
-                          src={videoPreview || undefined}
+                          src={videoPreview}
                           className="absolute inset-0 w-full h-full object-cover"
                           loop={false}
                           muted={isMuted}
@@ -568,13 +685,13 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                           </div>
                         )}
                       </>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
 
-              {/* Trimmer: only for non-MOV (since no preview for MOV) */}
-              {!isMOV(file) && showTrimmer && (
+              {/* Trimmer */}
+              {videoPreview && showTrimmer && (
                 <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Scissors className="h-4 w-4 text-primary" />
@@ -633,7 +750,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                             }
                           }}
                         >
-                          Middle 3s
+                        Middle 3s
                         </Button>
                       )}
                       {originalDuration > 3 && (
@@ -718,7 +835,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   disabled={
                     uploading ||
                     !title ||
-                    (isMOV(file) ? false : !videoReady && !videoError)
+                    // allow upload even if preview had a soft error
+                    false
                   }
                 >
                   {uploading ? (
