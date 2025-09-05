@@ -16,6 +16,7 @@ import {
   Volume2,
   VolumeX,
   Rocket,
+  Sparkles, // 👈 for the Splikz logo mark
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -305,9 +306,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
+      {/* TOP COVER BAR (matches page background) — hides stray “0” */}
+      <div className="absolute inset-x-0 top-0 h-5 bg-background z-[40] pointer-events-none" />
+
       {/* BOOSTED BADGE */}
       {isBoosted && (
-        <div className="absolute top-3 left-3 z-20">
+        <div className="absolute top-3 left-3 z-30">
           <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
             <Rocket className="h-3 w-3 mr-1" />
             Promoted
@@ -315,7 +319,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         </div>
       )}
 
-      {/* VIDEO AREA (no permanent dark overlay) */}
+      {/* VIDEO AREA */}
       <div
         className="relative bg-black overflow-hidden group"
         style={{ height: videoHeight, maxHeight: "80vh" }}
@@ -332,7 +336,15 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           onTimeUpdate={handleTimeUpdate}
         />
 
-        {/* Center play/pause button — visible when paused, subtle when playing */}
+        {/* Splikz logo watermark (top-left, below the cover bar) */}
+        <div className="pointer-events-none absolute top-2 left-3 z-30 flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-purple-500" />
+          <span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-teal-400">
+            Splikz
+          </span>
+        </div>
+
+        {/* Center play/pause icon */}
         <div className="absolute inset-0 flex items-center justify-center">
           {isPlaying ? (
             <button
@@ -359,7 +371,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           )}
         </div>
 
-        {/* Title & description overlay (gradient only behind text) */}
+        {/* Title & description (gradient just behind text) */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
           <div className="bg-gradient-to-t from-black/70 via-black/35 to-transparent px-4 pt-10 pb-3">
             <h3 className="text-white font-semibold text-sm truncate">
