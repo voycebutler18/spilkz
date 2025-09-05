@@ -1,281 +1,204 @@
+// src/components/dashboard/VideoGrid.tsx
 import { useState, useRef, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Play, MoreVertical, Edit, Trash2, Eye, Pause, Volume2, VolumeX } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { formatDistanceToNow } from "date-fns";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Play, Pause, Volume2, VolumeX, Heart, MessageCircle, Share2, Eye, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
+
+interface Profile {
+  username: string;
+  display_name: string;
+  avatar_url?: string;
+}
 
 interface Splik {
   id: string;
-  title: string;
-  description?: string;
   video_url: string;
   thumbnail_url?: string;
-  duration?: number;
+  title?: string;
+  description?: string;
+  views: number;
+  likes_count: number;
+  comments_count: number;
   created_at: string;
-  status: string;
-  views?: number;
+  user_id: string;
+  profile?: Profile | null; // for dashboard usage
+  profiles?: Profile;       // for explore/feeds usage
 }
 
 interface VideoGridProps {
   spliks: Splik[];
-  onEdit?: (splik: Splik) => void;
-  onDelete?: (id: string) => void;
-  hideActions?: boolean;
+  showCreatorInfo?: boolean;
+  showDelete?: boolean;                  // NEW: show delete button per card
+  onDeleted?: (id: string) => void;      // NEW: callback after delete
 }
 
-const VideoGrid = ({ spliks, onEdit, onDelete, hideActions = false }: VideoGridProps) => {
-  const [playingVideo, setPlayingVideo] = useState<string | null>(null);
-  const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
-  const [currentTime, setCurrentTime] = useState<{ [key: string]: number }>({});
-  const [videoStats, setVideoStats] = useState<{ [key: string]: number }>({});
-  const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
+export default function VideoGrid({
+  spliks,
+  showCreatorInfo = true,
+  showDelete = false,
+  onDeleted,
+}: VideoGridProps) {
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [muted, setMuted] = useState<Set<string>>(new Set());
+  const [stats, setStats] = useState<Record<string, { views: number; likes: number; comments: number }>>({});
+  const videoRefs = useRef<Record<string, HTMLVideoElement>>({});
 
   useEffect(() => {
-    // Initialize stats
-    const stats: any = {};
-    spliks.forEach(splik => {
-      stats[splik.id] = splik.views || 0;
+    const s: typeof stats = {};
+    spliks.forEach(v => {
+      s[v.id] = {
+        views: v.views || 0,
+        likes: v.likes_count || 0,
+        comments: v.comments_count || 0,
+      };
     });
-    setVideoStats(stats);
-
-    // Subscribe to realtime updates for view counts
-    const channel = supabase
-      .channel('dashboard-video-updates')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'spliks'
-        },
-        (payload) => {
-          if (payload.new) {
-            const newData = payload.new as any;
-            setVideoStats(prev => ({
-              ...prev,
-              [newData.id]: newData.views || 0
-            }));
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    setStats(s);
   }, [spliks]);
 
-  const formatDuration = () => {
-    // Always show 3 seconds
-    return "0:03";
-  };
+  const togglePlay = async (id: string) => {
+    const el = videoRefs.current[id];
+    if (!el) return;
 
-  const formatTime = (seconds: number) => {
-    const secs = Math.floor(seconds);
-    return `0:0${Math.min(secs, 3)}`;
-  };
-
-  const handlePlayToggle = (splikId: string) => {
-    const video = videoRefs.current[splikId];
-    if (!video) return;
-
-    if (playingVideo === splikId) {
-      video.pause();
-      setPlayingVideo(null);
+    if (playing === id) {
+      el.pause();
+      setPlaying(null);
     } else {
-      // Pause any other playing video
-      if (playingVideo && videoRefs.current[playingVideo]) {
-        videoRefs.current[playingVideo].pause();
+      if (playing && videoRefs.current[playing]) {
+        videoRefs.current[playing].pause();
       }
-      
-      // Set up time limit
-      const handleTimeUpdate = () => {
-        const trimStart = 0;
-        const maxDuration = 3;
-        
-        if (video.currentTime - trimStart >= maxDuration) {
-          video.currentTime = trimStart;
-        }
-        setCurrentTime(prev => ({ ...prev, [splikId]: Math.min(video.currentTime, 3) }));
-      };
-      
-      video.addEventListener('timeupdate', handleTimeUpdate);
-      
-      video.play().catch(() => {
-        video.muted = true;
-        setMutedVideos(prev => new Set([...prev, splikId]));
-        video.play();
-      });
-      
-      setPlayingVideo(splikId);
-      
-      // Store cleanup
-      (video as any).cleanup = () => {
-        video.removeEventListener('timeupdate', handleTimeUpdate);
-      };
+      el.currentTime = 0;
+      el.muted = muted.has(id);
+      try {
+        await el.play();
+        setPlaying(id);
+      } catch {
+        el.muted = true;
+        setMuted(new Set(m => m.add(id)));
+        await el.play().catch(() => {});
+        setPlaying(id);
+      }
     }
   };
 
-  const toggleMute = (splikId: string) => {
-    const video = videoRefs.current[splikId];
-    if (!video) return;
-    
-    const isMuted = mutedVideos.has(splikId);
-    video.muted = !isMuted;
-    if (isMuted) {
-      setMutedVideos(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(splikId);
-        return newSet;
-      });
+  const toggleMute = (id: string) => {
+    const el = videoRefs.current[id];
+    if (!el) return;
+    const m = new Set(muted);
+    if (m.has(id)) {
+      m.delete(id);
+      el.muted = false;
     } else {
-      setMutedVideos(prev => new Set([...prev, splikId]));
+      m.add(id);
+      el.muted = true;
     }
+    setMuted(m);
   };
 
-  if (spliks.length === 0) {
-    return null;
-  }
+  const share = (v: Splik) => {
+    const url = `${window.location.origin}/video/${v.id}`;
+    navigator.clipboard.writeText(url);
+    toast.success("Link copied");
+  };
+
+  const creator = (v: Splik) => v.profile || v.profiles || null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {spliks.map((splik) => (
-        <Card key={splik.id} className="overflow-hidden group">
-          <div className="relative aspect-video bg-black">
-            {/* Live View Counter */}
-            <div className="absolute top-2 left-2 flex items-center gap-2 bg-black/70 backdrop-blur px-2 py-1 rounded-full z-10">
-              <Eye className="h-3.5 w-3.5 text-white" />
-              <span className="text-white font-medium text-xs">
-                {(videoStats[splik.id] || 0).toLocaleString()} views
-              </span>
-              <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-            </div>
-            
-            {/* Video element */}
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      {spliks.map((v) => (
+        <Card key={v.id} className="overflow-hidden shadow-sm hover:shadow-md transition">
+          <div className="relative aspect-[9/16] bg-black">
             <video
-              ref={(el) => {
-                if (el) videoRefs.current[splik.id] = el;
-              }}
-              src={splik.video_url}
-              className="w-full h-full object-contain"
-              loop
+              ref={(el) => { if (el) videoRefs.current[v.id] = el; }}
+              src={v.video_url}
+              poster={v.thumbnail_url || undefined}
+              className="w-full h-full object-cover"
               playsInline
-              muted={mutedVideos.has(splik.id)}
-              onClick={() => handlePlayToggle(splik.id)}
             />
-            
-            {/* Play/Pause overlay */}
-            {playingVideo !== splik.id && (
-              <div 
-                className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                onClick={() => handlePlayToggle(splik.id)}
+            <button
+              className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/20 transition"
+              onClick={() => togglePlay(v.id)}
+            >
+              {playing === v.id ? (
+                <Pause className="h-10 w-10 text-white" />
+              ) : (
+                <Play className="h-10 w-10 text-white ml-1" />
+              )}
+            </button>
+
+            <div className="absolute top-2 left-2 flex items-center gap-1 bg-black/60 text-white text-xs px-2 py-1 rounded-full">
+              <Eye className="h-3.5 w-3.5" />
+              {(stats[v.id]?.views || 0).toLocaleString()}
+            </div>
+
+            {playing === v.id && (
+              <button
+                className="absolute top-2 right-2 bg-black/60 text-white rounded-full p-2"
+                onClick={(e) => { e.stopPropagation(); toggleMute(v.id); }}
               >
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="bg-white/90 hover:bg-white text-black"
-                >
-                  <Play className="h-6 w-6" />
-                </Button>
-              </div>
-            )}
-            
-            {/* Custom controls overlay */}
-            {playingVideo === splik.id && (
-              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/70 to-transparent">
-                <div className="flex items-center justify-between text-white text-xs">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => handlePlayToggle(splik.id)}
-                      className="h-6 w-6 text-white hover:bg-white/20"
-                    >
-                      <Pause className="h-4 w-4" />
-                    </Button>
-                    <span>{formatTime(currentTime[splik.id] || 0)} / {formatDuration()}</span>
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => toggleMute(splik.id)}
-                    className="h-6 w-6 text-white hover:bg-white/20"
-                  >
-                    {mutedVideos.has(splik.id) ? (
-                      <VolumeX className="h-4 w-4" />
-                    ) : (
-                      <Volume2 className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            )}
-            
-            {/* Duration badge when not playing */}
-            {playingVideo !== splik.id && (
-              <span className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">
-                {formatDuration()}
-              </span>
+                {muted.has(v.id) ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+              </button>
             )}
           </div>
-          
-          <div className="p-4">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <h3 className="font-semibold line-clamp-1">{splik.title}</h3>
-                {splik.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-                    {splik.description}
-                  </p>
-                )}
-                <p className="text-xs text-muted-foreground mt-2">
-                  {formatDistanceToNow(new Date(splik.created_at), { addSuffix: true })}
-                </p>
-              </div>
-              
-              {!hideActions && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button size="icon" variant="ghost" className="h-8 w-8">
-                      <MoreVertical className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => window.open(splik.video_url, '_blank')}>
-                      <Eye className="h-4 w-4 mr-2" />
-                      View Full
-                    </DropdownMenuItem>
-                    {onEdit && (
-                      <DropdownMenuItem onClick={() => onEdit(splik)}>
-                        <Edit className="h-4 w-4 mr-2" />
-                        Edit
-                      </DropdownMenuItem>
-                    )}
-                    {onDelete && (
-                      <DropdownMenuItem 
-                        onClick={() => onDelete(splik.id)}
-                        className="text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Delete
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+
+          {/* Header (creator) */}
+          {showCreatorInfo && creator(v) && (
+            <div className="flex items-center justify-between px-3 py-2 border-b">
+              <Link to={`/creator/${creator(v)!.username}`} className="flex items-center gap-2">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={creator(v)!.avatar_url} />
+                  <AvatarFallback>{(creator(v)!.display_name || creator(v)!.username).charAt(0)}</AvatarFallback>
+                </Avatar>
+                <div className="text-sm">
+                  <div className="font-medium leading-4">{creator(v)!.display_name || creator(v)!.username}</div>
+                  <div className="text-xs text-muted-foreground">@{creator(v)!.username}</div>
+                </div>
+              </Link>
             </div>
+          )}
+
+          {/* Body */}
+          <div className="px-3 py-3 space-y-2">
+            {v.title && <div className="font-semibold text-sm line-clamp-2">{v.title}</div>}
+            {v.description && (
+              <div className="text-sm text-muted-foreground line-clamp-2">{v.description}</div>
+            )}
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button size="sm" variant="outline" className="flex-1">
+                <Heart className="h-4 w-4 mr-2" />
+                {(stats[v.id]?.likes || 0).toLocaleString()}
+              </Button>
+              <Button size="sm" variant="outline" className="flex-1">
+                <MessageCircle className="h-4 w-4 mr-2" />
+                {(stats[v.id]?.comments || 0).toLocaleString()}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => share(v)}>
+                <Share2 className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* NEW: per-card Delete (only when showDelete=true) */}
+            {showDelete && (
+              <div className="pt-2">
+                <DeleteSplikButton
+                  splikId={v.id}
+                  videoUrl={v.video_url}
+                  thumbnailUrl={v.thumbnail_url}
+                  onDeleted={() => onDeleted?.(v.id)}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </DeleteSplikButton>
+              </div>
+            )}
           </div>
         </Card>
       ))}
     </div>
   );
-};
-
-export default VideoGrid;
+}
