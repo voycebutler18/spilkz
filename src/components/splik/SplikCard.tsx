@@ -62,11 +62,57 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [showBoostModal, setShowBoostModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [isInView, setIsInView] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const viewedRef = useRef(false);
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
+
+  // Intersection Observer for autoplay
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const isVisible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
+          setIsInView(isVisible);
+          
+          if (isVisible && videoRef.current) {
+            // Auto-play when 50% of video is visible
+            videoRef.current.currentTime = 0;
+            videoRef.current.play().catch(() => {
+              // Handle autoplay failures (some browsers block it)
+              console.log('Autoplay failed - user interaction may be required');
+            });
+            setIsPlaying(true);
+            if (!viewedRef.current) {
+              viewedRef.current = true;
+              // place view tracking call here if you add one later
+            }
+          } else if (videoRef.current && isPlaying) {
+            // Pause when video goes out of view
+            videoRef.current.pause();
+            setIsPlaying(false);
+          }
+        });
+      },
+      {
+        threshold: [0.5], // Trigger when 50% of the video is visible
+        rootMargin: '0px'
+      }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => {
+      if (cardRef.current) {
+        observer.unobserve(cardRef.current);
+      }
+    };
+  }, [isPlaying]);
 
   useEffect(() => {
     const getUser = async () => {
@@ -162,6 +208,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setShowCommentsModal(true);
     onReact?.();
   };
+  
   const handleShare = () => {
     setShowShareModal(true);
     onShare?.();
@@ -241,6 +288,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const handleReport = () => setShowReportModal(true);
+  
   const handleBlock = () =>
     toast({
       title: "User blocked",
@@ -300,6 +348,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   return (
     <div
+      ref={cardRef}
       className={cn(
         "relative bg-card rounded-xl overflow-hidden shadow-lg border border-border w-full max-w-[500px] mx-auto",
         isBoosted && "ring-2 ring-primary/50"
