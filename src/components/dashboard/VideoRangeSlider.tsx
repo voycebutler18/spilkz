@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 
 interface VideoRangeSliderProps {
@@ -6,12 +6,19 @@ interface VideoRangeSliderProps {
   max: number;
   value: [number, number];
   onChange: (value: [number, number]) => void;
+  /** Maximum allowed range length (seconds). Default 3 */
   maxRange?: number;
   step?: number;
   disabled?: boolean;
   className?: string;
 }
 
+/**
+ * Mobile-friendly two-thumb range slider.
+ * - Uses Pointer Events so drag works on iOS/Android/desktop.
+ * - Sets touch-action: none to prevent page scrolling while dragging.
+ * - Enforces a MAX range length (end - start <= maxRange).
+ */
 export function VideoRangeSlider({
   min = 0,
   max = 100,
@@ -22,100 +29,150 @@ export function VideoRangeSlider({
   disabled = false,
   className,
 }: VideoRangeSliderProps) {
-  const [isDragging, setIsDragging] = useState<"start" | "end" | null>(null);
+  const [dragging, setDragging] = useState<"start" | "end" | null>(null);
   const sliderRef = useRef<HTMLDivElement>(null);
+  const pointerIdRef = useRef<number | null>(null);
 
-  const percentageStart = ((value[0] - min) / (max - min)) * 100;
-  const percentageEnd = ((value[1] - min) / (max - min)) * 100;
+  const percent = (v: number) => ((v - min) / (max - min)) * 100;
+  const percentageStart = percent(value[0]);
+  const percentageEnd = percent(value[1]);
 
-  const handleMouseDown = (handle: "start" | "end") => (e: React.MouseEvent) => {
+  const roundToStep = (v: number) => Math.round(v / step) * step;
+
+  const calcValueFromClientX = useCallback((clientX: number) => {
+    const rect = sliderRef.current?.getBoundingClientRect();
+    if (!rect) return min;
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const raw = min + (x / rect.width) * (max - min);
+    return roundToStep(Math.max(min, Math.min(max, raw)));
+  }, [min, max, step]);
+
+  // Clamp so that (end - start) <= maxRange
+  const clampByMaxRange = useCallback((start: number, end: number, handle: "start" | "end"): [number, number] => {
+    let s = start;
+    let e = end;
+
+    if (handle === "start") {
+      // Start can’t be after end, and cannot make the window > maxRange
+      s = Math.min(s, e);                // not past end
+      s = Math.max(min, s);              // not before min
+      if (e - s > maxRange) s = e - maxRange;
+      s = Math.max(min, s);
+    } else {
+      // End can’t be before start, and cannot make the window > maxRange
+      e = Math.max(e, s);                // not before start
+      e = Math.min(max, e);              // not after max
+      if (e - s > maxRange) e = s + maxRange;
+      e = Math.min(max, e);
+    }
+    // final guard
+    if (e < s) e = s;
+    return [Number(s.toFixed(3)), Number(e.toFixed(3))];
+  }, [min, max, maxRange]);
+
+  // Pointer handlers
+  const startDrag = (handle: "start" | "end") => (e: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
     e.preventDefault();
-    setIsDragging(handle);
-  };
-
-  const calculateValue = (clientX: number): number => {
-    if (!sliderRef.current) return 0;
-    
-    const rect = sliderRef.current.getBoundingClientRect();
-    const percentage = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
-    const rawValue = (percentage / 100) * (max - min) + min;
-    
-    // Round to step
-    return Math.round(rawValue / step) * step;
+    (e.currentTarget as any).setPointerCapture?.(e.pointerId);
+    pointerIdRef.current = e.pointerId;
+    setDragging(handle);
   };
 
   useEffect(() => {
-    if (!isDragging) return;
+    if (!dragging) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const newValue = calculateValue(e.clientX);
-      
-      if (isDragging === "start") {
-        // Ensure start doesn't go past end - maxRange
-        const maxStart = value[1] - maxRange;
-        const clampedValue = Math.min(newValue, maxStart);
-        onChange([Math.max(min, clampedValue), value[1]]);
+    const onMove = (e: PointerEvent) => {
+      if (disabled) return;
+      if (pointerIdRef.current !== null && e.pointerId !== pointerIdRef.current) return;
+      // Prevent page scroll while dragging on mobile
+      e.preventDefault();
+
+      const newPos = calcValueFromClientX(e.clientX);
+      if (dragging === "start") {
+        const [s, e2] = clampByMaxRange(newPos, value[1], "start");
+        onChange([s, e2]);
       } else {
-        // Ensure end doesn't go before start + maxRange
-        const minEnd = value[0] + maxRange;
-        const clampedValue = Math.max(newValue, minEnd);
-        onChange([value[0], Math.min(max, clampedValue)]);
+        const [s2, e3] = clampByMaxRange(value[0], newPos, "end");
+        onChange([s2, e3]);
       }
     };
 
-    const handleMouseUp = () => {
-      setIsDragging(null);
+    const endDrag = () => {
+      pointerIdRef.current = null;
+      setDragging(null);
     };
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    // Listen at document level so drags don’t get “lost”
+    document.addEventListener("pointermove", onMove, { passive: false });
+    document.addEventListener("pointerup", endDrag, { passive: true });
+    document.addEventListener("pointercancel", endDrag, { passive: true });
 
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("pointermove", onMove as any);
+      document.removeEventListener("pointerup", endDrag as any);
+      document.removeEventListener("pointercancel", endDrag as any);
     };
-  }, [isDragging, value, onChange, min, max, maxRange, step]);
+  }, [dragging, value, onChange, disabled, calcValueFromClientX, clampByMaxRange]);
 
   return (
     <div
       ref={sliderRef}
       className={cn(
-        "relative h-2 w-full rounded-full bg-muted cursor-pointer",
+        // key mobile bits: prevent scroll/selection while dragging
+        "relative h-2 w-full rounded-full bg-muted cursor-pointer touch-none select-none",
         disabled && "opacity-50 cursor-not-allowed",
         className
       )}
+      role="group"
+      aria-label="Trim range"
     >
-      {/* Track */}
+      {/* Track fill */}
       <div
         className="absolute h-full rounded-full bg-primary"
         style={{
           left: `${percentageStart}%`,
-          width: `${percentageEnd - percentageStart}%`,
+          width: `${Math.max(0, percentageEnd - percentageStart)}%`,
         }}
       />
-      
+
       {/* Start handle */}
       <div
         className={cn(
-          "absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-background shadow-lg cursor-grab",
-          isDragging === "start" && "cursor-grabbing scale-110",
+          "absolute top-1/2 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-background bg-primary shadow-lg",
+          "h-6 w-6 md:h-5 md:w-5 touch-none", // large touch target + prevent default touch behavior
+          dragging === "start" ? "cursor-grabbing scale-110" : "cursor-grab",
           disabled && "cursor-not-allowed"
         )}
         style={{ left: `${percentageStart}%` }}
-        onMouseDown={handleMouseDown("start")}
+        role="slider"
+        aria-label="Start time"
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value[0]}
+        aria-disabled={disabled}
+        onPointerDown={startDrag("start")}
       />
-      
+
       {/* End handle */}
       <div
         className={cn(
-          "absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-background shadow-lg cursor-grab",
-          isDragging === "end" && "cursor-grabbing scale-110",
+          "absolute top-1/2 -translate-y-1/2 -translate-x-1/2 rounded-full border-2 border-background bg-primary shadow-lg",
+          "h-6 w-6 md:h-5 md:w-5 touch-none",
+          dragging === "end" ? "cursor-grabbing scale-110" : "cursor-grab",
           disabled && "cursor-not-allowed"
         )}
         style={{ left: `${percentageEnd}%` }}
-        onMouseDown={handleMouseDown("end")}
+        role="slider"
+        aria-label="End time"
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuenow={value[1]}
+        aria-disabled={disabled}
+        onPointerDown={startDrag("end")}
       />
     </div>
   );
 }
+
+export default VideoRangeSlider;
