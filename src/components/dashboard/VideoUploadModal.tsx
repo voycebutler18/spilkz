@@ -24,6 +24,7 @@ import {
   Zap,
   Smartphone,
   Info,
+  Utensils,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -51,13 +52,25 @@ interface VideoUploadModalProps {
 
 const MAX_VIDEO_DURATION = 3; // 3 seconds max
 const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
-const MOBILE_MAX_SIZE  = 1024 * 1024 * 1024; // 1GB
+const MOBILE_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
 const PREFERRED_EXTS = [".mp4", "mp4"]; // messaging only
+
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const value = bytes / Math.pow(k, i);
+  return `${value.toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
+};
 
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+
+  // NEW: category flag
+  const [isFood, setIsFood] = useState(false);
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -112,7 +125,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
   useEffect(() => {
     const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       setCurrentUser(user);
     };
     getUser();
@@ -139,37 +154,50 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   }, []);
 
   // FASTER proxy: 720p cap, ultrafast, higher CRF, mono 96k
-  const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
-    setTranscoding(true);
-    setTranscodeProgress(1);
-    try {
-      const ffmpeg = await getFFmpeg();
-      const inputName = "input.mov";
-      const outputName = "output.mp4";
+  const transcodeMovToMp4 = useCallback(
+    async (movFile: File): Promise<Blob> => {
+      setTranscoding(true);
+      setTranscodeProgress(1);
+      try {
+        const ffmpeg = await getFFmpeg();
+        const inputName = "input.mov";
+        const outputName = "output.mp4";
 
-      await ffmpeg.writeFile(inputName, await fetchFile(movFile));
+        await ffmpeg.writeFile(inputName, await fetchFile(movFile));
 
-      await ffmpeg.exec([
-        "-i", inputName,
-        "-vf", "scale='min(1280,iw)':-2", // cap width at 1280 for speed
-        "-r", "30",                      // stable seek & smaller
-        "-c:v", "libx264",
-        "-preset", "ultrafast",          // fastest encode
-        "-crf", "28",                    // smaller & faster than 23
-        "-c:a", "aac",
-        "-ac", "1",                      // mono
-        "-b:a", "96k",                   // smaller
-        "-movflags", "+faststart",
-        outputName
-      ]);
+        await ffmpeg.exec([
+          "-i",
+          inputName,
+          "-vf",
+          "scale='min(1280,iw)':-2", // cap width at 1280 for speed
+          "-r",
+          "30", // stable seek & smaller
+          "-c:v",
+          "libx264",
+          "-preset",
+          "ultrafast", // fastest encode
+          "-crf",
+          "28", // smaller & faster than 23
+          "-c:a",
+          "aac",
+          "-ac",
+          "1", // mono
+          "-b:a",
+          "96k", // smaller
+          "-movflags",
+          "+faststart",
+          outputName,
+        ]);
 
-      const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
-      return new Blob([data], { type: "video/mp4" });
-    } finally {
-      setTranscoding(false);
-      setTranscodeProgress(0);
-    }
-  }, [getFFmpeg]);
+        const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+        return new Blob([data], { type: "video/mp4" });
+      } finally {
+        setTranscoding(false);
+        setTranscodeProgress(0);
+      }
+    },
+    [getFFmpeg]
+  );
 
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -191,7 +219,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (!validTypes.includes(fileType)) {
         toast({
           title: "Invalid file type",
-          description: "Please upload a video file (MP4, MOV, FLV, WebM, AVI)",
+          description:
+            "Please upload a video file (MP4, MOV, FLV, WebM, AVI)",
           variant: "destructive",
         });
         setProcessingVideo(false);
@@ -201,7 +230,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (selectedFile.size > maxFileSize) {
         toast({
           title: "File too large",
-          description: `On ${isMobile ? "mobile" : "desktop"}, the max size is ${isMobile ? "150MB" : "500MB"}.`,
+          description: `Max file size is ${formatBytes(
+            maxFileSize
+          )} on ${isMobile ? "mobile" : "desktop"}.`,
           variant: "destructive",
         });
         setProcessingVideo(false);
@@ -217,7 +248,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         if (/\.(mov)$/i.test(selectedFile.name)) {
           toast({
             title: "Heads up: MOV selected",
-            description: "MP4 uploads preview and upload faster. Converting now for smooth trimming.",
+            description:
+              "MP4 uploads preview and upload faster. Converting now for smooth trimming.",
           });
         } else if (/\.(mp4)$/i.test(selectedFile.name)) {
           toast({
@@ -232,7 +264,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             if (isMobile) {
               toast({
                 title: "Converting on mobile",
-                description: "MOV → MP4 for preview. This can take a bit on phones.",
+                description:
+                  "MOV → MP4 for preview. This can take a bit on phones.",
               });
             }
             const mp4Blob = await transcodeMovToMp4(selectedFile);
@@ -277,7 +310,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
               probe.onerror = () =>
                 finish(false, new Error("Failed to read MP4 preview metadata."));
-              setTimeout(() => finish(false, new Error("Video metadata timeout")), 8000);
+              setTimeout(
+                () => finish(false, new Error("Video metadata timeout")),
+                8000
+              );
             });
           } catch (e: any) {
             console.error(e);
@@ -285,7 +321,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             setShowTrimmer(false);
             setOriginalDuration(MAX_VIDEO_DURATION);
             setTrimRange([0, MAX_VIDEO_DURATION]);
-            setVideoError("We couldn't prepare a preview for this MOV. You can still upload it.");
+            setVideoError(
+              "We couldn't prepare a preview for this MOV. You can still upload it."
+            );
           }
           setProcessingVideo(false);
           return;
@@ -334,7 +372,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           probe.onerror = () =>
             finish(false, new Error(`Failed to read video metadata (${fileType}).`));
 
-          setTimeout(() => finish(false, new Error("Video metadata timeout")), 8000);
+          setTimeout(
+            () => finish(false, new Error("Video metadata timeout")),
+            8000
+          );
         });
       } catch (err: any) {
         console.error("Error processing video:", err);
@@ -446,8 +487,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     blob: Blob
   ): Promise<{ publicUrl: string }> => {
     // 1) Make a signed upload URL
-    const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(filePath);
-    if (error || !data?.signedUrl) throw error || new Error("Failed to create signed upload URL.");
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .createSignedUploadUrl(filePath);
+    if (error || !data?.signedUrl)
+      throw error || new Error("Failed to create signed upload URL.");
 
     // 2) XHR PUT to signed URL for progress
     setUploading(true);
@@ -461,7 +505,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("PUT", data.signedUrl, true);
-      xhr.setRequestHeader("content-type", (blob as any).type || "application/octet-stream");
+      xhr.setRequestHeader(
+        "content-type",
+        (blob as any).type || "application/octet-stream"
+      );
       // The signed URL includes auth via query params, so no Authorization header required.
 
       xhr.upload.onprogress = (event) => {
@@ -472,7 +519,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
         const seconds = (Date.now() - startedAt) / 1000;
         if (seconds > 0) {
-          const MBps = (loaded / (1024 * 1024)) / seconds;
+          const MBps = loaded / (1024 * 1024) / seconds;
           setUploadSpeedMBps(MBps);
 
           const remainingBytes = totalBytes - loaded;
@@ -530,9 +577,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
       // Always cap at 3s
       const finalStart = showTrimmer ? trimRange[0] : 0;
-      const finalEnd = showTrimmer ? trimRange[1] : Math.min(3, originalDuration || 3);
+      const finalEnd = showTrimmer
+        ? trimRange[1]
+        : Math.min(3, originalDuration || 3);
 
-      // Save row
+      // Save row — include is_food so it shows on the Food page
       const { error: dbError } = await supabase.from("spliks").insert({
         user_id: currentUser.id,
         title,
@@ -548,16 +597,22 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         status: "active",
         trim_start: finalStart,
         trim_end: finalEnd,
+        // NEW:
+        is_food: isFood,
       });
       if (dbError) throw dbError;
 
       setUploadProgress(100);
-      toast({ title: "Upload successful!", description: "Your 3-second Splik is live." });
+      toast({
+        title: "Upload successful!",
+        description: "Your 3-second Splik is live.",
+      });
 
       // Reset
       setFile(null);
       setTitle("");
       setDescription("");
+      setIsFood(false);
       if (videoPreview) URL.revokeObjectURL(videoPreview);
       setVideoPreview(null);
       setCurrentTime(0);
@@ -588,7 +643,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       e.preventDefault();
       const droppedFile = e.dataTransfer.files[0];
       if (droppedFile) {
-        const fakeEvent = { target: { files: [droppedFile] } } as unknown as React.ChangeEvent<HTMLInputElement>;
+        const fakeEvent =
+          ({ target: { files: [droppedFile] } } as unknown as React.ChangeEvent<HTMLInputElement>);
         handleFileSelect(fakeEvent);
       }
     },
@@ -620,7 +676,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-primary" />
               <AlertDescription className="text-sm">
-                <strong>Tip:</strong> <span className="font-semibold">MP4 uploads and previews the fastest.</span> MOVs may convert first for trimming (slower on phones).
+                <strong>Tip:</strong>{" "}
+                <span className="font-semibold">MP4 uploads and previews the fastest.</span>{" "}
+                MOVs may convert first for trimming (slower on phones).
               </AlertDescription>
             </div>
           </Alert>
@@ -653,9 +711,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
               <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
               <p className="text-xs text-muted-foreground mb-2">
-                Supported: MP4 (preferred), MOV, FLV, WebM, AVI (max {isMobile ? "150MB" : "500MB"})
+                Supported: MP4 (preferred), MOV, FLV, WebM, AVI (max {formatBytes(maxFileSize)})
               </p>
-              <p className="text-xs text-primary font-medium">Videos will be trimmed to exactly 3 seconds</p>
+              <p className="text-xs text-primary font-medium">
+                Videos will be trimmed to exactly 3 seconds
+              </p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -691,7 +751,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
               {/* Preview area */}
               <div className="flex justify-center">
-                <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
+                <div
+                  className="relative bg-black rounded-xl overflow-hidden"
+                  style={{ width: "360px", maxWidth: "100%" }}
+                >
                   <div className="relative" style={{ paddingBottom: "177.78%" }}>
                     {!videoPreview && !transcoding ? (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
@@ -752,8 +815,15 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                                 className="w-full"
                               />
 
-                              <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
-                                {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                              <button
+                                onClick={toggleMute}
+                                className="text-white hover:text-primary transition-colors"
+                              >
+                                {isMuted ? (
+                                  <VolumeX className="h-5 w-5" />
+                                ) : (
+                                  <Volume2 className="h-5 w-5" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -794,7 +864,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       }}
                       maxRange={3}
                       step={0.1}
-                      className="my-4 touch-none select-none"  // 👈 prevents page scroll; disables text selection while dragging
+                      className="my-4 touch-none select-none" // prevents page scroll; disables text selection while dragging
                     />
 
                     <div className="flex gap-2 flex-wrap">
@@ -848,7 +918,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               )}
 
-              {/* Title / Description */}
+              {/* Title / Description / Category */}
               <div className="space-y-3">
                 <div>
                   <Label htmlFor="title">Title</Label>
@@ -870,6 +940,32 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     placeholder="Add a description"
                     disabled={uploading}
                   />
+                </div>
+
+                {/* NEW: Category control (Food) */}
+                <div className="mt-2 flex items-center justify-between rounded-md border p-3">
+                  <div className="flex items-start gap-2">
+                    <Utensils className="h-4 w-4 text-primary mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium">Food video</p>
+                      <p className="text-xs text-muted-foreground">
+                        If enabled, this video will also appear on the Food page.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="inline-flex cursor-pointer items-center">
+                    <input
+                      type="checkbox"
+                      className="peer sr-only"
+                      checked={isFood}
+                      onChange={(e) => setIsFood(e.target.checked)}
+                      disabled={uploading}
+                    />
+                    <span className="h-6 w-10 rounded-full bg-muted transition peer-checked:bg-primary/80 relative">
+                      <span className="absolute left-1 top-1 h-4 w-4 rounded-full bg-background transition peer-checked:translate-x-4" />
+                    </span>
+                  </label>
                 </div>
               </div>
 
@@ -901,6 +997,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     setVideoPreview(null);
                     setTitle("");
                     setDescription("");
+                    setIsFood(false);
                     setIsPlaying(false);
                     setVideoReady(false);
                     setVideoError(null);
