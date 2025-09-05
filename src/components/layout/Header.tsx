@@ -1,7 +1,7 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Menu } from "lucide-react";
+import { Sparkles, LogOut, Menu, Search, Home, MessageSquare, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet";
 import {
@@ -11,6 +11,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -103,49 +104,84 @@ const Header: React.FC = () => {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-3 sm:px-4">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-3 sm:px-4">
         {/* Left: Logo */}
         <Link to="/" className="flex items-center gap-2">
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
             <Sparkles className="h-4 w-4 text-white" />
           </span>
-          <span className="bg-clip-text text-xl font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
+          <span className="bg-clip-text text-lg font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
             Splikz
           </span>
         </Link>
 
-        {/* Desktop Nav */}
-        <nav className="hidden items-center gap-6 md:flex">
-          <NavLink to="/" exact>
-            Home
-          </NavLink>
-          {/* Discover points to /explore */}
-          <NavLink to="/explore">Discover</NavLink>
-          <NavLink to="/food">Food</NavLink>
-          <NavLink to="/about">About</NavLink>
-          <NavLink to="/brands">For Brands</NavLink>
-          <NavLink to="/help">Help</NavLink>
-        </nav>
+        {/* Universal Search (omnibox) */}
+        <div className="relative hidden w-full max-w-xl flex-1 md:block">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search people and videos"
+            className="pl-8"
+            aria-label="Search people and videos"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const q = (e.currentTarget as HTMLInputElement).value.trim();
+                if (q) navigate(`/search?q=${encodeURIComponent(q)}`);
+              }
+            }}
+          />
+        </div>
 
-        {/* Right: Auth / User */}
-        <div className="hidden items-center gap-3 md:flex">
-          {user ? (
-            <>
-              <Button asChild variant="outline">
-                <Link to="/dashboard">Creator Dashboard</Link>
+        {/* Desktop: Primary nav per spec */}
+        <nav className="ml-auto hidden items-center gap-1 md:flex">
+          <Button variant="ghost" size="sm" className="gap-2" onClick={() => navigate("/")}>
+            <Home className="h-4 w-4" /> Home
+          </Button>
+
+          {user && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2"
+              onClick={() => navigate("/dashboard")}
+            >
+              {/* If you have a specific icon for creator analytics, swap it in */}
+              <span className="inline-flex items-center">Creator Dashboard</span>
+            </Button>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2"
+            onClick={() => navigate("/messages")}
+          >
+            <MessageSquare className="h-4 w-4" /> Messages
+          </Button>
+
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={() => navigate("/upload")}
+            aria-label="Upload"
+          >
+            <Upload className="h-4 w-4" /> Upload
+          </Button>
+
+          {/* Avatar menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="p-0 h-9 w-9 rounded-full" aria-label="Account">
+                <Avatar className="h-9 w-9">
+                  {profile?.avatar_url ? (
+                    <AvatarImage src={profile.avatar_url} alt="Avatar" />
+                  ) : null}
+                  <AvatarFallback>{avatarInitial}</AvatarFallback>
+                </Avatar>
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="p-0 h-9 w-9 rounded-full">
-                    <Avatar className="h-9 w-9">
-                      {profile?.avatar_url ? (
-                        <AvatarImage src={profile.avatar_url} alt="Avatar" />
-                      ) : null}
-                      <AvatarFallback>{avatarInitial}</AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {user ? (
+                <>
                   <DropdownMenuItem asChild>
                     <Link to={`/profile/${user.id}`}>Profile</Link>
                   </DropdownMenuItem>
@@ -159,29 +195,23 @@ const Header: React.FC = () => {
                     <LogOut className="mr-2 h-4 w-4" />
                     Sign out
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </>
-          ) : (
-            <>
-              <Link
-                to="/login"
-                className="text-sm font-medium text-foreground/80 hover:text-foreground"
-              >
-                Log in
-              </Link>
-              <Button
-                asChild
-                className="bg-gradient-to-r from-purple-600 to-cyan-500 text-white"
-              >
-                <Link to="/signup">Sign up</Link>
-              </Button>
-            </>
-          )}
-        </div>
+                </>
+              ) : (
+                <>
+                  <DropdownMenuItem asChild>
+                    <Link to="/login">Log in</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/signup">Sign up</Link>
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </nav>
 
-        {/* Mobile: Sheet Menu */}
-        <div className="md:hidden">
+        {/* Mobile: Sheet Menu — keeps quick access; search handled via /search page */}
+        <div className="md:hidden ml-auto">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" aria-label="Open menu" className="relative">
@@ -194,7 +224,7 @@ const Header: React.FC = () => {
               className="z-[110] w-[18rem] bg-background p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
             >
               <div className="flex items-center gap-2 px-4 py-3 border-b">
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
                   <Sparkles className="h-4 w-4 text-white" />
                 </span>
                 <span className="bg-clip-text text-lg font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
@@ -203,48 +233,46 @@ const Header: React.FC = () => {
               </div>
 
               <nav className="flex flex-col gap-3 p-4">
-                {/* Core links */}
                 <NavLink to="/" exact onClick={() => setOpen(false)}>
                   Home
                 </NavLink>
-                <NavLink to="/explore" onClick={() => setOpen(false)}>
-                  Discover
+
+                {user && (
+                  <NavLink to="/dashboard" onClick={() => setOpen(false)}>
+                    Creator Dashboard
+                  </NavLink>
+                )}
+
+                <NavLink to="/messages" onClick={() => setOpen(false)}>
+                  Messages
                 </NavLink>
-                <NavLink to="/food" onClick={() => setOpen(false)}>
-                  Food
-                </NavLink>
-                <NavLink to="/about" onClick={() => setOpen(false)}>
-                  About
-                </NavLink>
-                <NavLink to="/brands" onClick={() => setOpen(false)}>
-                  For Brands
-                </NavLink>
-                <NavLink to="/help" onClick={() => setOpen(false)}>
-                  Help
-                </NavLink>
+
+                <Button
+                  className="justify-start gap-2"
+                  onClick={() => {
+                    setOpen(false);
+                    navigate("/upload");
+                  }}
+                >
+                  <Upload className="h-4 w-4" /> Upload
+                </Button>
 
                 <div className="mt-2 h-px bg-border" />
 
                 {user ? (
                   <>
-                    <NavLink to="/dashboard" onClick={() => setOpen(false)}>
-                      Creator Dashboard
-                    </NavLink>
-                    <NavLink
-                      to="/dashboard/favorites"
-                      onClick={() => setOpen(false)}
-                    >
+                    <NavLink to="/dashboard/favorites" onClick={() => setOpen(false)}>
                       Favorites
                     </NavLink>
-                    <NavLink
-                      to={`/profile/${user.id}`}
-                      onClick={() => setOpen(false)}
-                    >
+                    <NavLink to={`/profile/${user.id}`} onClick={() => setOpen(false)}>
                       Profile
                     </NavLink>
                     <Button
                       variant="outline"
-                      onClick={handleSignOut}
+                      onClick={async () => {
+                        await handleSignOut();
+                        setOpen(false);
+                      }}
                       className="mt-1 justify-start"
                     >
                       <LogOut className="mr-2 h-4 w-4" />
@@ -253,7 +281,9 @@ const Header: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <div className="mt-1 text-sm text-muted-foreground">Log in</div>
+                    <NavLink to="/login" onClick={() => setOpen(false)}>
+                      Log in
+                    </NavLink>
                     <Button
                       asChild
                       className="bg-gradient-to-r from-purple-600 to-cyan-500 text-white"
@@ -261,9 +291,6 @@ const Header: React.FC = () => {
                     >
                       <Link to="/signup">Sign up</Link>
                     </Button>
-                    <NavLink to="/login" onClick={() => setOpen(false)}>
-                      Already have an account? Log in
-                    </NavLink>
                   </>
                 )}
               </nav>
