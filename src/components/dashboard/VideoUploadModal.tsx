@@ -43,6 +43,25 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi";
   const maxFileSize = 500 * 1024 * 1024; // 500MB
 
+  // --- helper: infer MIME type if browser didn't set File.type ---
+  const inferMimeFromName = (name: string): string => {
+    const ext = name.split(".").pop()?.toLowerCase();
+    switch (ext) {
+      case "mp4":
+        return "video/mp4";
+      case "mov":
+        return "video/quicktime";
+      case "webm":
+        return "video/webm";
+      case "flv":
+        return "video/x-flv";
+      case "avi":
+        return "video/x-msvideo";
+      default:
+        return "video/mp4";
+    }
+  };
+
   // Get current user on component mount
   useEffect(() => {
     const getUser = async () => {
@@ -69,7 +88,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     if (!selectedFile) return;
 
     // Validate file type
-    const fileType = selectedFile.type;
+    const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
     const validTypes = ['video/mp4', 'video/quicktime', 'video/x-flv', 'video/webm', 'video/x-msvideo'];
     
     if (!validTypes.includes(fileType)) {
@@ -302,7 +321,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           video_url: publicUrl,
           duration: 3, // ALWAYS 3 seconds max, no exceptions
           file_size: file.size,
-          mime_type: file.type,
+          mime_type: file.type || inferMimeFromName(file.name),
           status: 'active',
           trim_start: showTrimmer ? trimRange[0] : 0,
           trim_end: showTrimmer ? trimRange[1] : Math.min(3, originalDuration),
@@ -420,16 +439,36 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: '360px', maxWidth: '100%' }}>
                   {/* 9:16 aspect ratio container for Instagram-style */}
                   <div className="relative" style={{ paddingBottom: '177.78%' }}>
+                    {/* ---------- ONLY CHANGED BLOCK: add <source> with MIME type ---------- */}
                     <video
+                      key={videoPreview || "preview"}
                       ref={videoRef}
-                      src={videoPreview || undefined}
                       className="absolute inset-0 w-full h-full object-cover"
                       loop={false}
                       muted={isMuted}
                       playsInline
                       preload="auto"
                       controls={false}
-                    />
+                      onError={(e) => {
+                        console.warn("Preview failed to play:", file?.type, file?.name);
+                      }}
+                    >
+                      {/* try exact MIME the File reports or inferred */}
+                      {videoPreview && file && (
+                        <source
+                          src={videoPreview}
+                          type={file.type || inferMimeFromName(file.name)}
+                        />
+                      )}
+                      {/* extra fallback if extension is ambiguous */}
+                      {videoPreview && (
+                        <>
+                          <source src={videoPreview} type="video/mp4" />
+                          <source src={videoPreview} type="video/quicktime" />
+                        </>
+                      )}
+                    </video>
+                    {/* -------------------------------------------------------------------- */}
                     
                     {/* Loading overlay if video not ready */}
                     {!videoReady && (
