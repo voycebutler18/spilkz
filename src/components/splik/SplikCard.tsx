@@ -49,6 +49,16 @@ interface SplikCardProps {
   onShare?: () => void;
 }
 
+/** Create (and cache) a per-tab session id for view de-duping */
+const getSessionId = () => {
+  let sid = sessionStorage.getItem("splik_session_id");
+  if (!sid) {
+    sid = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    sessionStorage.setItem("splik_session_id", sid);
+  }
+  return sid;
+};
+
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
@@ -65,6 +75,15 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
+
+  // --- NEW: session + "already-sent" guard for this card
+  const sessionIdRef = useRef<string>("");
+  const viewSentRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    sessionIdRef.current = getSessionId();
+    viewSentRef.current = false; // reset when card changes
+  }, [splik.id]);
 
   useEffect(() => {
     const getUser = async () => {
@@ -257,6 +276,26 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return safe.toString();
   };
 
+  // --- NEW: record a view once per card when playback actually starts
+  const trackView = async () => {
+    if (viewSentRef.current) return;
+    viewSentRef.current = true;
+    try {
+      const { error } = await supabase.rpc("increment_view_with_session", {
+        p_splik_id: splik.id,
+        p_session_id: sessionIdRef.current,
+        p_viewer_id: currentUser?.id ?? null,
+      });
+      if (error) throw error;
+      // realtime listener will update the badge; optional optimistic bump:
+      // setViewCount((c) => (c || 0) + 1);
+    } catch (err) {
+      console.warn("increment_view_with_session failed, showing optimistic bump", err);
+      // fallback: optimistic bump so the user sees a change even if RPC is unavailable
+      setViewCount((c) => (c || 0) + 1);
+    }
+  };
+
   const handlePlayToggle = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -266,7 +305,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       setIsPlaying(false);
     } else {
       video.currentTime = 0;
-      video.play();
+      video
+        .play()
+        .then(() => {
+          trackView(); // NEW: ensure a view is recorded when user plays
+        })
+        .catch(() => {});
       setIsPlaying(true);
     }
   };
@@ -331,6 +375,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           muted={isMuted}
           playsInline
           onTimeUpdate={handleTimeUpdate}
+          onPlay={trackView}          /* NEW: also record view when native play fires */
         />
 
         {/* Play/Pause overlay */}
