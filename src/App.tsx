@@ -15,7 +15,7 @@ import CreatorDashboard from "./pages/Dashboard/CreatorDashboard";
 import Favorites from "./pages/Dashboard/Favorites";
 import Profile from "./pages/Profile";
 import VideoPage from "./pages/VideoPage";
-import CreatorProfile from "./pages/CreatorProfile"; // ✅ FIXED import
+import { CreatorProfile } from "./pages/CreatorProfile";
 import NotFound from "./pages/NotFound";
 import Terms from "./pages/legal/Terms";
 import Privacy from "./pages/legal/Privacy";
@@ -61,7 +61,7 @@ const App = () => (
           <Route path="/dashboard/favorites" element={<Favorites />} />
 
           <Route path="/profile/:id" element={<Profile />} />
-          <Route path="/creator/:username" element={<CreatorProfile />} /> {/* ✅ FIXED */}
+          <Route path="/creator/:username" element={<CreatorProfile />} />
           <Route path="/video/:id" element={<VideoPage />} />
 
           {/* NEW: Food route */}
