@@ -3,11 +3,7 @@ import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetTrigger,
-  SheetContent,
-} from "@/components/ui/sheet";
+import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 const NavLink: React.FC<
@@ -37,7 +33,7 @@ const Header: React.FC = () => {
           <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
             <Sparkles className="h-4 w-4 text-white" />
           </span>
-          <span className="bg-clip-text text-xl font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
+        <span className="bg-clip-text text-xl font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
             Splikz
           </span>
         </Link>
@@ -47,11 +43,12 @@ const Header: React.FC = () => {
           <NavLink to="/" exact>
             Home
           </NavLink>
-          <NavLink to="/discover">
+          {/* Discover should point to /explore */}
+          <NavLink to="/explore">
             Discover
           </NavLink>
-          {/* Replaced "Prompts" with "Food" and pointed away from /prompts */}
-          <NavLink to="/discover?category=food">
+          {/* Food has its own page */}
+          <NavLink to="/food">
             Food
           </NavLink>
           <NavLink to="/about">
@@ -83,7 +80,6 @@ const Header: React.FC = () => {
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" aria-label="Open menu">
-                <div className="i-[menu] sr-only" />
                 {/* Simple hamburger */}
                 <span className="block h-[2px] w-5 bg-foreground" />
                 <span className="mt-1 block h-[2px] w-5 bg-foreground" />
@@ -104,15 +100,16 @@ const Header: React.FC = () => {
                 </span>
               </div>
 
-              <div className="flex flex-col gap-2 p-4">
+              <nav className="flex flex-col gap-2 p-4">
                 <NavLink to="/" exact>
                   Home
                 </NavLink>
-                <NavLink to="/discover">
+                {/* Discover -> /explore */}
+                <NavLink to="/explore">
                   Discover
                 </NavLink>
-                {/* Food replaces Prompts on mobile too */}
-                <NavLink to="/discover?category=food">
+                {/* Food page */}
+                <NavLink to="/food">
                   Food
                 </NavLink>
                 <NavLink to="/about">
@@ -136,7 +133,7 @@ const Header: React.FC = () => {
                 <Button asChild className="bg-gradient-to-r from-purple-600 to-cyan-500 text-white">
                   <Link to="/signup">Sign up</Link>
                 </Button>
-              </div>
+              </nav>
             </SheetContent>
           </Sheet>
         </div>
