@@ -2,8 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design system (HSL-only) + dark-first visual direction */
-
+/* HSL design tokens + dark-first visual direction */
 @layer base {
   :root {
     /* Brand */
@@ -21,15 +20,13 @@
     --shadow-lg: 0 20px 40px -8px hsl(0 0% 0% / 0.45);
     --shadow-glow: 0 0 40px hsl(var(--violet-glow) / 0.45);
 
-    /* Motion */
+    /* Motion + Focus */
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     --transition-bounce: all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-
-    /* Focus */
     --ring: 272 91% 58%;
     --focus-ring: 0 0 0 3px hsl(var(--ring) / 0.45);
 
-    /* LIGHT THEME (fallback if not dark) */
+    /* LIGHT (fallback) */
     --background: 0 0% 100%;
     --foreground: 220 14% 20%;
 
@@ -71,7 +68,7 @@
     --sidebar-ring: 272 91% 58%;
   }
 
-  /* DARK THEME (default site look; add class="dark" on <html>) */
+  /* DARK (default site look) — make sure <html class="dark"> */
   .dark {
     --background: 220 14% 8%;
     --foreground: 0 0% 95%;
@@ -121,23 +118,11 @@
 }
 
 @layer base {
-  * {
-    @apply border-border;
-  }
+  * { @apply border-border; }
+  html { color-scheme: dark light; }
+  body { @apply bg-background text-foreground antialiased; text-rendering: optimizeLegibility; }
 
-  html {
-    color-scheme: dark light;
-  }
-
-  body {
-    @apply bg-background text-foreground antialiased;
-    text-rendering: optimizeLegibility;
-  }
-
-  ::selection {
-    background: hsl(var(--ring) / 0.25);
-    color: hsl(var(--foreground));
-  }
+  ::selection { background: hsl(var(--ring) / 0.25); color: hsl(var(--foreground)); }
 
   :focus-visible {
     outline: none;
@@ -153,11 +138,18 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /* Type scale so videos pop */
+  h1 { @apply text-3xl md:text-4xl font-semibold tracking-[-0.01em]; }
+  h2 { @apply text-2xl md:text-3xl font-semibold; }
+  h3 { @apply text-xl md:text-2xl font-semibold; }
+  p  { @apply text-[15px] md:text-base leading-relaxed; }
+  small { @apply text-xs text-muted-foreground; }
 }
 
-/* Soft surfaces + card polish (rounded corners, subtle borders, light shadows) */
+/* Soft surfaces + helpers */
 @layer components {
-  .surface { @apply rounded-xl border bg-card shadow-sm; }
+  .surface   { @apply rounded-xl border bg-card shadow-sm; }
   .surface-2 { @apply rounded-2xl border bg-card shadow-md; }
   .surface-3 { @apply rounded-2xl border bg-popover shadow-lg; }
 
@@ -180,13 +172,4 @@
   }
   .btn-soft:hover { background: hsl(var(--card)); border-color: hsl(var(--border) / 0.9); }
   .btn-soft:active { transform: translateY(0.5px); }
-}
-
-/* Consistent type scale so videos pop */
-@layer base {
-  h1 { @apply text-3xl md:text-4xl font-semibold tracking-[-0.01em]; }
-  h2 { @apply text-2xl md:text-3xl font-semibold; }
-  h3 { @apply text-xl md:text-2xl font-semibold; }
-  p  { @apply text-[15px] md:text-base leading-relaxed; }
-  small { @apply text-xs text-muted-foreground; }
 }
