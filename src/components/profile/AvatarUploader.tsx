@@ -7,18 +7,14 @@ import { Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 
 type Props = {
-  /** Current avatar URL (e.g., from profile.avatar_url) */
   value?: string | null;
-  /** Called with the new public URL after a successful upload */
   onChange?: (publicUrl: string) => void;
-  /** Avatar size in px */
   size?: number;
-  /** Optional className wrapper */
   className?: string;
 };
 
 const BUCKET_NAME = "avatars";
-const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8MB cap
+const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8 MB cap
 
 export default function AvatarUploader({
   value,
@@ -36,25 +32,23 @@ export default function AvatarUploader({
     const file = e.target.files?.[0];
     if (!file) return;
     await handleFile(file);
-    // reset input so selecting the same file twice still triggers change
     e.target.value = "";
   };
 
   async function handleFile(file: File) {
     try {
       if (!file.type.startsWith("image/")) {
-        toast.error("Please choose an image file (JPG/PNG).");
-        return;
-      }
-      if (file.size > MAX_FILE_BYTES) {
-        toast.error("Image is too large. Please keep it under 8MB.");
+        toast.error("Please choose an image file (jpg, png, webp, gif).");
         return;
       }
 
       setUploading(true);
 
-      // Slight compression for faster loads
-      const compressed = await compressImage(file, 768, 768, 0.82);
+      // If > 4MB, compress down; else keep as-is
+      const needsCompress = file.size > 4 * 1024 * 1024;
+      const processed = needsCompress
+        ? await compressImage(file, 768, 768, 0.82)
+        : file;
 
       const {
         data: { user },
@@ -65,15 +59,18 @@ export default function AvatarUploader({
         return;
       }
 
-      const ext = "jpg"; // we output JPEG from canvas below
+      const ext =
+        file.name.split(".").pop()?.toLowerCase() ||
+        file.type.split("/")[1] ||
+        "png";
       const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
 
       const { error: upErr } = await supabase.storage
         .from(BUCKET_NAME)
-        .upload(path, compressed, {
+        .upload(path, processed, {
           cacheControl: "3600",
           upsert: false,
-          contentType: "image/jpeg",
+          contentType: processed.type || "image/*",
         });
 
       if (upErr) throw upErr;
@@ -82,7 +79,6 @@ export default function AvatarUploader({
         data: { publicUrl },
       } = supabase.storage.from(BUCKET_NAME).getPublicUrl(path);
 
-      // Save on the profile row
       const { error: profErr } = await supabase
         .from("profiles")
         .update({ avatar_url: publicUrl })
@@ -131,7 +127,6 @@ export default function AvatarUploader({
             size="sm"
             variant="outline"
             onClick={() => setPreview(null)}
-            title="Clear local preview (does not delete the file)"
           >
             <X className="mr-2 h-4 w-4" />
             Clear
@@ -139,12 +134,10 @@ export default function AvatarUploader({
         )}
       </div>
 
-      {/* Hidden file input */}
       <Input
         ref={fileRef}
         type="file"
         accept="image/*"
-        capture="user" // opens camera on mobile if user chooses
         className="hidden"
         onChange={onFileChange}
       />
@@ -152,26 +145,21 @@ export default function AvatarUploader({
   );
 }
 
-/**
- * Compresses an image in the browser using canvas.
- * Outputs a JPEG Blob/File for consistent content-type.
- */
+/** Compresses images if too large (keeps transparency if PNG). */
 async function compressImage(
   file: File,
   maxW: number,
   maxH: number,
   quality = 0.85
 ): Promise<File> {
-  // Load image
   const img = document.createElement("img");
   img.decoding = "async";
   img.src = URL.createObjectURL(file);
   await new Promise<void>((res, rej) => {
     img.onload = () => res();
-    img.onerror = (e) => rej(e);
+    img.onerror = rej;
   });
 
-  // Compute new size (keep aspect)
   let { width, height } = img;
   const ratio = Math.min(maxW / width, maxH / height, 1);
   width = Math.round(width * ratio);
@@ -181,20 +169,21 @@ async function compressImage(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas not supported in this browser.");
+  if (!ctx) throw new Error("Canvas not supported.");
 
-  // Draw & convert
   ctx.drawImage(img, 0, 0, width, height);
+
+  const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
   const blob: Blob = await new Promise((resolve, reject) =>
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error("Compression failed"))),
-      "image/jpeg",
+      mime,
       quality
     )
   );
 
   URL.revokeObjectURL(img.src);
-  return new File([blob], file.name.replace(/\.\w+$/, ".jpg"), {
-    type: "image/jpeg",
+  return new File([blob], file.name.replace(/\.\w+$/, mime.split("/")[1]), {
+    type: mime,
   });
 }
