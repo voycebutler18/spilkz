@@ -1,12 +1,14 @@
+// src/pages/Dashboard/CreatorDashboard.tsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle
+  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,14 +16,18 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
-import { Switch } from "@/components/ui/switch";
+import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
+import AvatarUploader from "@/components/profile/AvatarUploader";
+
 import {
-  BarChart3,
   Video,
   Users,
   TrendingUp,
@@ -31,12 +37,9 @@ import {
   Lock,
   Unlock,
   Heart,
-  MessageCircle
+  MessageCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-
-// If you use this, make sure it exists as before
-import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
   id: string;
@@ -54,12 +57,13 @@ interface Profile {
 interface DashboardStats {
   totalSpliks: number;
   followers: number;
-  totalReactions: number;         // NEW: likes + comments (no views)
-  avgReactionsPerVideo: number;   // NEW: totalReactions / totalSpliks
+  totalReactions: number; // likes + comments
+  avgReactionsPerVideo: number;
 }
 
 const CreatorDashboard = () => {
   const navigate = useNavigate();
+
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
@@ -67,7 +71,7 @@ const CreatorDashboard = () => {
     totalSpliks: 0,
     followers: 0,
     totalReactions: 0,
-    avgReactionsPerVideo: 0
+    avgReactionsPerVideo: 0,
   });
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
@@ -75,7 +79,7 @@ const CreatorDashboard = () => {
     username: "",
     display_name: "",
     bio: "",
-    avatar_url: ""
+    avatar_url: "",
   });
 
   useEffect(() => {
@@ -88,7 +92,7 @@ const CreatorDashboard = () => {
   }, []);
 
   const setupRealtimeUpdates = () => {
-    // refresh dashboard periodically
+    // Refresh dashboard periodically
     const interval = setInterval(() => {
       if (profile) {
         fetchStats();
@@ -125,7 +129,9 @@ const CreatorDashboard = () => {
   };
 
   const checkAuth = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
       navigate("/login");
       return;
@@ -150,7 +156,7 @@ const CreatorDashboard = () => {
           username: data.username || "",
           display_name: data.display_name || "",
           bio: data.bio || "",
-          avatar_url: data.avatar_url || ""
+          avatar_url: data.avatar_url || "",
         });
         updateStatsFromProfile(data);
       }
@@ -165,12 +171,14 @@ const CreatorDashboard = () => {
     setStats((prev) => ({
       ...prev,
       followers: profileData.followers_count,
-      totalSpliks: profileData.spliks_count
+      totalSpliks: profileData.spliks_count,
     }));
   };
 
   const fetchSpliks = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) return;
 
     try {
@@ -183,7 +191,7 @@ const CreatorDashboard = () => {
 
       if (spliksError) throw spliksError;
 
-      // Fetch lightweight profile for display in grid cards
+      // Lightweight profile for display in grid/cards
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("username, display_name, avatar_url")
@@ -197,12 +205,13 @@ const CreatorDashboard = () => {
       const data =
         spliksData?.map((splik) => ({
           ...splik,
-          profiles: profileData || null
+          // IMPORTANT: cards expect `splik.profile`, not `splik.profiles`
+          profile: profileData || null,
         })) || [];
 
       setSpliks(data || []);
 
-      // —— NO VIEWS: reactions-only metrics ——
+      // Reactions-only metrics
       const totalReactions =
         data?.reduce(
           (acc: number, s: any) =>
@@ -218,7 +227,7 @@ const CreatorDashboard = () => {
         ...prev,
         totalSpliks,
         totalReactions,
-        avgReactionsPerVideo
+        avgReactionsPerVideo,
       }));
     } catch (error) {
       console.error("Error fetching videos:", error);
@@ -230,7 +239,9 @@ const CreatorDashboard = () => {
   };
 
   const handleProfileUpdate = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) return;
 
     try {
@@ -240,7 +251,7 @@ const CreatorDashboard = () => {
           username: formData.username,
           display_name: formData.display_name,
           bio: formData.bio,
-          avatar_url: formData.avatar_url
+          avatar_url: formData.avatar_url,
         })
         .eq("id", user.id);
 
@@ -261,7 +272,9 @@ const CreatorDashboard = () => {
   const togglePrivacy = async (
     field: "followers_private" | "following_private"
   ) => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user || !profile) return;
 
     const newValue = !profile[field];
@@ -276,7 +289,9 @@ const CreatorDashboard = () => {
 
       setProfile({ ...profile, [field]: newValue });
       toast.success(
-        `${field === "followers_private" ? "Followers" : "Following"} privacy updated`
+        `${
+          field === "followers_private" ? "Followers" : "Following"
+        } privacy updated`
       );
     } catch (error) {
       console.error("Error updating privacy:", error);
@@ -311,7 +326,10 @@ const CreatorDashboard = () => {
             Creator Dashboard
           </h1>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate("/dashboard/favorites")}>
+            <Button
+              variant="outline"
+              onClick={() => navigate("/dashboard/favorites")}
+            >
               <Bookmark className="mr-2 h-4 w-4" />
               My Favorites
             </Button>
@@ -322,7 +340,7 @@ const CreatorDashboard = () => {
           </div>
         </div>
 
-        {/* Stats Grid (no views) */}
+        {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Card>
             <CardHeader className="pb-2">
@@ -335,7 +353,9 @@ const CreatorDashboard = () => {
                 <div className="text-2xl font-bold">{stats.totalSpliks}</div>
                 <Video className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">Videos uploaded</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Videos uploaded
+              </p>
             </CardContent>
           </Card>
 
@@ -370,7 +390,9 @@ const CreatorDashboard = () => {
                 <div className="text-2xl font-bold">{stats.followers}</div>
                 <Users className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">Build your community</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Build your community
+              </p>
             </CardContent>
           </Card>
 
@@ -382,7 +404,9 @@ const CreatorDashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-2xl font-bold">{stats.avgReactionsPerVideo}</div>
+                <div className="text-2xl font-bold">
+                  {stats.avgReactionsPerVideo}
+                </div>
                 <TrendingUp className="h-5 w-5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -400,6 +424,7 @@ const CreatorDashboard = () => {
             <TabsTrigger value="profile">Profile Settings</TabsTrigger>
           </TabsList>
 
+          {/* My Videos */}
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
               <>
@@ -409,14 +434,21 @@ const CreatorDashboard = () => {
                 <Card className="mt-6">
                   <CardHeader>
                     <CardTitle className="text-base">Manage Videos</CardTitle>
-                    <CardDescription>Delete videos you no longer want on your profile.</CardDescription>
+                    <CardDescription>
+                      Delete videos you no longer want on your profile.
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="divide-y">
                       {spliks.map((s) => (
-                        <div key={s.id} className="py-3 flex items-center justify-between gap-3">
+                        <div
+                          key={s.id}
+                          className="py-3 flex items-center justify-between gap-3"
+                        >
                           <div className="min-w-0">
-                            <p className="font-medium truncate">{s.title || "Untitled video"}</p>
+                            <p className="font-medium truncate">
+                              {s.title || "Untitled video"}
+                            </p>
                             <p className="text-xs text-muted-foreground truncate">
                               {s.video_url}
                             </p>
@@ -436,7 +468,9 @@ const CreatorDashboard = () => {
             ) : (
               <Card className="p-12 text-center">
                 <Video className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-4">No videos uploaded yet</p>
+                <p className="text-muted-foreground mb-4">
+                  No videos uploaded yet
+                </p>
                 <Button onClick={() => setUploadModalOpen(true)}>
                   Upload Your First Video
                 </Button>
@@ -444,32 +478,33 @@ const CreatorDashboard = () => {
             )}
           </TabsContent>
 
+          {/* Analytics */}
           <TabsContent value="analytics" className="mt-6">
             <Card>
               <CardHeader>
                 <CardTitle>Performance Overview</CardTitle>
-                <CardDescription>Track your content performance and growth</CardDescription>
+                <CardDescription>
+                  Track your content performance and growth
+                </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
-                    <div>
-                      <p className="text-sm text-muted-foreground">This Week’s Reactions</p>
-                      <p className="text-2xl font-bold">{stats.totalReactions}</p>
-                    </div>
-                    <Badge variant="secondary">Live</Badge>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      This Week’s Reactions
+                    </p>
+                    <p className="text-2xl font-bold">{stats.totalReactions}</p>
                   </div>
-                  <div className="text-center py-8 text-muted-foreground">
-                    <BarChart3 className="h-12 w-12 mx-auto mb-4" />
-                    <Card className="p-6">
-                      <CreatorAnalytics spliks={spliks} stats={stats} />
-                    </Card>
-                  </div>
+                  <Badge variant="secondary">Live</Badge>
                 </div>
+
+                {/* Pretty analytics block */}
+                <CreatorAnalytics spliks={spliks} stats={stats} />
               </CardContent>
             </Card>
           </TabsContent>
 
+          {/* Profile Settings */}
           <TabsContent value="profile" className="mt-6">
             <Card>
               <CardHeader>
@@ -478,75 +513,119 @@ const CreatorDashboard = () => {
               </CardHeader>
               <CardContent>
                 {editingProfile ? (
-                  <div className="space-y-4">
+                  <div className="space-y-6">
+                    {/* Avatar uploader */}
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-2">
+                        Profile Photo
+                      </p>
+                      <AvatarUploader
+                        value={formData.avatar_url || profile?.avatar_url}
+                        onChange={(url) =>
+                          setFormData((f) => ({ ...f, avatar_url: url }))
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground mt-2">
+                        JPG/PNG recommended. We’ll compress for faster loading.
+                      </p>
+                    </div>
+
                     <div>
                       <Label htmlFor="username">Username</Label>
                       <Input
                         id="username"
                         value={formData.username}
-                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, username: e.target.value })
+                        }
                         placeholder="@username"
                       />
                       <p className="text-xs text-muted-foreground mt-1">
                         This will be your unique identifier
                       </p>
                     </div>
+
                     <div>
                       <Label htmlFor="display_name">Display Name</Label>
                       <Input
                         id="display_name"
                         value={formData.display_name}
                         onChange={(e) =>
-                          setFormData({ ...formData, display_name: e.target.value })
+                          setFormData({
+                            ...formData,
+                            display_name: e.target.value,
+                          })
                         }
                         placeholder="Your display name"
                       />
                     </div>
+
                     <div>
                       <Label htmlFor="bio">Bio</Label>
                       <Textarea
                         id="bio"
                         value={formData.bio}
-                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, bio: e.target.value })
+                        }
                         placeholder="Tell us about yourself"
                         rows={4}
                       />
                     </div>
-                    <div>
-                      <Label htmlFor="avatar_url">Avatar URL</Label>
-                      <Input
-                        id="avatar_url"
-                        value={formData.avatar_url}
-                        onChange={(e) =>
-                          setFormData({ ...formData, avatar_url: e.target.value })
-                        }
-                        placeholder="https://example.com/avatar.jpg"
-                      />
-                    </div>
+
                     <div className="flex gap-2">
                       <Button onClick={handleProfileUpdate}>Save Changes</Button>
-                      <Button variant="outline" onClick={() => setEditingProfile(false)}>
+                      <Button
+                        variant="outline"
+                        onClick={() => setEditingProfile(false)}
+                      >
                         Cancel
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Username</p>
-                      <p className="font-medium">@{profile?.username || "Not set"}</p>
+                  <div className="space-y-6">
+                    {/* Avatar preview */}
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-16 w-16 ring-2 ring-primary/20">
+                        <AvatarImage
+                          src={profile?.avatar_url || undefined}
+                        />
+                        <AvatarFallback>
+                          {profile?.display_name?.[0] ||
+                            profile?.username?.[0] ||
+                            "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm text-muted-foreground">
+                          Signed in as
+                        </p>
+                        <p className="font-medium">
+                          @{profile?.username || "Not set"}
+                        </p>
+                      </div>
                     </div>
+
                     <div>
                       <p className="text-sm text-muted-foreground">Display Name</p>
-                      <p className="font-medium">{profile?.display_name || "Not set"}</p>
+                      <p className="font-medium">
+                        {profile?.display_name || "Not set"}
+                      </p>
                     </div>
+
                     <div>
                       <p className="text-sm text-muted-foreground">Bio</p>
-                      <p className="font-medium">{profile?.bio || "No bio yet"}</p>
+                      <p className="font-medium">
+                        {profile?.bio || "No bio yet"}
+                      </p>
                     </div>
+
                     {profile?.username && (
                       <div>
-                        <p className="text-sm text-muted-foreground">Public Profile</p>
+                        <p className="text-sm text-muted-foreground">
+                          Public Profile
+                        </p>
                         <a
                           href={`/creator/${profile.username}`}
                           target="_blank"
@@ -559,12 +638,16 @@ const CreatorDashboard = () => {
                     )}
 
                     {/* Privacy Settings */}
-                    <div className="border-t pt-4 mt-4 space-y-4">
+                    <div className="border-t pt-4 mt-2 space-y-4">
                       <h3 className="font-semibold text-sm">Privacy Settings</h3>
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          {profile?.followers_private ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                          {profile?.followers_private ? (
+                            <Lock className="h-4 w-4" />
+                          ) : (
+                            <Unlock className="h-4 w-4" />
+                          )}
                           <div>
                             <p className="font-medium text-sm">Followers List</p>
                             <p className="text-xs text-muted-foreground">
@@ -576,13 +659,19 @@ const CreatorDashboard = () => {
                         </div>
                         <Switch
                           checked={profile?.followers_private || false}
-                          onCheckedChange={() => togglePrivacy("followers_private")}
+                          onCheckedChange={() =>
+                            togglePrivacy("followers_private")
+                          }
                         />
                       </div>
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          {profile?.following_private ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                          {profile?.following_private ? (
+                            <Lock className="h-4 w-4" />
+                          ) : (
+                            <Unlock className="h-4 w-4" />
+                          )}
                           <div>
                             <p className="font-medium text-sm">Following List</p>
                             <p className="text-xs text-muted-foreground">
@@ -594,7 +683,9 @@ const CreatorDashboard = () => {
                         </div>
                         <Switch
                           checked={profile?.following_private || false}
-                          onCheckedChange={() => togglePrivacy("following_private")}
+                          onCheckedChange={() =>
+                            togglePrivacy("following_private")
+                          }
                         />
                       </div>
                     </div>
