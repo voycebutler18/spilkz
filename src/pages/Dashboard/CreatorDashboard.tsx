@@ -461,7 +461,9 @@ const CreatorDashboard = () => {
                   </div>
                   <div className="text-center py-8 text-muted-foreground">
                     <BarChart3 className="h-12 w-12 mx-auto mb-4" />
-                    <p>Detailed analytics coming soon</p>
+                    <Card className="p-6">
+                      <CreatorAnalytics spliks={spliks} stats={stats} />
+                    </Card>
                   </div>
                 </div>
               </CardContent>
