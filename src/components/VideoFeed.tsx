@@ -102,7 +102,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     load();
   }, [user?.id]);
 
-  /* ------------------ IntersectionObserver for autoplay ------------------ */
+  /* ========== ENHANCED AUTOPLAY MANAGER ========== */
+  /**
+   * **Autoplay**: The most-visible video plays automatically; others pause. 
+   * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
+   */
   const thresholds = useMemo(
     () => Array.from({ length: 21 }, (_, i) => i / 20), // 0, .05, .10 ... 1
     []
@@ -112,66 +116,144 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const root = containerRef.current;
     if (!root) return;
 
-    const visibility: Record<number, number> = {};
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          const idx = Number((e.target as HTMLElement).dataset.index);
-          visibility[idx] = e.intersectionRatio;
-        });
+    // Track visibility ratios and current playing video
+    const sectionVisibility: Record<number, number> = {};
+    let currentPlayingIndex: number | null = null;
+    let isProcessing = false;
 
-        // pick most visible; require >= 0.55 so we switch “halfway”
-        let bestIdx = activeIndex;
-        let bestRatio = visibility[bestIdx] ?? 0;
-        for (const [k, v] of Object.entries(visibility)) {
-          const i = Number(k);
-          if (v > bestRatio) {
-            bestRatio = v;
-            bestIdx = i;
+    const findMostVisibleSection = (): number | null => {
+      const visibilityEntries = Object.entries(sectionVisibility);
+      if (visibilityEntries.length === 0) return null;
+
+      // Sort by visibility ratio descending
+      const sortedSections = visibilityEntries
+        .map(([index, ratio]) => ({ index: Number(index), ratio }))
+        .sort((a, b) => b.ratio - a.ratio);
+      
+      const mostVisible = sortedSections[0];
+      
+      // Only return if visibility is above threshold (60% for switching)
+      return mostVisible && mostVisible.ratio >= 0.6 ? mostVisible.index : null;
+    };
+
+    const handleVideoPlayback = async () => {
+      if (isProcessing) return;
+      isProcessing = true;
+
+      try {
+        const targetIndex = findMostVisibleSection();
+        
+        // If current video falls below 45% visibility, pause it
+        if (currentPlayingIndex !== null && (sectionVisibility[currentPlayingIndex] || 0) < 0.45) {
+          const currentVideo = videoRefs.current[currentPlayingIndex];
+          if (currentVideo && !currentVideo.paused) {
+            currentVideo.pause();
           }
+          currentPlayingIndex = null;
         }
-        if (bestRatio >= 0.55 && bestIdx !== activeIndex) {
-          setActiveIndex(bestIdx);
+
+        // Switch to new target video if different from current
+        if (targetIndex !== null && targetIndex !== currentPlayingIndex) {
+          // Pause all other videos first
+          videoRefs.current.forEach((video, i) => {
+            if (video && i !== targetIndex && !video.paused) {
+              video.pause();
+            }
+          });
+          
+          const targetVideo = videoRefs.current[targetIndex];
+          if (targetVideo) {
+            // Configure video for autoplay
+            targetVideo.muted = muted[targetIndex] ?? true;
+            targetVideo.playsInline = true;
+
+            // Handle trim_start for 3s loop
+            const startAt = Number(spliks[targetIndex]?.trim_start ?? 0);
+            const onTimeUpdate = () => {
+              if (targetVideo.currentTime - startAt >= 3) {
+                targetVideo.currentTime = startAt;
+              }
+            };
+            
+            // Remove existing listener and add new one
+            targetVideo.removeEventListener("timeupdate", onTimeUpdate);
+            targetVideo.addEventListener("timeupdate", onTimeUpdate);
+
+            // Set starting position if needed
+            if (startAt > 0) {
+              targetVideo.currentTime = startAt;
+            }
+
+            // Attempt to play
+            try {
+              await targetVideo.play();
+              currentPlayingIndex = targetIndex;
+              setActiveIndex(targetIndex);
+            } catch (playError) {
+              // If autoplay blocked, try with muted
+              if (!targetVideo.muted) {
+                targetVideo.muted = true;
+                setMuted((prev) => ({ ...prev, [targetIndex]: true }));
+                try {
+                  await targetVideo.play();
+                  currentPlayingIndex = targetIndex;
+                  setActiveIndex(targetIndex);
+                } catch (mutedError) {
+                  console.log("Video autoplay blocked:", mutedError);
+                }
+              }
+            }
+          }
+        } else if (targetIndex === null && currentPlayingIndex !== null) {
+          // No sufficiently visible video - pause current
+          const currentVideo = videoRefs.current[currentPlayingIndex];
+          if (currentVideo && !currentVideo.paused) {
+            currentVideo.pause();
+          }
+          currentPlayingIndex = null;
         }
+      } catch (error) {
+        console.error("Error handling video playback:", error);
+      } finally {
+        isProcessing = false;
+      }
+    };
+
+    // Create intersection observer with multiple thresholds for smooth tracking
+    const intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const index = Number((entry.target as HTMLElement).dataset.index);
+          sectionVisibility[index] = entry.intersectionRatio;
+        });
+        
+        // Handle playback changes
+        handleVideoPlayback();
       },
-      { root, threshold: thresholds }
+      { 
+        root, 
+        threshold: thresholds,
+        rootMargin: "0px"
+      }
     );
 
+    // Observe all sections
     const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
-    sections.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, [spliks.length, thresholds]); // run when feed size changes
-
-  // play/pause only the active one
-  useEffect(() => {
-    videoRefs.current.forEach((v, i) => {
-      if (!v) return;
-      if (i === activeIndex) {
-        v.muted = muted[i] ?? true;
-        v.playsInline = true;
-
-        // enforce 3s loop from trim_start
-        const startAt = Number(spliks[i]?.trim_start ?? 0);
-        const onTime = () => {
-          if (v.currentTime - startAt >= 3) v.currentTime = startAt;
-        };
-        v.removeEventListener("timeupdate", onTime);
-        v.addEventListener("timeupdate", onTime);
-
-        if (startAt > 0) v.currentTime = startAt;
-        v.play().catch(() => {
-          // if autoplay blocked, force mute and try again once
-          if (!v.muted) {
-            v.muted = true;
-            setMuted((m) => ({ ...m, [i]: true }));
-            v.play().catch(() => {});
-          }
-        });
-      } else {
-        if (!v.paused) v.pause();
-      }
+    sections.forEach((section) => {
+      intersectionObserver.observe(section);
     });
-  }, [activeIndex, spliks, muted]);
+
+    // Cleanup function
+    return () => {
+      intersectionObserver.disconnect();
+      // Pause all videos
+      videoRefs.current.forEach((video) => {
+        if (video && !video.paused) {
+          video.pause();
+        }
+      });
+    };
+  }, [spliks.length, thresholds, muted, spliks]);
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
