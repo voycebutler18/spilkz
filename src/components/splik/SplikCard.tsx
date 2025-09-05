@@ -70,7 +70,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   useEffect(() => {
     const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       setCurrentUser(user);
 
       if (user) {
@@ -94,7 +96,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       .channel(`splik-${splik.id}`)
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${splik.id}` },
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "spliks",
+          filter: `id=eq.${splik.id}`,
+        },
         (payload) => {
           if (payload.new) {
             const next = payload.new as any;
@@ -108,11 +115,16 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => {
       supabase.removeChannel(channel);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splik.id]);
 
   const handleSplik = async () => {
     if (!currentUser) {
-      toast({ title: "Sign in required", description: "Please sign in to like spliks", variant: "destructive" });
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to like spliks",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -122,23 +134,43 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     try {
       if (!newLikedState) {
-        await supabase.from("likes").delete().eq("user_id", currentUser.id).eq("splik_id", splik.id);
+        await supabase
+          .from("likes")
+          .delete()
+          .eq("user_id", currentUser.id)
+          .eq("splik_id", splik.id);
       } else {
-        await supabase.from("likes").insert({ user_id: currentUser.id, splik_id: splik.id });
+        await supabase
+          .from("likes")
+          .insert({ user_id: currentUser.id, splik_id: splik.id });
       }
       onSplik?.();
     } catch {
       setIsLiked(!newLikedState);
-      setLikesCount((prev) => (!newLikedState ? prev + 1 : Math.max(0, prev - 1)));
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+      setLikesCount((prev) =>
+        !newLikedState ? prev + 1 : Math.max(0, prev - 1)
+      );
+      toast({
+        title: "Error",
+        description: "Failed to update like",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleComment = () => { setShowCommentsModal(true); onReact?.(); };
-  const handleShare = () => { setShowShareModal(true); onShare?.(); };
+  const handleComment = () => {
+    setShowCommentsModal(true);
+    onReact?.();
+  };
+  const handleShare = () => {
+    setShowShareModal(true);
+    onShare?.();
+  };
 
   const checkIfFavorited = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) return;
 
     const { data } = await supabase
@@ -152,9 +184,15 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const toggleFavorite = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save videos",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -167,28 +205,47 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           .eq("splik_id", splik.id);
         if (!error) {
           setIsFavorited(false);
-          toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
+          toast({
+            title: "Removed from favorites",
+            description: "Video removed from your favorites",
+          });
         }
       } else {
-        const { error } = await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
+        const { error } = await supabase
+          .from("favorites")
+          .insert({ user_id: user.id, splik_id: splik.id });
         if (!error) {
           setIsFavorited(true);
-          toast({ title: "Added to favorites!", description: "Video saved to your favorites" });
+          toast({
+            title: "Added to favorites!",
+            description: "Video saved to your favorites",
+          });
         }
       }
     } catch {
-      toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to update favorites",
+        variant: "destructive",
+      });
     }
   };
 
   const handleCopyLink = () => {
     const url = `${window.location.origin}/splik/${splik.id}`;
     navigator.clipboard.writeText(url);
-    toast({ title: "Link copied!", description: "Video link copied to clipboard" });
+    toast({
+      title: "Link copied!",
+      description: "Video link copied to clipboard",
+    });
   };
 
   const handleReport = () => setShowReportModal(true);
-  const handleBlock = () => toast({ title: "User blocked", description: "You won't see content from this user anymore" });
+  const handleBlock = () =>
+    toast({
+      title: "User blocked",
+      description: "You won't see content from this user anymore",
+    });
 
   const formatCount = (count: number | undefined | null) => {
     const safe = count ?? 0;
@@ -206,7 +263,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       setIsPlaying(false);
     } else {
       video.currentTime = 0;
-      video.play();
+      void video.play();
       setIsPlaying(true);
       if (!viewedRef.current) {
         viewedRef.current = true;
@@ -232,11 +289,13 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsMuted(!isMuted);
   };
 
-  const videoHeight = isMobile ? "60vh" : "500px";
+  // Use small viewport units on mobile to avoid iOS toolbar issues
+  const videoHeight = isMobile ? "60svh" : "500px";
+
   const isBoosted = Boolean(
     (splik as any).isBoosted ||
-    (splik as any).is_currently_boosted ||
-    (((splik as any).boost_score ?? 0) > 0)
+      (splik as any).is_currently_boosted ||
+      (((splik as any).boost_score ?? 0) > 0)
   );
 
   return (
@@ -249,14 +308,14 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       {/* VIDEO AREA */}
       <div
         className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
-        style={{ height: videoHeight, maxHeight: "80vh" }}
+        style={{ height: videoHeight, maxHeight: "80svh" }}
         onClick={handlePlayToggle}
       >
         {/* Top black bar INSIDE the wrapper to hide any seam */}
-        <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-[60] rounded-t-xl" />
+        <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
 
-        {/* Splikz logo (unchanged, fully visible) */}
-        <div className="absolute top-2 left-3 z-[70]">
+        {/* Splikz logo */}
+        <div className="absolute top-2 left-3 z-20">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
             <Sparkles className="h-4 w-4 text-purple-400" />
             <span className="text-sm font-bold text-white">Splikz</span>
@@ -302,13 +361,15 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         </div>
 
         {/* Title & description overlay */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
           <div className="bg-gradient-to-t from-black/70 via-black/35 to-transparent px-4 pt-10 pb-3">
             <h3 className="text-white font-semibold text-sm truncate">
               {splik.title || "Untitled"}
             </h3>
             {splik.description ? (
-              <p className="text-white/85 text-xs truncate">{splik.description}</p>
+              <p className="text-white/85 text-xs truncate">
+                {splik.description}
+              </p>
             ) : null}
           </div>
         </div>
@@ -318,7 +379,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           <Button
             size="icon"
             variant="ghost"
-            className="absolute bottom-3 right-3 z-[70] text-white hover:bg-white/20"
+            className="absolute bottom-3 right-3 z-30 text-white hover:bg-white/20"
             onClick={(e) => {
               e.stopPropagation();
               toggleMute();
@@ -331,7 +392,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
       {/* BOOSTED BADGE */}
       {isBoosted && (
-        <div className="absolute top-3 right-3 z-[60]">
+        <div className="absolute top-3 right-3 z-20">
           <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
             <Rocket className="h-3 w-3 mr-1" />
             Promoted
@@ -348,7 +409,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               className="flex items-center space-x-3 group flex-1 min-w-0"
             >
               <Avatar className="h-10 w-10 ring-2 ring-primary/20 group-hover:ring-primary/40 transition-all">
-                <AvatarImage src={splik.profile?.avatar_url} />
+                <AvatarImage src={splik.profile?.avatar_url || undefined} />
                 <AvatarFallback>
                   {splik.profile?.display_name?.[0] ||
                     splik.profile?.first_name?.[0] ||
@@ -383,7 +444,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 ml-2 flex-shrink-0">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 ml-2 flex-shrink-0"
+              >
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -397,15 +462,24 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
                   Boost Video
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={handleCopyLink}
+                className="cursor-pointer"
+              >
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Link
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleReport} className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={handleReport}
+                className="cursor-pointer"
+              >
                 <Flag className="h-4 w-4 mr-2" />
                 Report
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleBlock} className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={handleBlock}
+                className="cursor-pointer"
+              >
                 <UserX className="h-4 w-4 mr-2" />
                 Block User
               </DropdownMenuItem>
@@ -425,7 +499,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             )}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            <span className="text-xs font-medium">{formatCount(likesCount)}</span>
+            <span className="text-xs font-medium">
+              {formatCount(likesCount)}
+            </span>
           </Button>
 
           <Button
@@ -435,7 +511,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             className="flex items-center space-x-2 flex-1 hover:text-blue-500"
           >
             <MessageCircle className="h-4 w-4" />
-            <span className="text-xs font-medium">{formatCount(commentsCount)}</span>
+            <span className="text-xs font-medium">
+              {formatCount(commentsCount)}
+            </span>
           </Button>
 
           <Button
@@ -462,7 +540,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         </div>
 
-        {(likesCount === 0 && commentsCount === 0) && (
+        {likesCount === 0 && commentsCount === 0 && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
             Be the first to react! 💜
           </div>
@@ -487,7 +565,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         onClose={() => setShowReportModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || splik.description || "Untitled Video"}
-        creatorName={splik.profile?.display_name || splik.profile?.username || "Unknown Creator"}
+        creatorName={
+          splik.profile?.display_name ||
+          splik.profile?.username ||
+          "Unknown Creator"
+        }
       />
       {showBoostModal && (
         <BoostModal
