@@ -52,7 +52,7 @@ interface SplikCardProps {
 
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false); // Changed to false for auto-unmute
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -63,12 +63,25 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
   const [isInView, setIsInView] = useState(false);
+  const [showPauseButton, setShowPauseButton] = useState(true); // New state for pause button visibility
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const viewedRef = useRef(false);
+  const pauseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
+
+  // Function to mute all other videos
+  const muteOtherVideos = () => {
+    const allVideos = document.querySelectorAll('video');
+    allVideos.forEach((video) => {
+      if (video !== videoRef.current) {
+        video.muted = true;
+        video.pause();
+      }
+    });
+  };
 
   // Intersection Observer for autoplay
   useEffect(() => {
@@ -79,26 +92,29 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           setIsInView(isVisible);
           
           if (isVisible && videoRef.current) {
+            // Mute all other videos first
+            muteOtherVideos();
+            
             // Auto-play when 50% of video is visible
             videoRef.current.currentTime = 0;
+            videoRef.current.muted = isMuted;
             videoRef.current.play().catch(() => {
-              // Handle autoplay failures (some browsers block it)
               console.log('Autoplay failed - user interaction may be required');
             });
             setIsPlaying(true);
             if (!viewedRef.current) {
               viewedRef.current = true;
-              // place view tracking call here if you add one later
             }
           } else if (videoRef.current && isPlaying) {
-            // Pause when video goes out of view
+            // Pause and mute when video goes out of view
             videoRef.current.pause();
+            videoRef.current.muted = true;
             setIsPlaying(false);
           }
         });
       },
       {
-        threshold: [0.5], // Trigger when 50% of the video is visible
+        threshold: [0.5],
         rootMargin: '0px'
       }
     );
@@ -111,8 +127,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       if (cardRef.current) {
         observer.unobserve(cardRef.current);
       }
+      if (pauseTimeoutRef.current) {
+        clearTimeout(pauseTimeoutRef.current);
+      }
     };
-  }, [isPlaying]);
+  }, [isPlaying, isMuted]);
 
   useEffect(() => {
     const getUser = async () => {
@@ -161,7 +180,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => {
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splik.id]);
 
   const handleSplik = async () => {
@@ -309,13 +327,25 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     if (isPlaying) {
       video.pause();
       setIsPlaying(false);
+      // Hide pause button immediately when clicked
+      setShowPauseButton(false);
+      // Show it again after a short delay
+      if (pauseTimeoutRef.current) {
+        clearTimeout(pauseTimeoutRef.current);
+      }
+      pauseTimeoutRef.current = setTimeout(() => {
+        setShowPauseButton(true);
+      }, 2000);
     } else {
+      // Mute other videos when this one starts playing
+      muteOtherVideos();
       video.currentTime = 0;
+      video.muted = isMuted;
       void video.play();
       setIsPlaying(true);
+      setShowPauseButton(true);
       if (!viewedRef.current) {
         viewedRef.current = true;
-        // place view tracking call here if you add one later
       }
     }
   };
@@ -333,6 +363,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const toggleMute = () => {
     const video = videoRef.current;
     if (!video) return;
+    
+    if (!isMuted) {
+      // If unmuting this video, mute all others
+      muteOtherVideos();
+    }
+    
     video.muted = !isMuted;
     setIsMuted(!isMuted);
   };
@@ -385,16 +421,18 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         {/* Center play/pause icon */}
         <div className="absolute inset-0 flex items-center justify-center">
           {isPlaying ? (
-            <button
-              aria-label="Pause"
-              className="opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePlayToggle();
-              }}
-            >
-              <Pause className="h-14 w-14 text-white drop-shadow-lg" />
-            </button>
+            showPauseButton && (
+              <button
+                aria-label="Pause"
+                className="opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePlayToggle();
+                }}
+              >
+                <Pause className="h-14 w-14 text-white drop-shadow-lg" />
+              </button>
+            )
           ) : (
             <button
               aria-label="Play"
