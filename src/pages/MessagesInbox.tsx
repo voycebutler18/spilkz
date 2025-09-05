@@ -148,60 +148,56 @@ export default function MessagesInbox() {
   }, [me]);
 
   const deleteConversation = async (otherId: string) => {
-    if (!me || !otherId) return;
+  if (!me || !otherId) return;
 
-    // Optimistic UI: remove the thread locally
-    const prevRows = rows;
-    setIsDeleting(true);
-    setRows((r) =>
-      r.filter((row) => {
-        const otherUserId = row.sender_id === me ? row.recipient_id : row.sender_id;
-        return otherUserId !== otherId;
-      })
-    );
+  // Compute the stable thread key (same formula the DB uses)
+  const threadKey = me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
 
-    try {
-      // One atomic delete for both directions
-      const { error } = await supabase
-        .from("messages")
-        .delete()
-        .or(
-          `and(sender_id.eq.${me},recipient_id.eq.${otherId}),and(sender_id.eq.${otherId},recipient_id.eq.${me})`
-        );
+  // Optimistic UI
+  const prevRows = rows;
+  setIsDeleting(true);
+  setRows(r => r.filter(row => {
+    const o = row.sender_id === me ? row.recipient_id : row.sender_id;
+    const tk = me < o ? `${me}|${o}` : `${o}|${me}`;
+    return tk !== threadKey;
+  }));
 
-      if (error) {
-        // revert UI if the delete is blocked (e.g., RLS)
-        setRows(prevRows);
-        console.error("deleteConversation error:", error);
-        toast.error(`Failed to delete conversation: ${error.message}`);
-        return;
-      }
+  try {
+    // Delete ALL messages in this thread in a single statement
+    const { error } = await supabase
+      .from("messages")
+      .delete()
+      .eq("thread_key", threadKey);
 
-      // Clean up local caches
-      setProfiles((prev) => {
-        const next = { ...prev };
-        delete next[otherId];
-        return next;
-      });
-      setUnreadIds((prev) => {
-        const next = new Set(prev);
-        next.delete(otherId);
-        return next;
-      });
-
-      toast.success("Conversation deleted");
-      // Make sure the view is up to date
-      await loadConversations();
-    } catch (err: any) {
+    if (error) {
       setRows(prevRows);
-      console.error("deleteConversation exception:", err);
-      toast.error(err?.message || "Failed to delete conversation");
-    } finally {
-      setIsDeleting(false);
-      setDeleteDialogOpen(false);
-      setConversationToDelete(null);
+      toast.error(`Failed to delete conversation: ${error.message}`);
+      return;
     }
-  };
+
+    // Local caches
+    setProfiles(prev => {
+      const next = { ...prev };
+      delete next[otherId];
+      return next;
+    });
+    setUnreadIds(prev => {
+      const next = new Set(prev);
+      next.delete(otherId);
+      return next;
+    });
+
+    toast.success("Conversation deleted");
+    await loadConversations(); // confirm it’s gone from the view
+  } catch (e: any) {
+    setRows(prevRows);
+    toast.error(e?.message || "Failed to delete conversation");
+  } finally {
+    setIsDeleting(false);
+    setDeleteDialogOpen(false);
+    setConversationToDelete(null);
+  }
+};
 
   const formatRelativeTime = (dateString: string) => {
     const date = new Date(dateString);
