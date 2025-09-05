@@ -6,7 +6,6 @@ import {
   Heart,
   MessageCircle,
   Share2,
-  Eye,
   MoreVertical,
   Flag,
   UserX,
@@ -55,7 +54,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
-  const [viewCount, setViewCount] = useState(splik.view_count || splik.views || 0);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -65,83 +63,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
-
-  /* ---------- FIXED: persistent view tracking ---------- */
-  const hasCountedRef = useRef(false);
-  const viewTimerRef = useRef<number | null>(null);
-
-  const registerView = async () => {
-    if (hasCountedRef.current) return;
-    
-    // For anonymous users, use sessionStorage to prevent double counting in same session
-    if (!currentUser) {
-      const sessionKey = `viewed_${splik.id}`;
-      if (sessionStorage.getItem(sessionKey)) return;
-      sessionStorage.setItem(sessionKey, "true");
-    }
-    
-    hasCountedRef.current = true;
-
-    // Optimistic UI update
-    setViewCount((v) => v + 1);
-
-    try {
-      if (currentUser) {
-        // For logged-in users, insert with user_id to prevent duplicates
-        await supabase.from("splik_views").insert({ 
-          splik_id: splik.id,
-          user_id: currentUser.id 
-        });
-      } else {
-        // For anonymous users, just increment the counter
-        await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
-      }
-    } catch (error) {
-      console.error("Error registering view:", error);
-      // Revert optimistic update on error
-      setViewCount((v) => Math.max(0, v - 1));
-    }
-  };
-
-  const beginViewTimer = async () => {
-    if (hasCountedRef.current || viewTimerRef.current !== null) return;
-    
-    // For logged-in users, check if they've already viewed this video
-    if (currentUser) {
-      const alreadyViewed = await checkIfAlreadyViewed();
-      if (alreadyViewed) {
-        hasCountedRef.current = true;
-        return;
-      }
-    } else {
-      // For anonymous users, check sessionStorage
-      const sessionKey = `viewed_${splik.id}`;
-      if (sessionStorage.getItem(sessionKey)) {
-        hasCountedRef.current = true;
-        return;
-      }
-    }
-    
-    // Start the timer
-    viewTimerRef.current = window.setTimeout(registerView, 1000);
-  };
-
-  const clearViewTimer = () => {
-    if (viewTimerRef.current !== null) {
-      clearTimeout(viewTimerRef.current);
-      viewTimerRef.current = null;
-    }
-  };
-
-  const onVideoPlay = () => {
-    setIsPlaying(true);
-    beginViewTimer();
-  };
-
-  const onVideoPauseOrEnd = () => {
-    setIsPlaying(false);
-    clearViewTimer();
-  };
 
   useEffect(() => {
     const getUser = async () => {
@@ -157,30 +78,13 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           .maybeSingle();
 
         setIsLiked(!!data);
-        
-        // Check if user has already viewed this video
-        const alreadyViewed = await checkIfAlreadyViewed();
-        if (alreadyViewed) {
-          hasCountedRef.current = true;
-        }
-      } else {
-        // For anonymous users, check sessionStorage
-        const sessionKey = `viewed_${splik.id}`;
-        if (sessionStorage.getItem(sessionKey)) {
-          hasCountedRef.current = true;
-        }
       }
     };
-
     getUser();
     checkIfFavorited();
 
-    setViewCount(splik.view_count || splik.views || 0);
     setLikesCount(splik.likes_count || 0);
     setCommentsCount(splik.comments_count || 0);
-
-    // Reset timer but keep the viewed status
-    clearViewTimer();
 
     const channel = supabase
       .channel(`splik-${splik.id}`)
@@ -195,7 +99,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         (payload) => {
           if (payload.new) {
             const newData = payload.new as any;
-            setViewCount(newData.views || newData.view_count || 0);
             setLikesCount(newData.likes_count || 0);
             setCommentsCount(newData.comments_count || 0);
           }
@@ -205,9 +108,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     return () => {
       supabase.removeChannel(channel);
-      clearViewTimer();
     };
-  }, [splik.id, currentUser?.id]); // Added currentUser.id as dependency
+  }, [splik.id]);
 
   const handleSplik = async () => {
     if (!currentUser) {
@@ -395,7 +297,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* CARD-LEVEL MASK — covers ANY stray text (like that 0) above the video */}
+      {/* CARD-LEVEL MASK — keeps a clean black bar at the very top */}
       <div className="absolute inset-x-0 top-0 h-8 bg-black z-[25] pointer-events-none" />
 
       {/* BOOSTED BADGE */}
@@ -413,7 +315,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         className="relative bg-black overflow-hidden group"
         style={{ height: videoHeight, maxHeight: "80vh" }}
       >
-        {/* IN-VIDEO MASK — keep the top of the video itself black */}
+        {/* IN-VIDEO MASK — keeps the top of the video itself black */}
         <div className="absolute inset-x-0 top-0 h-8 bg-black z-[30] pointer-events-none" />
 
         <video
@@ -424,9 +326,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           loop={false}
           muted={isMuted}
           playsInline
-          onPlay={onVideoPlay}
-          onPause={onVideoPauseOrEnd}
-          onEnded={onVideoPauseOrEnd}
           onTimeUpdate={handleTimeUpdate}
         />
 
@@ -457,30 +356,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         )}
 
-        {/* Views badge */}
-        <div className="absolute top-3 left-3 z-[40] flex items-center gap-2 bg-black/70 backdrop-blur px-3 py-1.5 rounded-full">
-          <Eye className="h-4 w-4 text-white" />
-          <span className="text-white font-semibold text-sm">
-            {viewCount.toLocaleString()} views
-          </span>
-          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-        </div>
-
-        {/* Amplified badge */}
-        {splik.amplified_until && new Date(splik.amplified_until) > new Date() && (
-          <Badge className="absolute top-3 right-3 bg-gradient-to-r from-neon to-violet-glow text-white border-0 z-[40]">
-            Amplified
-          </Badge>
-        )}
-
-        {/* Optional tag */}
-        {splik.tag && (
-          <div className="absolute bottom-3 left-3 z-[40]">
-            <Badge variant="secondary" className="bg-background/80 backdrop-blur">
-              {splik.tag}
-            </Badge>
-          </div>
-        )}
+        {/* NOTE: No view badge anymore */}
       </div>
 
       {/* CREATOR + MENU */}
@@ -557,7 +433,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </DropdownMenu>
         </div>
 
-        {/* ENGAGEMENT ACTIONS - What matters most */}
+        {/* ENGAGEMENT ACTIONS */}
         <div className="flex items-center justify-between gap-1">
           <Button
             variant="ghost"
@@ -572,20 +448,20 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             <span className="text-xs font-medium">{formatCount(likesCount)}</span>
           </Button>
 
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={handleComment} 
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleComment}
             className="flex items-center space-x-2 flex-1 hover:text-blue-500"
           >
             <MessageCircle className="h-4 w-4" />
             <span className="text-xs font-medium">{formatCount(commentsCount)}</span>
           </Button>
 
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={handleShare} 
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleShare}
             className="flex items-center space-x-2 flex-1 hover:text-green-500"
           >
             <Share2 className="h-4 w-4" />
@@ -606,7 +482,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         </div>
 
-        {/* Engagement explainer */}
         {(likesCount === 0 && commentsCount === 0) && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
             Be the first to react! 💜
