@@ -22,7 +22,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-import { createDiscoveryFeed, applyDiscoveryFeedRotation, type SplikWithScore } from "@/lib/feed";
+import { createDiscoveryFeed, applySessionRotation, forceNewRotation, type SplikWithScore } from "@/lib/feed";
 
 const categories = [
   { id: "funny", label: "Funny", icon: Smile, color: "text-yellow-500" },
@@ -61,13 +61,18 @@ const Explore = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  /** Fetch Trending with Dynamic Rotation */
-  const fetchTrendingData = async (showRefreshToast: boolean = false) => {
+  /** Fetch Trending with Session-Based Dynamic Rotation */
+  const fetchTrendingData = async (showRefreshToast: boolean = false, forceNewShuffle: boolean = false) => {
     try {
       if (showRefreshToast) {
         setRefreshing(true);
       } else {
         setLoading(true);
+      }
+      
+      // Force new rotation if requested
+      if (forceNewShuffle) {
+        forceNewRotation();
       }
       
       // Get all spliks for discovery rotation
@@ -78,7 +83,7 @@ const Explore = () => {
         .limit(200); // Get more for better rotation
 
       if (!spliksError && allSpliks) {
-        // Apply discovery rotation algorithm
+        // Apply session-based discovery rotation
         const rotatedSpliks = createDiscoveryFeed(
           allSpliks as SplikWithScore[],
           { 
@@ -107,7 +112,7 @@ const Explore = () => {
         setTrendingSpliks(withProfiles || []);
       }
 
-      // Fetch rising creators with rotation
+      // Fetch rising creators with session rotation
       const { data: allCreators, error: creatorsError } = await supabase
         .from("profiles")
         .select("*")
@@ -115,8 +120,8 @@ const Explore = () => {
         .limit(60);
 
       if (!creatorsError && allCreators) {
-        // Rotate creators as well
-        const rotatedCreators = applyDiscoveryFeedRotation(
+        // Apply session rotation to creators
+        const rotatedCreators = applySessionRotation(
           allCreators.map(c => ({ 
             ...c, 
             likes_count: c.followers_count || 0,
@@ -137,8 +142,8 @@ const Explore = () => {
 
       if (showRefreshToast) {
         toast({
-          title: "Discovery refreshed!",
-          description: "Showing you new trending content",
+          title: forceNewShuffle ? "Discovery reshuffled!" : "Discovery refreshed!",
+          description: forceNewShuffle ? "Showing you a completely new mix" : "Updated with latest trending content",
         });
       }
     } catch (e) {
@@ -158,9 +163,14 @@ const Explore = () => {
     fetchTrendingData();
   }, [user, selectedCategory]);
 
-  /** Fetch Nearby with rotation */
-  const fetchNearbySpliks = async () => {
+  /** Fetch Nearby with session rotation */
+  const fetchNearbySpliks = async (forceNewShuffle: boolean = false) => {
     try {
+      // Force new rotation if requested
+      if (forceNewShuffle) {
+        forceNewRotation();
+      }
+
       const { data: spliksData, error } = await supabase
         .from("spliks")
         .select("*")
@@ -168,8 +178,8 @@ const Explore = () => {
         .limit(100);
 
       if (!error && spliksData) {
-        // Apply location-based rotation
-        const rotatedSpliks = applyDiscoveryFeedRotation(
+        // Apply session-based location rotation
+        const rotatedSpliks = applySessionRotation(
           spliksData as SplikWithScore[], 
           { 
             userId: user?.id, 
@@ -225,11 +235,18 @@ const Explore = () => {
     );
   };
 
-  // Refresh function
+  // Updated refresh functions
   const handleRefresh = () => {
-    fetchTrendingData(true);
+    fetchTrendingData(true, true); // Force new shuffle
     if (locationPermission === "granted") {
-      fetchNearbySpliks();
+      fetchNearbySpliks(true); // Force new shuffle
+    }
+  };
+
+  const handleUpdate = () => {
+    fetchTrendingData(true, false); // Just refresh content
+    if (locationPermission === "granted") {
+      fetchNearbySpliks(false); // Just refresh content
     }
   };
 
@@ -501,24 +518,36 @@ const Explore = () => {
     <div className="min-h-screen bg-background">
       <Header />
 
-      {/* Top header */}
+      {/* Top header with updated controls */}
       <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl md:text-4xl font-bold mb-2">Discover</h1>
-              <p className="text-muted-foreground">Find trending splikz and rising creators</p>
+              <p className="text-muted-foreground">Find trending splikz and rising creators • New shuffle each refresh</p>
             </div>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleUpdate}
+                disabled={refreshing}
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                Update
+              </Button>
+              <Button 
+                variant="default" 
+                size="sm" 
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                Shuffle
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -576,15 +605,20 @@ const Explore = () => {
                       : "Be the first to post a trending splik!"
                     }
                   </p>
-                  <Button onClick={handleRefresh} variant="outline" disabled={refreshing}>
-                    {refreshing ? 'Refreshing...' : 'Refresh Discovery'}
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
+                      {refreshing ? 'Updating...' : 'Get Latest'}
+                    </Button>
+                    <Button onClick={handleRefresh} disabled={refreshing}>
+                      {refreshing ? 'Shuffling...' : 'Shuffle Discovery'}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="text-center text-sm text-muted-foreground mb-4">
-                  Showing {trendingSpliks.length} trending videos • Updates every 30 minutes
+                  Showing {trendingSpliks.length} trending videos • New shuffle each refresh
                   {selectedCategory && (
                     <span className="ml-1">in {categories.find(c => c.id === selectedCategory)?.label}</span>
                   )}
@@ -607,15 +641,25 @@ const Explore = () => {
                     ))}
                 </div>
                 <div className="text-center py-6 border-t border-border/40">
-                  <Button 
-                    onClick={handleRefresh}
-                    variant="outline"
-                    disabled={refreshing}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                    {refreshing ? 'Discovering...' : 'Discover More'}
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button 
+                      onClick={handleUpdate}
+                      variant="outline"
+                      disabled={refreshing}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      {refreshing ? 'Updating...' : 'Get Latest'}
+                    </Button>
+                    <Button 
+                      onClick={handleRefresh}
+                      disabled={refreshing}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      {refreshing ? 'Shuffling...' : 'Shuffle Discovery'}
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
@@ -634,15 +678,20 @@ const Explore = () => {
                   <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No Rising Creators</h3>
                   <p className="text-muted-foreground mb-4">Join now to become a rising star!</p>
-                  <Button onClick={handleRefresh} variant="outline" disabled={refreshing}>
-                    {refreshing ? 'Refreshing...' : 'Refresh Creators'}
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
+                      {refreshing ? 'Updating...' : 'Get Latest'}
+                    </Button>
+                    <Button onClick={handleRefresh} disabled={refreshing}>
+                      {refreshing ? 'Shuffling...' : 'Shuffle Creators'}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="text-center text-sm text-muted-foreground mb-4">
-                  Discover {risingCreators.length} rising creators • Rotated for variety
+                  Discover {risingCreators.length} rising creators • New shuffle each refresh
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                   {risingCreators.map((creator, i) => (
@@ -691,13 +740,21 @@ const Explore = () => {
                   ))}
                 </div>
                 <div className="text-center py-4">
-                  <Button 
-                    onClick={handleRefresh}
-                    variant="outline"
-                    disabled={refreshing}
-                  >
-                    Discover More Creators
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button 
+                      onClick={handleUpdate}
+                      variant="outline"
+                      disabled={refreshing}
+                    >
+                      Get Latest Creators
+                    </Button>
+                    <Button 
+                      onClick={handleRefresh}
+                      disabled={refreshing}
+                    >
+                      Shuffle Creators
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
@@ -727,15 +784,20 @@ const Explore = () => {
                   <MapPin className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No Nearby Splikz</h3>
                   <p className="text-muted-foreground mb-4">No videos from creators near you yet</p>
-                  <Button onClick={handleRefresh} variant="outline" disabled={refreshing}>
-                    {refreshing ? 'Refreshing...' : 'Refresh Nearby'}
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
+                      {refreshing ? 'Updating...' : 'Get Latest'}
+                    </Button>
+                    <Button onClick={handleRefresh} disabled={refreshing}>
+                      {refreshing ? 'Shuffling...' : 'Shuffle Nearby'}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="text-center text-sm text-muted-foreground mb-4">
-                  Showing {nearbySpliks.length} nearby videos • Rotated for discovery
+                  Showing {nearbySpliks.length} nearby videos • New shuffle each refresh
                 </div>
                 <div ref={nearbyFeedRef} className="space-y-8">
                   {nearbySpliks.map((s) => (
@@ -749,13 +811,25 @@ const Explore = () => {
                   ))}
                 </div>
                 <div className="text-center py-6 border-t border-border/40">
-                  <Button 
-                    onClick={handleRefresh}
-                    variant="outline"
-                    disabled={refreshing}
-                  >
-                    Discover More Nearby
-                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button 
+                      onClick={handleUpdate}
+                      variant="outline"
+                      disabled={refreshing}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      {refreshing ? 'Updating...' : 'Get Latest'}
+                    </Button>
+                    <Button 
+                      onClick={handleRefresh}
+                      disabled={refreshing}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      {refreshing ? 'Shuffling...' : 'Shuffle Nearby'}
+                    </Button>
+                  </div>
                 </div>
               </>
             )}
