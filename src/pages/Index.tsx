@@ -242,6 +242,13 @@ const Index = () => {
         {/* Google AdSense Verification */}
         <meta name="google-adsense-account" content="ca-pub-7160715578591513" />
         
+        {/* Google AdSense Script */}
+        <script 
+          async 
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7160715578591513"
+          crossOrigin="anonymous"
+        />
+        
         {/* Open Graph tags for better social sharing */}
         <meta property="og:title" content="Splikz - Short Video Platform" />
         <meta property="og:description" content="Watch and share short vertical videos on Splikz" />
