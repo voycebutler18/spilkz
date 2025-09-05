@@ -21,7 +21,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-import VideoGrid from "@/components/dashboard/VideoGrid";
+// ⚠️ Use the same VideoGrid you just fixed
+import { VideoGrid } from "@/components/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
@@ -92,7 +93,7 @@ const CreatorDashboard = () => {
   }, []);
 
   const setupRealtimeUpdates = () => {
-    // Refresh dashboard periodically
+    // Periodic refresh of stats (lightweight)
     const interval = setInterval(() => {
       if (profile) {
         fetchStats();
@@ -191,7 +192,7 @@ const CreatorDashboard = () => {
 
       if (spliksError) throw spliksError;
 
-      // Lightweight profile for display in grid/cards
+      // Lightweight profile for display on the cards
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("username, display_name, avatar_url")
@@ -202,24 +203,24 @@ const CreatorDashboard = () => {
         console.error("Error fetching profile for spliks:", profileError);
       }
 
+      // IMPORTANT: VideoGrid expects `splik.profiles`
       const data =
         spliksData?.map((splik) => ({
           ...splik,
-          // IMPORTANT: cards expect `splik.profile`, not `splik.profiles`
-          profile: profileData || null,
+          profiles: profileData || null,
         })) || [];
 
-      setSpliks(data || []);
+      setSpliks(data);
 
       // Reactions-only metrics
       const totalReactions =
-        data?.reduce(
+        data.reduce(
           (acc: number, s: any) =>
             acc + (s.likes_count || 0) + (s.comments_count || 0),
           0
         ) || 0;
 
-      const totalSpliks = data?.length || 0;
+      const totalSpliks = data.length || 0;
       const avgReactionsPerVideo =
         totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
 
@@ -301,7 +302,8 @@ const CreatorDashboard = () => {
 
   const handleDeleted = (id: string) => {
     setSpliks((prev) => prev.filter((s) => s.id !== id));
-    fetchSpliks();
+    // also refresh stats
+    fetchStats();
   };
 
   if (loading) {
@@ -428,9 +430,13 @@ const CreatorDashboard = () => {
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
               <>
-                <VideoGrid spliks={spliks} />
+                {/* The grid shows per-card delete for owner */}
+                <VideoGrid
+                  spliks={spliks}
+                  onDeletedSplik={(id) => handleDeleted(id)}
+                />
 
-                {/* Simple manage list with Delete buttons */}
+                {/* Optional “Manage Videos” list (kept for convenience) */}
                 <Card className="mt-6">
                   <CardHeader>
                     <CardTitle className="text-base">Manage Videos</CardTitle>
@@ -498,7 +504,6 @@ const CreatorDashboard = () => {
                   <Badge variant="secondary">Live</Badge>
                 </div>
 
-                {/* Pretty analytics block */}
                 <CreatorAnalytics spliks={spliks} stats={stats} />
               </CardContent>
             </Card>
@@ -588,9 +593,7 @@ const CreatorDashboard = () => {
                     {/* Avatar preview */}
                     <div className="flex items-center gap-3">
                       <Avatar className="h-16 w-16 ring-2 ring-primary/20">
-                        <AvatarImage
-                          src={profile?.avatar_url || undefined}
-                        />
+                        <AvatarImage src={profile?.avatar_url || undefined} />
                         <AvatarFallback>
                           {profile?.display_name?.[0] ||
                             profile?.username?.[0] ||
@@ -608,7 +611,9 @@ const CreatorDashboard = () => {
                     </div>
 
                     <div>
-                      <p className="text-sm text-muted-foreground">Display Name</p>
+                      <p className="text-sm text-muted-foreground">
+                        Display Name
+                      </p>
                       <p className="font-medium">
                         {profile?.display_name || "Not set"}
                       </p>
