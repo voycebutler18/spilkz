@@ -232,6 +232,25 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <Helmet>
+        <title>Splikz - Short Video Platform</title>
+        <meta name="description" content="Watch and share short vertical videos on Splikz" />
+        
+        {/* Google Search Console Verification - Replace with your actual verification code */}
+        <meta name="google-site-verification" content="ca-pub-7160715578591513" />
+        
+        {/* Open Graph tags for better social sharing */}
+        <meta property="og:title" content="Splikz - Short Video Platform" />
+        <meta property="og:description" content="Watch and share short vertical videos on Splikz" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://splikz.com" />
+        
+        {/* Twitter Card tags */}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Splikz - Short Video Platform" />
+        <meta name="twitter:description" content="Watch and share short vertical videos on Splikz" />
+      </Helmet>
+
       <Header />
 
       {/* Enhanced refresh controls */}
