@@ -1,5 +1,5 @@
 // src/pages/Dashboard/CreatorDashboard.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -21,10 +21,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-// ⚠️ Use the same VideoGrid you just fixed
-import { VideoGrid } from "@/components/VideoGrid";
+import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
-import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
@@ -39,6 +37,7 @@ import {
   Unlock,
   Heart,
   MessageCircle,
+  MessageSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -83,17 +82,27 @@ const CreatorDashboard = () => {
     avatar_url: "",
   });
 
+  // Unread messages for dashboard button
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const channelCleanup = useRef<null | (() => void)>(null);
+
   useEffect(() => {
     checkAuth();
     const cleanup = setupRealtimeUpdates();
     return () => {
       if (typeof cleanup === "function") cleanup();
+      if (channelCleanup.current) {
+        try {
+          channelCleanup.current();
+        } catch {}
+        channelCleanup.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setupRealtimeUpdates = () => {
-    // Periodic refresh of stats (lightweight)
+    // Refresh dashboard periodically
     const interval = setInterval(() => {
       if (profile) {
         fetchStats();
@@ -121,7 +130,17 @@ const CreatorDashboard = () => {
           }
         }
       )
+      // messages: update unread badge live
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "messages" },
+        () => {
+          fetchUnreadCount(); // lightweight head-count
+        }
+      )
       .subscribe();
+
+    channelCleanup.current = () => supabase.removeChannel(channel);
 
     return () => {
       clearInterval(interval);
@@ -137,8 +156,27 @@ const CreatorDashboard = () => {
       navigate("/login");
       return;
     }
-    await fetchProfile(user.id);
-    await fetchSpliks();
+    await Promise.all([fetchProfile(user.id), fetchSpliks(), fetchUnreadCount()]);
+  };
+
+  const fetchUnreadCount = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Count unread messages addressed to the current user
+    const { count, error } = await supabase
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("recipient_id", user.id)
+      .is("read_at", null);
+
+    if (error) {
+      console.error("Unread count error:", error);
+      return;
+    }
+    setUnreadCount(count || 0);
   };
 
   const fetchProfile = async (userId: string) => {
@@ -192,7 +230,7 @@ const CreatorDashboard = () => {
 
       if (spliksError) throw spliksError;
 
-      // Lightweight profile for display on the cards
+      // Lightweight profile for display in grid/cards
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("username, display_name, avatar_url")
@@ -203,24 +241,24 @@ const CreatorDashboard = () => {
         console.error("Error fetching profile for spliks:", profileError);
       }
 
-      // IMPORTANT: VideoGrid expects `splik.profiles`
       const data =
         spliksData?.map((splik) => ({
           ...splik,
-          profiles: profileData || null,
+          // IMPORTANT: cards expect `splik.profile`, not `splik.profiles`
+          profile: profileData || null,
         })) || [];
 
-      setSpliks(data);
+      setSpliks(data || []);
 
       // Reactions-only metrics
       const totalReactions =
-        data.reduce(
+        data?.reduce(
           (acc: number, s: any) =>
             acc + (s.likes_count || 0) + (s.comments_count || 0),
           0
         ) || 0;
 
-      const totalSpliks = data.length || 0;
+      const totalSpliks = data?.length || 0;
       const avgReactionsPerVideo =
         totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
 
@@ -300,12 +338,6 @@ const CreatorDashboard = () => {
     }
   };
 
-  const handleDeleted = (id: string) => {
-    setSpliks((prev) => prev.filter((s) => s.id !== id));
-    // also refresh stats
-    fetchStats();
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
@@ -327,20 +359,38 @@ const CreatorDashboard = () => {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Creator Dashboard
           </h1>
-          <div className="flex gap-2">
-  <MessagesButton />
-  <Button
-    variant="outline"
-    onClick={() => navigate("/dashboard/favorites")}
-  >
-    <Bookmark className="mr-2 h-4 w-4" />
-    My Favorites
-  </Button>
-  <Button onClick={() => setUploadModalOpen(true)}>
-    <Plus className="mr-2 h-4 w-4" />
-    Upload Video
-  </Button>
-</div>
+
+          {/* ACTION BUTTONS (now includes Messages with unread badge) */}
+          <div className="flex gap-2 items-center">
+            <Button
+              variant="outline"
+              onClick={() => navigate("/messages")}
+              className="relative"
+              title="Messages"
+            >
+              <MessageSquare className="mr-2 h-4 w-4" />
+              Messages
+              {unreadCount > 0 && (
+                <span className="ml-2 inline-flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-[10px] leading-none h-4 px-1.5">
+                  {unreadCount}
+                </span>
+              )}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => navigate("/dashboard/favorites")}
+            >
+              <Bookmark className="mr-2 h-4 w-4" />
+              My Favorites
+            </Button>
+
+            <Button onClick={() => setUploadModalOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Upload Video
+            </Button>
+          </div>
+        </div>
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -430,46 +480,8 @@ const CreatorDashboard = () => {
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
               <>
-                {/* The grid shows per-card delete for owner */}
-                <VideoGrid
-                  spliks={spliks}
-                  onDeletedSplik={(id) => handleDeleted(id)}
-                />
-
-                {/* Optional “Manage Videos” list (kept for convenience) */}
-                <Card className="mt-6">
-                  <CardHeader>
-                    <CardTitle className="text-base">Manage Videos</CardTitle>
-                    <CardDescription>
-                      Delete videos you no longer want on your profile.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="divide-y">
-                      {spliks.map((s) => (
-                        <div
-                          key={s.id}
-                          className="py-3 flex items-center justify-between gap-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium truncate">
-                              {s.title || "Untitled video"}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {s.video_url}
-                            </p>
-                          </div>
-                          <DeleteSplikButton
-                            splikId={s.id}
-                            videoUrl={s.video_url}
-                            thumbnailUrl={s.thumbnail_url}
-                            onDeleted={() => handleDeleted(s.id)}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                <VideoGrid spliks={spliks} />
+                {/* NOTE: Removed the duplicate "Manage Videos / Delete" list per your request */}
               </>
             ) : (
               <Card className="p-12 text-center">
@@ -504,6 +516,7 @@ const CreatorDashboard = () => {
                   <Badge variant="secondary">Live</Badge>
                 </div>
 
+                {/* Pretty analytics block */}
                 <CreatorAnalytics spliks={spliks} stats={stats} />
               </CardContent>
             </Card>
@@ -654,7 +667,9 @@ const CreatorDashboard = () => {
                             <Unlock className="h-4 w-4" />
                           )}
                           <div>
-                            <p className="font-medium text-sm">Followers List</p>
+                            <p className="font-medium text-sm">
+                              Followers List
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {profile?.followers_private
                                 ? "Private - Only you can see"
@@ -678,7 +693,9 @@ const CreatorDashboard = () => {
                             <Unlock className="h-4 w-4" />
                           )}
                           <div>
-                            <p className="font-medium text-sm">Following List</p>
+                            <p className="font-medium text-sm">
+                              Following List
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {profile?.following_private
                                 ? "Private - Only you can see"
