@@ -15,7 +15,7 @@ import CreatorDashboard from "./pages/Dashboard/CreatorDashboard";
 import Favorites from "./pages/Dashboard/Favorites";
 import Profile from "./pages/Profile";
 import VideoPage from "./pages/VideoPage";
-import { CreatorProfile } from "./pages/CreatorProfile";
+import CreatorProfile from "./pages/CreatorProfile";
 import NotFound from "./pages/NotFound";
 import Terms from "./pages/legal/Terms";
 import Privacy from "./pages/legal/Privacy";
