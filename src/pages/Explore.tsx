@@ -13,6 +13,7 @@ import {
   Sparkles,
   Trophy,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
 import { FollowButton } from "@/components/FollowButton";
@@ -30,77 +31,172 @@ const categories = [
   { id: "sports", label: "Sports", icon: Trophy, color: "text-green-500" },
 ];
 
+// Helper functions for dynamic rotation (same as Index.tsx)
+const hashString = (str: string): number => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+};
+
+const seededRandom = (seed: number): number => {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+};
+
+const applyDiscoveryRotation = (spliks: any[], userId: string | null = null, category: string | null = null) => {
+  if (!spliks.length) return [];
+
+  // Discovery rotation changes more frequently (every 30 minutes)
+  const now = new Date();
+  const currentHalfHour = Math.floor(now.getMinutes() / 30);
+  const currentHour = now.getHours();
+  const currentDay = now.getDate();
+  const userSeed = userId ? hashString(userId) : 0;
+  const categorySeed = category ? hashString(category) : 0;
+  const timeSeed = currentHalfHour + (currentHour * 2) + (currentDay * 48);
+  const combinedSeed = userSeed + categorySeed + timeSeed;
+
+  // Apply discovery-focused weighting
+  const weightedSpliks = spliks.map((splik, index) => {
+    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
+    const diversityScore = seededRandom(combinedSeed + index + splik.id.charCodeAt(0)) * 80; // High randomness for discovery
+    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 1.5;
+    const recencyBonus = ageInHours < 24 ? 20 : ageInHours < 168 ? 10 : 0; // Bonus for content < 1 week old
+    const categoryMatch = category && (splik.tag?.toLowerCase().includes(category)) ? 30 : 0;
+    
+    return {
+      ...splik,
+      discoveryScore: diversityScore + engagementScore + recencyBonus + categoryMatch
+    };
+  });
+
+  return weightedSpliks
+    .sort((a, b) => b.discoveryScore - a.discoveryScore)
+    .slice(0, 50); // More content for discovery
+};
+
 const Explore = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [trendingSpliks, setTrendingSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
   const [risingCreators, setRisingCreators] = useState<Profile[]>([]);
   const [nearbySpliks, setNearbySpliks] = useState<(Splik & { profile?: Profile })[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [user, setUser] = useState<any>(null);
   const [locationPermission, setLocationPermission] =
     useState<"granted" | "denied" | "prompt">("prompt");
   const { toast } = useToast();
 
-  // One feed container for autoplay (no nested scroller)
+  // Refs for autoplay management
   const trendingFeedRef = useRef<HTMLDivElement | null>(null);
   const nearbyFeedRef = useRef<HTMLDivElement | null>(null);
 
-  /** Fetch Trending + Rising */
+  // Get current user
   useEffect(() => {
-    const fetchTrendingData = async () => {
-      try {
-        const { data: spliksData, error: spliksError } = await supabase
-          .from("spliks")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(30);
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user);
+    });
 
-        if (!spliksError && spliksData) {
-          const withProfiles = await Promise.all(
-            spliksData.map(async (s) => {
-              const { data: p } = await supabase
-                .from("profiles")
-                .select("*")
-                .eq("id", s.user_id)
-                .maybeSingle();
-              
-              return {
-                ...s,
-                profile: p || undefined
-              };
-            })
-          );
-          setTrendingSpliks(withProfiles || []);
-        }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
 
-        const { data: creatorsData, error: creatorsError } = await supabase
-          .from("profiles")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(8);
+    return () => subscription.unsubscribe();
+  }, []);
 
-        if (!creatorsError) setRisingCreators(creatorsData || []);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
+  /** Fetch Trending with Dynamic Rotation */
+  const fetchTrendingData = async (showRefreshToast: boolean = false) => {
+    try {
+      setRefreshing(true);
+      
+      // Get all spliks for rotation
+      const { data: allSpliks, error: spliksError } = await supabase
+        .from("spliks")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(200); // Get more for better rotation
+
+      if (!spliksError && allSpliks) {
+        // Apply discovery rotation algorithm
+        const rotatedSpliks = applyDiscoveryRotation(allSpliks, user?.id, selectedCategory);
+        
+        // Get profiles for rotated content
+        const withProfiles = await Promise.all(
+          rotatedSpliks.slice(0, 30).map(async (s) => {
+            const { data: p } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("id", s.user_id)
+              .maybeSingle();
+            
+            return {
+              ...s,
+              profile: p || undefined
+            };
+          })
+        );
+        setTrendingSpliks(withProfiles || []);
       }
-    };
 
+      // Fetch rising creators with rotation
+      const { data: allCreators, error: creatorsError } = await supabase
+        .from("profiles")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (!creatorsError && allCreators) {
+        // Rotate creators as well
+        const rotatedCreators = applyDiscoveryRotation(
+          allCreators.map(c => ({ ...c, likes_count: c.followers_count || 0 })), 
+          user?.id
+        ).slice(0, 12);
+        
+        setRisingCreators(rotatedCreators);
+      }
+
+      if (showRefreshToast) {
+        toast({
+          title: "Discovery refreshed",
+          description: "Showing you new trending content",
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      toast({
+        title: "Error",
+        description: "Failed to load trending content",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
     fetchTrendingData();
-  }, [toast]);
+  }, [user, selectedCategory]);
 
-  /** Fetch Nearby (placeholder: same as trending for now) */
+  /** Fetch Nearby with rotation */
   const fetchNearbySpliks = async () => {
     try {
       const { data: spliksData, error } = await supabase
         .from("spliks")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(30);
+        .limit(100);
 
       if (!error && spliksData) {
+        // Apply location-based rotation (placeholder - same as trending for now)
+        const rotatedSpliks = applyDiscoveryRotation(spliksData, user?.id, "nearby");
+        
         const withProfiles = await Promise.all(
-          spliksData.map(async (s) => {
+          rotatedSpliks.slice(0, 30).map(async (s) => {
             const { data: p } = await supabase
               .from("profiles")
               .select("*")
@@ -146,30 +242,33 @@ const Explore = () => {
     );
   };
 
+  // Refresh function
+  const handleRefresh = () => {
+    fetchTrendingData(true);
+    if (locationPermission === "granted") {
+      fetchNearbySpliks();
+    }
+  };
+
   /**
    * ======= ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES =======
-   * **Autoplay**: The most-visible video plays automatically; others pause. 
-   * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
    */
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
       if (!host) return;
 
-      // Track visibility ratios and current playing video
       const videoVisibility = new Map<HTMLVideoElement, number>();
       let currentPlayingVideo: HTMLVideoElement | null = null;
       let isProcessing = false;
 
-      // Mobile video setup helper
       const setupVideoForMobile = (video: HTMLVideoElement) => {
         video.muted = true;
         video.playsInline = true;
         video.setAttribute('webkit-playsinline', 'true');
         video.preload = 'metadata';
-        video.load(); // Force load to show first frame
+        video.load();
         
-        // Ensure first frame is visible
         video.addEventListener('loadeddata', () => {
           if (video.currentTime === 0) {
             video.currentTime = 0.1;
@@ -191,11 +290,9 @@ const Explore = () => {
         const visibilityEntries = Array.from(videoVisibility.entries());
         if (visibilityEntries.length === 0) return null;
 
-        // Sort by visibility ratio descending
         const sortedVideos = visibilityEntries.sort((a, b) => b[1] - a[1]);
         const mostVisible = sortedVideos[0];
         
-        // Only return if visibility is above threshold
         return mostVisible && mostVisible[1] >= 0.6 ? mostVisible[0] : null;
       };
 
@@ -206,39 +303,29 @@ const Explore = () => {
         try {
           const targetVideo = findMostVisibleVideo();
           
-          // If current video falls below 45% visibility, pause it
           if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
           }
 
-          // Switch to new target video if different from current
           if (targetVideo && targetVideo !== currentPlayingVideo) {
-            // Pause all other videos first
             pauseAllVideos(targetVideo);
-            
-            // Configure video for mobile autoplay
             setupVideoForMobile(targetVideo);
 
-            // Mobile fix: ensure video has loaded enough data to display
-            if (targetVideo.readyState < 2) { // HAVE_CURRENT_DATA
+            if (targetVideo.readyState < 2) {
               targetVideo.load();
-              // Small delay to let load complete
               await new Promise(resolve => setTimeout(resolve, 100));
             }
 
-            // Force load first frame on mobile if needed
             if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
               targetVideo.currentTime = 0.1;
             }
             
-            // Attempt to play (muted first for autoplay policies)
             try {
               await targetVideo.play();
               currentPlayingVideo = targetVideo;
             } catch (playError) {
               console.log("Autoplay prevented, trying muted:", playError);
-              // If blocked, try with muted
               if (!targetVideo.muted) {
                 targetVideo.muted = true;
                 try {
@@ -246,20 +333,17 @@ const Explore = () => {
                   currentPlayingVideo = targetVideo;
                 } catch (mutedError) {
                   console.log("Video autoplay blocked even when muted:", mutedError);
-                  // Fallback: at least show the first frame
                   if (targetVideo.currentTime === 0) {
                     targetVideo.currentTime = 0.1;
                   }
                 }
               } else {
-                // Video is already muted but still failed - show first frame
                 if (targetVideo.currentTime === 0) {
                   targetVideo.currentTime = 0.1;
                 }
               }
             }
           } else if (!targetVideo && currentPlayingVideo) {
-            // No sufficiently visible video - pause current
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
           }
@@ -270,7 +354,6 @@ const Explore = () => {
         }
       };
 
-      // Create intersection observer with multiple thresholds for smooth tracking
       const intersectionObserver = new IntersectionObserver(
         (entries) => {
           for (const entry of entries) {
@@ -278,26 +361,22 @@ const Explore = () => {
             videoVisibility.set(video, entry.intersectionRatio);
           }
           
-          // Handle playback changes
           handleVideoPlayback();
         },
         { 
           root: null, 
           threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0],
-          rootMargin: "10px" // Better mobile performance
+          rootMargin: "10px"
         }
       );
 
-      // Initialize videos and start observing
       const initializeVideos = () => {
         getAllVideos().forEach((video) => {
-          // Set up mobile-friendly video attributes
           if (!video.hasAttribute('data-mobile-initialized')) {
             setupVideoForMobile(video);
             video.setAttribute('data-mobile-initialized', 'true');
           }
           
-          // Initialize visibility tracking
           if (!videoVisibility.has(video)) {
             videoVisibility.set(video, 0);
             intersectionObserver.observe(video);
@@ -305,7 +384,6 @@ const Explore = () => {
         });
       };
 
-      // Watch for dynamically added videos (SplikCards loading)
       const mutationObserver = new MutationObserver((mutations) => {
         let hasNewVideos = false;
         
@@ -313,7 +391,6 @@ const Explore = () => {
           mutation.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
               const element = node as Element;
-              // Check if the added node contains videos
               const videos = element.querySelectorAll ? element.querySelectorAll("video") : [];
               if (videos.length > 0) {
                 hasNewVideos = true;
@@ -323,19 +400,16 @@ const Explore = () => {
         });
 
         if (hasNewVideos) {
-          // Small delay to ensure DOM is fully updated
           setTimeout(initializeVideos, 100);
         }
       });
 
-      // Start observing
-      setTimeout(initializeVideos, 100); // Initial delay for DOM readiness
+      setTimeout(initializeVideos, 100);
       mutationObserver.observe(host, { 
         childList: true, 
         subtree: true 
       });
 
-      // Cleanup function
       return () => {
         intersectionObserver.disconnect();
         mutationObserver.disconnect();
@@ -346,9 +420,78 @@ const Explore = () => {
     }, deps);
   };
 
-  // Apply autoplay to each section feed independently
+  // Apply autoplay to each section
   useAutoplayIn(trendingFeedRef, [trendingSpliks, selectedCategory]);
   useAutoplayIn(nearbyFeedRef, [nearbySpliks, locationPermission]);
+
+  const handleSplik = (splikId: string) => {
+    console.log('Splik:', splikId);
+  };
+
+  const handleReact = async (splikId: string) => {
+    if (!user) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to react to videos",
+        variant: "default",
+      });
+      return;
+    }
+    
+    // Update local state optimistically
+    setTrendingSpliks(prev => prev.map(splik => {
+      if (splik.id === splikId) {
+        return {
+          ...splik,
+          likes_count: (splik.likes_count || 0) + 1,
+          user_has_liked: true
+        };
+      }
+      return splik;
+    }));
+
+    // Send to backend
+    try {
+      await supabase.rpc('handle_like', { splik_id: splikId });
+    } catch (error) {
+      console.error('Error liking splik:', error);
+      // Revert optimistic update on error
+      setTrendingSpliks(prev => prev.map(splik => {
+        if (splik.id === splikId) {
+          return {
+            ...splik,
+            likes_count: Math.max(0, (splik.likes_count || 0) - 1),
+            user_has_liked: false
+          };
+        }
+        return splik;
+      }));
+    }
+  };
+
+  const handleShare = async (splikId: string) => {
+    const url = `${window.location.origin}/video/${splikId}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'Check out this trending Splik!',
+          url: url
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast({
+          title: "Link copied!",
+          description: "The video link has been copied to your clipboard",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Failed to share",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -357,8 +500,22 @@ const Explore = () => {
       {/* Top header */}
       <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
-          <h1 className="text-3xl md:text-4xl font-bold mb-2">Discover</h1>
-          <p className="text-muted-foreground">Find trending splikz and rising creators</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold mb-2">Discover</h1>
+              <p className="text-muted-foreground">Find trending splikz and rising creators</p>
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -407,28 +564,55 @@ const Explore = () => {
               <Card>
                 <CardContent className="p-8 text-center">
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
-                  <p className="text-muted-foreground">Be the first to post a splik!</p>
+                  <h3 className="text-lg font-semibold mb-2">No Trending Splikz</h3>
+                  <p className="text-muted-foreground mb-4">
+                    {selectedCategory 
+                      ? `No ${selectedCategory} videos found. Try a different category!`
+                      : "Be the first to post a trending splik!"
+                    }
+                  </p>
+                  <Button onClick={handleRefresh} variant="outline">
+                    Refresh Discovery
+                  </Button>
                 </CardContent>
               </Card>
             ) : (
-              <div ref={trendingFeedRef} className="space-y-8">
-                {trendingSpliks
-                  .filter((s) =>
-                    !selectedCategory
-                      ? true
-                      : (s as any).tag?.toLowerCase().includes(selectedCategory)
-                  )
-                  .map((s) => (
-                    <SplikCard
-                      key={s.id}
-                      splik={s}
-                      onSplik={() => {}}
-                      onReact={() => {}}
-                      onShare={() => {}}
-                    />
-                  ))}
-              </div>
+              <>
+                <div className="text-center text-sm text-muted-foreground mb-4">
+                  Showing {trendingSpliks.length} trending videos
+                  {selectedCategory && (
+                    <span className="ml-1">in {categories.find(c => c.id === selectedCategory)?.label}</span>
+                  )}
+                </div>
+                <div ref={trendingFeedRef} className="space-y-8">
+                  {trendingSpliks
+                    .filter((s) =>
+                      !selectedCategory
+                        ? true
+                        : (s as any).tag?.toLowerCase().includes(selectedCategory)
+                    )
+                    .map((s) => (
+                      <SplikCard
+                        key={s.id}
+                        splik={s}
+                        onSplik={() => handleSplik(s.id)}
+                        onReact={() => handleReact(s.id)}
+                        onShare={() => handleShare(s.id)}
+                      />
+                    ))}
+                </div>
+                <div className="text-center py-4">
+                  <Button 
+                    onClick={handleRefresh}
+                    variant="outline"
+                    disabled={refreshing}
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    Discover More
+                  </Button>
+                </div>
+              </>
             )}
           </TabsContent>
 
@@ -442,57 +626,74 @@ const Explore = () => {
               <Card>
                 <CardContent className="p-8 text-center">
                   <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No Creators Yet</h3>
-                  <p className="text-muted-foreground">Join now to become a rising star!</p>
+                  <h3 className="text-lg font-semibold mb-2">No Rising Creators</h3>
+                  <p className="text-muted-foreground mb-4">Join now to become a rising star!</p>
+                  <Button onClick={handleRefresh} variant="outline">
+                    Refresh Creators
+                  </Button>
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {risingCreators.map((creator, i) => (
-                  <Card key={creator.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-                    <CardContent className="p-4">
-                      <Link
-                        to={`/creator/${creator.username || (creator as any).handle || creator.id}`}
-                        className="block mb-3"
-                      >
-                        <div className="flex items-center space-x-3">
-                          <div className="relative">
-                            <img
-                              src={
-                                creator.avatar_url ||
-                                `https://api.dicebear.com/7.x/avataaars/svg?seed=${
-                                  creator.username || creator.id
-                                }`
-                              }
-                              alt={creator.display_name || creator.username || "User"}
-                              className="h-12 w-12 rounded-full ring-2 ring-primary/20"
-                            />
-                            <Badge className="absolute -bottom-1 -right-1 h-5 w-5 p-0 flex items-center justify-center">
-                              {i + 1}
-                            </Badge>
+              <>
+                <div className="text-center text-sm text-muted-foreground mb-4">
+                  Discover {risingCreators.length} rising creators
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                  {risingCreators.map((creator, i) => (
+                    <Card key={creator.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+                      <CardContent className="p-4">
+                        <Link
+                          to={`/creator/${creator.username || (creator as any).handle || creator.id}`}
+                          className="block mb-3"
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className="relative">
+                              <img
+                                src={
+                                  creator.avatar_url ||
+                                  `https://api.dicebear.com/7.x/avataaars/svg?seed=${
+                                    creator.username || creator.id
+                                  }`
+                                }
+                                alt={creator.display_name || creator.username || "User"}
+                                className="h-12 w-12 rounded-full ring-2 ring-primary/20"
+                              />
+                              <Badge className="absolute -bottom-1 -right-1 h-5 w-5 p-0 flex items-center justify-center">
+                                {i + 1}
+                              </Badge>
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-semibold hover:text-primary transition-colors">
+                                {creator.display_name || creator.username || "Unknown"}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                @{creator.username || (creator as any).handle || "unknown"}
+                              </p>
+                            </div>
                           </div>
-                          <div className="flex-1">
-                            <p className="font-semibold hover:text-primary transition-colors">
-                              {creator.display_name || creator.username || "Unknown"}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              @{creator.username || (creator as any).handle || "unknown"}
-                            </p>
-                          </div>
+                        </Link>
+                        <div className="flex items-center justify-between">
+                          <Badge variant="secondary">{creator.followers_count || 0} followers</Badge>
+                          <FollowButton
+                            profileId={creator.id}
+                            username={creator.username || (creator as any).handle}
+                            size="sm"
+                          />
                         </div>
-                      </Link>
-                      <div className="flex items-center justify-between">
-                        <Badge variant="secondary">{creator.followers_count || 0} followers</Badge>
-                        <FollowButton
-                          profileId={creator.id}
-                          username={creator.username || (creator as any).handle}
-                          size="sm"
-                        />
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                <div className="text-center py-4">
+                  <Button 
+                    onClick={handleRefresh}
+                    variant="outline"
+                    disabled={refreshing}
+                  >
+                    Discover More Creators
+                  </Button>
+                </div>
+              </>
             )}
           </TabsContent>
 
@@ -518,21 +719,38 @@ const Explore = () => {
                 <CardContent className="p-8 text-center">
                   <MapPin className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No Nearby Splikz</h3>
-                  <p className="text-muted-foreground">No videos from creators near you yet</p>
+                  <p className="text-muted-foreground mb-4">No videos from creators near you yet</p>
+                  <Button onClick={handleRefresh} variant="outline">
+                    Refresh Nearby
+                  </Button>
                 </CardContent>
               </Card>
             ) : (
-              <div ref={nearbyFeedRef} className="space-y-8">
-                {nearbySpliks.map((s) => (
-                  <SplikCard
-                    key={s.id}
-                    splik={s}
-                    onSplik={() => {}}
-                    onReact={() => {}}
-                    onShare={() => {}}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="text-center text-sm text-muted-foreground mb-4">
+                  Showing {nearbySpliks.length} nearby videos
+                </div>
+                <div ref={nearbyFeedRef} className="space-y-8">
+                  {nearbySpliks.map((s) => (
+                    <SplikCard
+                      key={s.id}
+                      splik={s}
+                      onSplik={() => handleSplik(s.id)}
+                      onReact={() => handleReact(s.id)}
+                      onShare={() => handleShare(s.id)}
+                    />
+                  ))}
+                </div>
+                <div className="text-center py-4">
+                  <Button 
+                    onClick={handleRefresh}
+                    variant="outline"
+                    disabled={refreshing}
+                  >
+                    Discover More Nearby
+                  </Button>
+                </div>
+              </>
             )}
           </TabsContent>
         </Tabs>
