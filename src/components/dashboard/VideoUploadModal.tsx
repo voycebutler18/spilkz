@@ -1,15 +1,41 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Upload, X, Loader2, Scissors, Play, Pause, Volume2, VolumeX, AlertCircle } from "lucide-react";
+import {
+  Upload,
+  X,
+  Loader2,
+  Scissors,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  AlertCircle,
+  Film,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { VideoRangeSlider } from "./VideoRangeSlider";
 import { Slider } from "@/components/ui/slider";
+
+/** Simple env detection (no deps) */
+const isIOS =
+  typeof navigator !== "undefined" &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.userAgent.includes("Mac") && "ontouchend" in document));
+const isMobile =
+  typeof navigator !== "undefined" &&
+  (/Mobi|Android/i.test(navigator.userAgent) || isIOS);
 
 interface VideoUploadModalProps {
   open: boolean;
@@ -18,6 +44,8 @@ interface VideoUploadModalProps {
 }
 
 const MAX_VIDEO_DURATION = 3; // 3 seconds max
+const DESKTOP_MAX_SIZE = 500 * 1024 * 1024; // 500MB
+const MOBILE_MAX_SIZE = 150 * 1024 * 1024; // safer cap for mobile/iOS
 
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
   const [file, setFile] = useState<File | null>(null);
@@ -31,20 +59,24 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]); // [start, end] in seconds
+  const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]);
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number>();
   const { toast } = useToast();
 
   const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi";
-  const maxFileSize = 500 * 1024 * 1024; // 500MB
+  const maxFileSize = isMobile ? MOBILE_MAX_SIZE : DESKTOP_MAX_SIZE;
 
-  // Enhanced MIME type inference with better MOV support
+  /** Helpers */
+  const isMOV = (f: File | null) =>
+    !!f && (f.type === "video/quicktime" || /\.mov$/i.test(f.name));
+
   const inferMimeFromName = (name: string): string => {
     const ext = name.split(".").pop()?.toLowerCase();
     switch (ext) {
@@ -63,7 +95,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   };
 
-  // Get current user on component mount
+  /** Auth */
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -72,242 +104,217 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     getUser();
   }, []);
 
-  // Cleanup function for video preview
+  /** Cleanup object URL + RAF */
   useEffect(() => {
     return () => {
-      if (videoPreview) {
-        URL.revokeObjectURL(videoPreview);
-      }
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      if (videoPreview) URL.revokeObjectURL(videoPreview);
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [videoPreview]);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+  /** File select */
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const selectedFile = e.target.files?.[0];
+      if (!selectedFile) return;
 
-    // Reset previous error state
-    setVideoError(null);
+      setVideoError(null);
+      setVideoReady(false);
+      setProcessingVideo(true);
 
-    // Validate file type
-    const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
-    const validTypes = ['video/mp4', 'video/quicktime', 'video/x-flv', 'video/webm', 'video/x-msvideo'];
-    
-    if (!validTypes.includes(fileType)) {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload a video file (MP4, MOV, FLV, WebM, AVI)",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate file size
-    if (selectedFile.size > maxFileSize) {
-      toast({
-        title: "File too large",
-        description: "Please upload a video smaller than 500MB",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setProcessingVideo(true);
-    setVideoReady(false);
-    
-    try {
-      setFile(selectedFile);
-      
-      // Create video preview
-      const url = URL.createObjectURL(selectedFile);
-      setVideoPreview(url);
-      
-      // Load video to get duration with better error handling
-      const video = document.createElement('video');
-      video.src = url;
-      video.preload = 'metadata';
-      
-      // For MOV files, try to set additional attributes
-      if (fileType === 'video/quicktime') {
-        video.setAttribute('type', 'video/quicktime');
+      // Validate type/size
+      const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
+      const validTypes = [
+        "video/mp4",
+        "video/quicktime",
+        "video/x-flv",
+        "video/webm",
+        "video/x-msvideo",
+      ];
+      if (!validTypes.includes(fileType)) {
+        toast({
+          title: "Invalid file type",
+          description: "Please upload a video file (MP4, MOV, FLV, WebM, AVI)",
+          variant: "destructive",
+        });
+        setProcessingVideo(false);
+        return;
       }
-      
-      await new Promise((resolve, reject) => {
-        let resolved = false;
-        
-        video.onloadedmetadata = () => {
-          if (resolved) return;
-          resolved = true;
-          
-          const duration = video.duration;
-          
-          // Check for valid duration
-          if (isNaN(duration) || duration <= 0) {
-            reject(new Error("Invalid video duration"));
-            return;
-          }
-          
-          setOriginalDuration(duration);
-          
-          // Show trimmer if video is longer than 3 seconds
-          if (duration > MAX_VIDEO_DURATION) {
-            setShowTrimmer(true);
-            // Initialize trim range to first 3 seconds
-            setTrimRange([0, 3]);
-            toast({
-              title: "Select your 3-second clip",
-              description: `Your video is ${duration.toFixed(1)}s long. Use the trimmer below to select any 3-second segment.`,
-            });
-          } else {
-            setShowTrimmer(false);
-            setTrimRange([0, duration]);
-          }
-          
-          resolve(null);
-        };
-        
-        video.onerror = (e) => {
-          if (resolved) return;
-          resolved = true;
-          console.error("Video loading error:", e);
-          reject(new Error(`Failed to load video. This ${fileType} file may not be supported by your browser.`));
-        };
 
-        // Timeout after 10 seconds
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            reject(new Error("Video loading timeout"));
-          }
-        }, 10000);
-      });
-      
-      // Extract title from filename
-      const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
-      setTitle(fileName);
-      
-    } catch (error: any) {
-      console.error('Error processing video:', error);
-      setVideoError(error.message);
-      toast({
-        title: "Error processing video",
-        description: error.message || "Failed to process your video. Please try again.",
-        variant: "destructive",
-      });
-      setFile(null);
-      setVideoPreview(null);
-    } finally {
-      setProcessingVideo(false);
-    }
-  }, [toast]);
+      if (selectedFile.size > maxFileSize) {
+        toast({
+          title: "File too large",
+          description: `On ${isMobile ? "mobile" : "desktop"}, the max size is ${
+            isMobile ? "150MB" : "500MB"
+          }.`,
+          variant: "destructive",
+        });
+        setProcessingVideo(false);
+        return;
+      }
 
-  // Setup video element when preview is ready with better error handling
+      try {
+        setFile(selectedFile);
+        const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
+        setTitle(fileName);
+
+        // --- IMPORTANT: Skip preview for MOV entirely (prevents white-screen crash) ---
+        if (isMOV(selectedFile)) {
+          setVideoPreview(null);               // no createObjectURL (avoid decoding)
+          setShowTrimmer(false);               // no trimming UI without preview
+          setOriginalDuration(MAX_VIDEO_DURATION);
+          setTrimRange([0, MAX_VIDEO_DURATION]);
+          setVideoError(
+            "MOV preview disabled for stability. You can still upload and it will play after upload."
+          );
+          return;
+        }
+
+        // For non-MOV: create preview and probe metadata safely
+        const url = URL.createObjectURL(selectedFile);
+        setVideoPreview(url);
+
+        const probe = document.createElement("video");
+        probe.preload = "metadata";
+        probe.src = url;
+
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (ok: boolean, err?: any) => {
+            if (settled) return;
+            settled = true;
+            // free probe
+            probe.src = "";
+            probe.removeAttribute("src");
+            probe.load();
+            ok ? resolve() : reject(err);
+          };
+
+          probe.onloadedmetadata = () => {
+            const duration = probe.duration;
+            if (!isFinite(duration) || duration <= 0) {
+              finish(false, new Error("Invalid video duration"));
+              return;
+            }
+            setOriginalDuration(duration);
+            if (duration > MAX_VIDEO_DURATION) {
+              setShowTrimmer(true);
+              setTrimRange([0, MAX_VIDEO_DURATION]);
+              toast({
+                title: "Select your 3-second clip",
+                description: `Your video is ${duration.toFixed(
+                  1
+                )}s long. Use the trimmer to pick any 3s segment.`,
+              });
+            } else {
+              setShowTrimmer(false);
+              setTrimRange([0, duration]);
+            }
+            finish(true);
+          };
+
+          probe.onerror = () =>
+            finish(false, new Error(`Failed to read video metadata (${fileType}).`));
+
+          setTimeout(() => finish(false, new Error("Video metadata timeout")), 8000);
+        });
+      } catch (err: any) {
+        console.error("Error processing video:", err);
+        setVideoError(err?.message || "Failed to process your video.");
+        setFile(null);
+        if (videoPreview) {
+          URL.revokeObjectURL(videoPreview);
+          setVideoPreview(null);
+        }
+      } finally {
+        setProcessingVideo(false);
+      }
+    },
+    [toast, maxFileSize, videoPreview]
+  );
+
+  /** Bind preview element events (non-MOV only) */
   useEffect(() => {
     if (!videoRef.current || !videoPreview) return;
 
-    const video = videoRef.current;
-    
-    const handleLoadedMetadata = () => {
-      console.log("Video metadata loaded for preview");
-      video.currentTime = trimRange[0];
+    const el = videoRef.current;
+    const onMeta = () => {
+      el.currentTime = trimRange[0];
       setVideoReady(true);
       setVideoError(null);
     };
-    
-    const handleCanPlay = () => {
-      console.log("Video can play");
-      setVideoReady(true);
-      setVideoError(null);
-    };
-    
-    const handleError = (e: Event) => {
+    const onCanPlay = () => setVideoReady(true);
+    const onErr = (e: Event) => {
       console.error("Video preview error:", e);
-      const errorMsg = file?.type === 'video/quicktime' 
-        ? "MOV file playback issue. The file may use unsupported codecs."
-        : "Video playback error. Please try a different file.";
-      setVideoError(errorMsg);
+      setVideoError("Preview failed. You can still upload.");
       setVideoReady(false);
     };
+    const onStart = () => setVideoError(null);
 
-    const handleLoadStart = () => {
-      console.log("Video load started");
-      setVideoError(null);
-    };
-    
-    video.addEventListener('loadedmetadata', handleLoadedMetadata);
-    video.addEventListener('canplay', handleCanPlay);
-    video.addEventListener('error', handleError);
-    video.addEventListener('loadstart', handleLoadStart);
-    
+    el.addEventListener("loadedmetadata", onMeta);
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("error", onErr);
+    el.addEventListener("loadstart", onStart);
     return () => {
-      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      video.removeEventListener('canplay', handleCanPlay);
-      video.removeEventListener('error', handleError);
-      video.removeEventListener('loadstart', handleLoadStart);
+      el.removeEventListener("loadedmetadata", onMeta);
+      el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("error", onErr);
+      el.removeEventListener("loadstart", onStart);
     };
-  }, [videoPreview, trimRange, file?.type]);
+  }, [videoPreview, trimRange]);
 
-  // Handle playback loop within trim range
+  /** Loop inside trim range (non-MOV only) */
   useEffect(() => {
     if (!videoRef.current || !isPlaying) return;
-
-    const video = videoRef.current;
-    const updateTime = () => {
-      if (video.currentTime >= trimRange[1] || video.currentTime < trimRange[0]) {
-        video.currentTime = trimRange[0];
+    const el = videoRef.current;
+    const tick = () => {
+      if (el.currentTime >= trimRange[1] || el.currentTime < trimRange[0]) {
+        el.currentTime = trimRange[0];
       }
-      setCurrentTime(video.currentTime);
-      
-      if (isPlaying) {
-        animationRef.current = requestAnimationFrame(updateTime);
-      }
+      setCurrentTime(el.currentTime);
+      if (isPlaying) animationRef.current = requestAnimationFrame(tick);
     };
-
-    animationRef.current = requestAnimationFrame(updateTime);
-
+    animationRef.current = requestAnimationFrame(tick);
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [isPlaying, trimRange]);
 
   const togglePlayPause = () => {
-    if (!videoRef.current || !videoReady) return;
+    if (!videoRef.current || !videoReady || videoError) return;
 
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
-      // Set to start of trim range if outside
-      if (videoRef.current.currentTime < trimRange[0] || videoRef.current.currentTime >= trimRange[1]) {
+      if (
+        videoRef.current.currentTime < trimRange[0] ||
+        videoRef.current.currentTime >= trimRange[1]
+      ) {
         videoRef.current.currentTime = trimRange[0];
       }
-      
-      videoRef.current.play().then(() => {
-        setIsPlaying(true);
-      }).catch((err) => {
-        console.error("Playback failed:", err);
-        // Try muted playback
-        videoRef.current!.muted = true;
-        setIsMuted(true);
-        videoRef.current!.play().then(() => {
-          setIsPlaying(true);
-        }).catch((playErr) => {
-          console.error("Muted playback also failed:", playErr);
-          setVideoError("Playback failed. This video format may not be supported.");
+      videoRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => {
+          // fallback to muted (autoplay constraints)
+          videoRef.current!.muted = true;
+          setIsMuted(true);
+          videoRef.current!
+            .play()
+            .then(() => setIsPlaying(true))
+            .catch(() => {
+              setVideoError("Playback failed. This video may use an unsupported codec.");
+            });
         });
-      });
     }
   };
 
   const toggleMute = () => {
     if (!videoRef.current) return;
-    const newMuted = !isMuted;
-    videoRef.current.muted = newMuted;
-    setIsMuted(newMuted);
+    const m = !isMuted;
+    videoRef.current.muted = m;
+    setIsMuted(m);
   };
 
   const handleSeek = (value: number[]) => {
@@ -326,7 +333,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       });
       return;
     }
-
     if (!currentUser) {
       toast({
         title: "Not authenticated",
@@ -340,74 +346,67 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     setUploadProgress(10);
 
     try {
-      // Generate unique filename
-      const fileExt = file.name.split('.').pop();
+      const fileExt = file.name.split(".").pop();
       const fileName = `${currentUser.id}/${Date.now()}.${fileExt}`;
-      
+
       setUploadProgress(30);
 
-      // Upload video to Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('spliks')
-        .upload(fileName, file, {
-          cacheControl: '3600',
-          upsert: false,
-        });
-
+      const { error: uploadError } = await supabase.storage
+        .from("spliks")
+        .upload(fileName, file, { cacheControl: "3600", upsert: false });
       if (uploadError) throw uploadError;
 
       setUploadProgress(70);
 
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('spliks')
-        .getPublicUrl(fileName);
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("spliks").getPublicUrl(fileName);
 
       setUploadProgress(85);
 
-      // ALWAYS limit to 3 seconds maximum
-      const actualDuration = Math.min(3, showTrimmer ? 3 : originalDuration);
+      // Always cap at 3s
+      const finalStart = showTrimmer ? trimRange[0] : 0;
+      const finalEnd = showTrimmer
+        ? trimRange[1]
+        : Math.min(3, originalDuration || 3);
 
-      // Save video metadata to database with trimming info
-      const { error: dbError } = await supabase
-        .from('spliks')
-        .insert({
-          user_id: currentUser.id,
-          title,
-          description: description || (showTrimmer ? `Trimmed: ${trimRange[0].toFixed(1)}s - ${trimRange[1].toFixed(1)}s` : ''),
-          video_url: publicUrl,
-          duration: 3, // ALWAYS 3 seconds max, no exceptions
-          file_size: file.size,
-          mime_type: file.type || inferMimeFromName(file.name),
-          status: 'active',
-          trim_start: showTrimmer ? trimRange[0] : 0,
-          trim_end: showTrimmer ? trimRange[1] : Math.min(3, originalDuration),
-        });
-
+      const { error: dbError } = await supabase.from("spliks").insert({
+        user_id: currentUser.id,
+        title,
+        description:
+          description ||
+          (showTrimmer
+            ? `Trimmed: ${finalStart.toFixed(1)}s - ${finalEnd.toFixed(1)}s`
+            : ""),
+        video_url: publicUrl,
+        duration: 3,
+        file_size: file.size,
+        mime_type: file.type || inferMimeFromName(file.name),
+        status: "active",
+        trim_start: finalStart,
+        trim_end: finalEnd,
+      });
       if (dbError) throw dbError;
 
       setUploadProgress(100);
+      toast({ title: "Upload successful!", description: "Your 3-second Splik is live." });
 
-      toast({
-        title: "Upload successful!",
-        description: "Your 3-second Splik has been uploaded",
-      });
-
-      // Reset form
+      // Reset
       setFile(null);
       setTitle("");
       setDescription("");
+      if (videoPreview) URL.revokeObjectURL(videoPreview);
       setVideoPreview(null);
       setUploadProgress(0);
       setCurrentTime(0);
       setIsPlaying(false);
       setVideoReady(false);
       setVideoError(null);
-      
+
       onUploadComplete();
       onClose();
     } catch (error: any) {
-      console.error('Upload error:', error);
+      console.error("Upload error:", error);
       toast({
         title: "Upload failed",
         description: error.message || "Failed to upload video",
@@ -419,22 +418,23 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   };
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      const fakeEvent = {
-        target: { files: [droppedFile] },
-      } as unknown as React.ChangeEvent<HTMLInputElement>;
-      handleFileSelect(fakeEvent);
-    }
-  }, [handleFileSelect]);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const droppedFile = e.dataTransfer.files[0];
+      if (droppedFile) {
+        const fakeEvent = { target: { files: [droppedFile] } } as unknown as React.ChangeEvent<HTMLInputElement>;
+        handleFileSelect(fakeEvent);
+      }
+    },
+    [handleFileSelect]
+  );
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     const ms = Math.floor((seconds % 1) * 10);
-    return `${mins}:${secs.toString().padStart(2, '0')}.${ms}`;
+    return `${mins}:${secs.toString().padStart(2, "0")}.${ms}`;
   };
 
   return (
@@ -460,9 +460,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
               <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Processing your video...</h3>
-              <p className="text-sm text-muted-foreground">
-                Preparing for 3-second clip
-              </p>
+              <p className="text-sm text-muted-foreground">Preparing for 3-second clip</p>
             </div>
           ) : !file ? (
             <div
@@ -473,15 +471,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             >
               <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
               <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                or click to browse files
-              </p>
+              <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
               <p className="text-xs text-muted-foreground mb-2">
-                Supported formats: MP4, MOV, FLV, WebM, AVI (max 500MB)
+                Supported: MP4, MOV, FLV, WebM, AVI (max {isMobile ? "150MB" : "500MB"})
               </p>
-              <p className="text-xs text-primary font-medium">
-                Videos will be trimmed to exactly 3 seconds
-              </p>
+              <p className="text-xs text-primary font-medium">Videos will be trimmed to exactly 3 seconds</p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -494,180 +488,108 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             <div className="space-y-4">
               {/* Video Error Alert */}
               {videoError && (
-                <Alert className="border-red-500/20 bg-red-500/5">
-                  <AlertCircle className="h-4 w-4 text-red-500" />
+                <Alert className="border-yellow-500/20 bg-yellow-500/5">
+                  <AlertCircle className="h-4 w-4 text-yellow-600" />
                   <AlertDescription className="text-sm">
-                    <strong>Playback Error:</strong> {videoError}
+                    <strong>Note:</strong> {videoError}
                   </AlertDescription>
                 </Alert>
               )}
 
-              {/* Instagram-style vertical video preview */}
+              {/* Preview area */}
               <div className="flex justify-center">
-                <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: '360px', maxWidth: '100%' }}>
-                  {/* 9:16 aspect ratio container for Instagram-style */}
-                  <div className="relative" style={{ paddingBottom: '177.78%' }}>
-                    {/* Enhanced video element with better codec support */}
-                    <video
-                      key={videoPreview || "preview"}
-                      ref={videoRef}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      loop={false}
-                      muted={isMuted}
-                      playsInline
-                      preload="metadata"
-                      controls={false}
-                      crossOrigin="anonymous"
-                    >
-                      {videoPreview && file && (
-                        <>
-                          {/* Primary source with exact MIME type */}
-                          <source
-                            src={videoPreview}
-                            type={file.type || inferMimeFromName(file.name)}
-                          />
-                          {/* Fallback sources for better compatibility */}
-                          {file.name.toLowerCase().endsWith('.mov') && (
-                            <>
-                              <source src={videoPreview} type="video/quicktime" />
-                              <source src={videoPreview} type="video/mp4" />
-                            </>
-                          )}
-                          {file.name.toLowerCase().endsWith('.mp4') && (
-                            <source src={videoPreview} type="video/mp4" />
-                          )}
-                        </>
-                      )}
-                      Your browser does not support the video tag or this video format.
-                    </video>
-                    
-                    {/* Loading overlay if video not ready */}
-                    {!videoReady && !videoError && (
-                      <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
-                        <Loader2 className="h-8 w-8 animate-spin text-white" />
+                <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
+                  <div className="relative" style={{ paddingBottom: "177.78%" }}>
+                    {/* For MOV: show a safe placeholder instead of decoding */}
+                    {isMOV(file) ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
+                        <Film className="h-10 w-10 opacity-70 mb-2" />
+                        <p className="text-sm font-medium">MOV preview disabled</p>
+                        <p className="text-xs text-white/70 text-center mt-1">
+                          This prevents crashes on some devices. You can still upload and it will play after upload.
+                        </p>
                       </div>
-                    )}
-
-                    {/* Error overlay */}
-                    {videoError && (
-                      <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4">
-                        <div className="text-center text-white">
-                          <AlertCircle className="h-12 w-12 mx-auto mb-2 text-red-400" />
-                          <p className="text-sm">Preview unavailable</p>
-                          <p className="text-xs text-gray-400 mt-1">Video can still be uploaded</p>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Video controls overlay */}
-                    {videoReady && !videoError && (
-                      <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40">
-                        {/* Play/Pause button */}
-                        <button
-                          onClick={togglePlayPause}
-                          className="absolute inset-0 w-full h-full flex items-center justify-center group"
-                        >
-                          <div className={`${isPlaying ? 'opacity-0' : 'opacity-100'} group-hover:opacity-100 transition-opacity bg-black/50 rounded-full p-4`}>
-                            {isPlaying ? (
-                              <Pause className="h-12 w-12 text-white" />
-                            ) : (
-                              <Play className="h-12 w-12 text-white ml-1" />
-                            )}
+                    ) : (
+                      <>
+                        <video
+                          ref={videoRef}
+                          src={videoPreview || undefined}
+                          className="absolute inset-0 w-full h-full object-cover"
+                          loop={false}
+                          muted={isMuted}
+                          playsInline
+                          preload="metadata"
+                          controls={false}
+                        />
+                        {!videoReady && !videoError && (
+                          <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
+                            <Loader2 className="h-8 w-8 animate-spin text-white" />
                           </div>
-                        </button>
+                        )}
+                        {videoReady && !videoError && (
+                          <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40">
+                            <button
+                              onClick={togglePlayPause}
+                              className="absolute inset-0 w-full h-full flex items-center justify-center group"
+                            >
+                              <div
+                                className={`${
+                                  isPlaying ? "opacity-0" : "opacity-100"
+                                } group-hover:opacity-100 transition-opacity bg-black/50 rounded-full p-4`}
+                              >
+                                {isPlaying ? (
+                                  <Pause className="h-12 w-12 text-white" />
+                                ) : (
+                                  <Play className="h-12 w-12 text-white ml-1" />
+                                )}
+                              </div>
+                            </button>
 
-                        {/* Bottom controls */}
-                        <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2">
-                          {/* Time display */}
-                          <div className="flex justify-between text-white text-xs font-medium">
-                            <span>{formatTime(currentTime - trimRange[0])}</span>
-                            <span>{formatTime(trimRange[1] - trimRange[0])}</span>
+                            {/* Bottom controls */}
+                            <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2">
+                              <div className="flex justify-between text-white text-xs font-medium">
+                                <span>{formatTime(currentTime - trimRange[0])}</span>
+                                <span>{formatTime(trimRange[1] - trimRange[0])}</span>
+                              </div>
+
+                              <Slider
+                                value={[currentTime]}
+                                min={trimRange[0]}
+                                max={trimRange[1]}
+                                step={0.01}
+                                onValueChange={handleSeek}
+                                className="w-full"
+                              />
+
+                              <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
+                                {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                              </button>
+                            </div>
                           </div>
-
-                          {/* Progress bar for trimmed section */}
-                          <Slider
-                            value={[currentTime]}
-                            min={trimRange[0]}
-                            max={trimRange[1]}
-                            step={0.01}
-                            onValueChange={handleSeek}
-                            className="w-full"
-                          />
-
-                          {/* Mute button */}
-                          <button
-                            onClick={toggleMute}
-                            className="text-white hover:text-primary transition-colors"
-                          >
-                            {isMuted ? (
-                              <VolumeX className="h-5 w-5" />
-                            ) : (
-                              <Volume2 className="h-5 w-5" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Enhanced Format warning with conversion suggestion */}
-              {file && file.type !== 'video/mp4' && (
-                <Alert className="border-orange-500/20 bg-orange-500/5">
-                  <AlertCircle className="h-4 w-4 text-orange-500" />
-                  <AlertDescription className="text-sm">
-                    <strong>Format Notice:</strong> 
-                    {file.type === 'video/quicktime' ? (
-                      <> MOV files may use codecs not fully supported by all browsers. If preview shows a black screen, the video can still be uploaded and will work on most devices. For maximum compatibility, consider converting to H.264 MP4.</>
-                    ) : (
-                      <> {file.type.split('/')[1].toUpperCase()} files may have playback issues. For best compatibility, use H.264 MP4 format.</>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Desktop-specific MOV information */}
-              {file && (file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')) && !detectEnvironment().isMobile && (
-                <Alert className="border-blue-500/20 bg-blue-500/5">
-                  <AlertCircle className="h-4 w-4 text-blue-500" />
-                  <AlertDescription className="text-sm">
-                    <strong>Desktop MOV Limitation:</strong> 
-                    <div className="mt-1">
-                      MOV files often show black screens on desktop browsers due to codec licensing restrictions (especially H.264/AAC in QuickTime containers). This is a browser limitation, not an issue with your file.
-                    </div>
-                    <div className="mt-2 text-xs">
-                      <strong>Your video will work fine after upload</strong> - it will play properly on mobile devices, smart TVs, and most media players.
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Mobile MOV tips */}
-              {file && (file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')) && detectEnvironment().isMobile && (
-                <Alert className="border-green-500/20 bg-green-500/5">
-                  <AlertCircle className="h-4 w-4 text-green-500" />
-                  <AlertDescription className="text-sm">
-                    <strong>Mobile MOV Support:</strong> MOV files typically work better on mobile devices. If preview works here, your video should play well after upload.
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Video Trimmer for videos longer than 3 seconds */}
-              {showTrimmer && (
+              {/* Trimmer: only for non-MOV (since no preview for MOV) */}
+              {!isMOV(file) && showTrimmer && (
                 <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Scissors className="h-4 w-4 text-primary" />
                     <span className="text-sm font-medium">Trim to 3 seconds</span>
                   </div>
-                  
+
                   <div className="space-y-3">
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>Start: {trimRange[0].toFixed(1)}s</span>
-                      <span className="font-bold text-primary">Duration: {(trimRange[1] - trimRange[0]).toFixed(1)}s</span>
+                      <span className="font-bold text-primary">
+                        Duration: {(trimRange[1] - trimRange[0]).toFixed(1)}s
+                      </span>
                       <span>End: {trimRange[1].toFixed(1)}s</span>
                     </div>
-                    
+
                     <VideoRangeSlider
                       min={0}
                       max={originalDuration}
@@ -683,8 +605,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       step={0.1}
                       className="my-4"
                     />
-                    
-                    {/* Quick select buttons */}
+
                     <div className="flex gap-2 flex-wrap">
                       <Button
                         size="sm"
@@ -736,7 +657,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               )}
 
-              {/* Title and Description inputs */}
+              {/* Title / Description */}
               <div className="space-y-3">
                 <div>
                   <Label htmlFor="title">Title</Label>
@@ -748,7 +669,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     disabled={uploading}
                   />
                 </div>
-                
+
                 <div>
                   <Label htmlFor="description">Description (optional)</Label>
                   <Input
@@ -771,18 +692,21 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               )}
 
-              {/* Action buttons */}
+              {/* Actions */}
               <div className="flex gap-3 justify-end">
                 <Button
                   variant="outline"
                   onClick={() => {
                     setFile(null);
+                    if (videoPreview) URL.revokeObjectURL(videoPreview);
                     setVideoPreview(null);
                     setTitle("");
                     setDescription("");
                     setIsPlaying(false);
                     setVideoReady(false);
                     setVideoError(null);
+                    setShowTrimmer(false);
+                    setTrimRange([0, 3]);
                   }}
                   disabled={uploading}
                 >
@@ -791,7 +715,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Button>
                 <Button
                   onClick={handleUpload}
-                  disabled={uploading || !title || (!videoReady && !videoError)}
+                  disabled={
+                    uploading ||
+                    !title ||
+                    (isMOV(file) ? false : !videoReady && !videoError)
+                  }
                 >
                   {uploading ? (
                     <>
@@ -799,7 +727,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       Uploading...
                     </>
                   ) : (
-                    'Upload Splik'
+                    "Upload Splik"
                   )}
                 </Button>
               </div>
