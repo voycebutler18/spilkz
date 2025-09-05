@@ -1,46 +1,23 @@
 // src/components/ui/VideoFeed.tsx
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  Heart,
-  MessageCircle,
-  Share2,
-  Bookmark,
-  MoreVertical,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
-  Send,
-  Eye,
-} from "lucide-react";
+import { Heart, MessageCircle, Share2, Bookmark, MoreVertical, Play, Volume2, VolumeX, Send } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-/** ---------- helpers ---------- */
-
-const getSessionId = () => {
-  let id = sessionStorage.getItem("splik_session_id");
-  if (!id) {
-    id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    sessionStorage.setItem("splik_session_id", id);
-  }
-  return id;
-};
-
+/* ---------------- types ---------------- */
 interface Splik {
   id: string;
   title: string;
-  description?: string;
+  description?: string | null;
   video_url: string;
-  thumbnail_url?: string;
+  thumbnail_url?: string | null;
   user_id: string;
-  views?: number | null;
   likes_count?: number | null;
   comments_count?: number | null;
   created_at: string;
@@ -57,29 +34,32 @@ interface Comment {
   content: string;
   created_at: string;
   user_id: string;
-  profiles?: {
-    first_name?: string | null;
-    last_name?: string | null;
-  } | null;
+  profiles?: { first_name?: string | null; last_name?: string | null } | null;
 }
 
 interface VideoFeedProps {
   user: any;
 }
 
+/* ---------- helpers ---------- */
+const nameFor = (s: Splik) =>
+  (s.profiles?.first_name || s.profiles?.username || "Anonymous User")!.toString();
+
+const initialsFor = (s: Splik) =>
+  nameFor(s)
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+/* =================================================================== */
+
 export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // live view state (source of truth for the badge on Home feed)
-  const [viewsById, setViewsById] = useState<Record<string, number>>({});
-
-  // playback state
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [muted, setMuted] = useState<Record<string, boolean>>({});
-  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
 
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
@@ -88,31 +68,24 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
 
-  /** ------------------- initial loads ------------------- */
+  // autoplay state
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [muted, setMuted] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     const load = async () => {
       try {
-        // feed
         const { data, error } = await supabase
           .from("spliks")
-          .select(
-            "id,title,description,video_url,thumbnail_url,user_id,views,likes_count,comments_count,created_at,trim_start"
-          )
+          .select("id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start")
           .order("created_at", { ascending: false });
 
         if (error) throw error;
-
         setSpliks(data || []);
 
-        // seed live views map
-        const seed: Record<string, number> = {};
-        (data || []).forEach((s) => {
-          seed[s.id] = typeof s.views === "number" ? s.views : 0;
-        });
-        setViewsById(seed);
-
-        // liked
+        // preload likes for this user
         if (user?.id) {
           const { data: likes } = await supabase
             .from("likes")
@@ -126,134 +99,96 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setLoading(false);
       }
     };
-
     load();
   }, [user?.id]);
 
-  /** ------------------- realtime views (Home feed) ------------------- */
+  /* ------------------ IntersectionObserver for autoplay ------------------ */
+  const thresholds = useMemo(
+    () => Array.from({ length: 21 }, (_, i) => i / 20), // 0, .05, .10 ... 1
+    []
+  );
 
-  // Subscribe to UPDATEs on spliks and update the views for items present in the feed.
   useEffect(() => {
-    if (spliks.length === 0) return;
+    const root = containerRef.current;
+    if (!root) return;
 
-    const channel = supabase
-      .channel("home-live-views")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "spliks" },
-        (payload) => {
-          const row = payload.new as { id: string; views?: number; view_count?: number };
-          // Only update if the splik is currently rendered in the Home feed
-          if (!row?.id) return;
-          const isInFeed = spliks.some((s) => s.id === row.id);
-          if (!isInFeed) return;
+    const visibility: Record<number, number> = {};
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          const idx = Number((e.target as HTMLElement).dataset.index);
+          visibility[idx] = e.intersectionRatio;
+        });
 
-          const next =
-            typeof row.views === "number"
-              ? row.views
-              : typeof (row as any).view_count === "number"
-              ? (row as any).view_count
-              : undefined;
-
-          if (typeof next === "number") {
-            setViewsById((prev) => ({ ...prev, [row.id]: next }));
+        // pick most visible; require >= 0.55 so we switch “halfway”
+        let bestIdx = activeIndex;
+        let bestRatio = visibility[bestIdx] ?? 0;
+        for (const [k, v] of Object.entries(visibility)) {
+          const i = Number(k);
+          if (v > bestRatio) {
+            bestRatio = v;
+            bestIdx = i;
           }
         }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [spliks]);
-
-  /** ------------------- play / view tracking ------------------- */
-
-  const sessionId = useMemo(() => getSessionId(), []);
-
-  const startPlaying = async (id: string) => {
-    // pause previous
-    if (playingId && playingId !== id) {
-      const prev = videoRefs.current[playingId];
-      prev?.pause();
-    }
-
-    const el = videoRefs.current[id];
-    if (!el) return;
-
-    // loop 3s preview (with optional trim_start)
-    const current = spliks.find((s) => s.id === id);
-    const startAt = current?.trim_start ? Number(current.trim_start) : 0;
-
-    const onTimeUpdate = () => {
-      if (el.currentTime - startAt >= 3) {
-        el.currentTime = startAt;
-      }
-    };
-    el.removeEventListener("timeupdate", onTimeUpdate);
-    el.addEventListener("timeupdate", onTimeUpdate);
-
-    try {
-      if (startAt > 0) el.currentTime = startAt;
-      await el.play();
-      setPlayingId(id);
-
-      // trigger view (session-gated)
-      try {
-        const { data, error } = await supabase.rpc(
-          "increment_view_with_session",
-          {
-            p_splik_id: id,
-            p_session_id: sessionId,
-            p_viewer_id: user?.id ?? null,
-          }
-        );
-
-        if (!error && data && data.new_view) {
-          const newCount =
-            typeof data.view_count === "number" ? data.view_count : undefined;
-          if (typeof newCount === "number") {
-            // optimistic update so the badge moves instantly
-            setViewsById((prev) => ({ ...prev, [id]: newCount }));
-          }
+        if (bestRatio >= 0.55 && bestIdx !== activeIndex) {
+          setActiveIndex(bestIdx);
         }
-      } catch (e) {
-        console.warn("view rpc error (non-fatal):", e);
+      },
+      { root, threshold: thresholds }
+    );
+
+    const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
+    sections.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [spliks.length, thresholds]); // run when feed size changes
+
+  // play/pause only the active one
+  useEffect(() => {
+    videoRefs.current.forEach((v, i) => {
+      if (!v) return;
+      if (i === activeIndex) {
+        v.muted = muted[i] ?? true;
+        v.playsInline = true;
+
+        // enforce 3s loop from trim_start
+        const startAt = Number(spliks[i]?.trim_start ?? 0);
+        const onTime = () => {
+          if (v.currentTime - startAt >= 3) v.currentTime = startAt;
+        };
+        v.removeEventListener("timeupdate", onTime);
+        v.addEventListener("timeupdate", onTime);
+
+        if (startAt > 0) v.currentTime = startAt;
+        v.play().catch(() => {
+          // if autoplay blocked, force mute and try again once
+          if (!v.muted) {
+            v.muted = true;
+            setMuted((m) => ({ ...m, [i]: true }));
+            v.play().catch(() => {});
+          }
+        });
+      } else {
+        if (!v.paused) v.pause();
       }
-    } catch {
-      // try muted autoplay fallback
-      el.muted = true;
-      setMuted((m) => ({ ...m, [id]: true }));
-      try {
-        await el.play();
-        setPlayingId(id);
-      } catch (e) {
-        console.warn("autoplay blocked", e);
-      }
-    }
+    });
+  }, [activeIndex, spliks, muted]);
+
+  const scrollTo = (index: number) => {
+    const root = containerRef.current;
+    if (!root) return;
+    const child = root.querySelector<HTMLElement>(`[data-index="${index}"]`);
+    if (child) child.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const togglePlay = (id: string) => {
-    const el = videoRefs.current[id];
-    if (!el) return;
-    if (playingId === id && !el.paused) {
-      el.pause();
-      setPlayingId(null);
-      return;
-    }
-    startPlaying(id);
+  const toggleMute = (i: number) => {
+    const v = videoRefs.current[i];
+    if (!v) return;
+    const next = !(muted[i] ?? true);
+    v.muted = next;
+    setMuted((m) => ({ ...m, [i]: next }));
   };
 
-  const toggleMute = (id: string) => {
-    const el = videoRefs.current[id];
-    if (!el) return;
-    const next = !muted[id];
-    el.muted = next;
-    setMuted((m) => ({ ...m, [id]: next }));
-  };
-
-  /** ------------------- social (unchanged) ------------------- */
-
+  /* -------------------------- social actions -------------------------- */
   const handleLike = async (splikId: string) => {
     if (!user?.id) {
       toast({
@@ -263,32 +198,26 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       return;
     }
-
     const isLiked = likedIds.has(splikId);
     setLikedIds((prev) => {
       const ns = new Set(prev);
       isLiked ? ns.delete(splikId) : ns.add(splikId);
       return ns;
     });
-
     try {
       if (isLiked) {
         await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
       } else {
         await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
       }
-    } catch (e) {
+    } catch {
       // revert on error
       setLikedIds((prev) => {
         const ns = new Set(prev);
         isLiked ? ns.add(splikId) : ns.delete(splikId);
         return ns;
       });
-      toast({
-        title: "Error",
-        description: "Failed to update like",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
     }
   };
 
@@ -320,18 +249,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       if (error) throw error;
       setNewComment("");
-      openComments({} as any); // re-fetch via existing function
-    } catch (e) {
-      toast({
-        title: "Error",
-        description: "Failed to post comment",
-        variant: "destructive",
-      });
+      // re-fetch
+      const splik = spliks.find((s) => s.id === showCommentsFor);
+      if (splik) openComments(splik);
+    } catch {
+      toast({ title: "Error", description: "Failed to post comment", variant: "destructive" });
     }
   };
 
-  /** ------------------- UI ------------------- */
-
+  /* ------------------------------ UI ------------------------------ */
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-[40vh]">
@@ -340,186 +266,160 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     );
   }
 
-  const nameFor = (s: Splik) =>
-    (s.profiles?.first_name || s.profiles?.username || "Anonymous User").toString();
-
-  const initialsFor = (s: Splik) =>
-    nameFor(s)
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-
   return (
-    <div className="max-w-lg mx-auto space-y-6 py-4">
-      {spliks.map((s) => {
-        const liveViews = viewsById[s.id] ?? s.views ?? 0;
-        const isPlaying = playingId === s.id;
-
+    <div
+      ref={containerRef}
+      className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
+    >
+      {spliks.map((s, i) => {
         return (
-          <Card key={s.id} className="overflow-hidden border-0 shadow-lg">
-            {/* header */}
-            <div className="flex items-center justify-between p-3 border-b">
-              <Link
-                to={`/creator/${s.profiles?.username || s.user_id}`}
-                className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-              >
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback>{initialsFor(s)}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="text-sm font-semibold">{nameFor(s)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
-                  </p>
-                </div>
-              </Link>
-              <Button size="icon" variant="ghost">
-                <MoreVertical className="h-5 w-5" />
-              </Button>
-            </div>
-
-            {/* video */}
-            <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-              {/* top black stripe that also covers any stray "0" */}
-              <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
-
-              {/* live views badge (updates via realtime + optimistic) */}
-              <div
-                className="absolute top-2 left-2 z-20 flex items-center gap-2 bg-black/80 backdrop-blur px-3 py-1.5 rounded-full"
-                aria-live="polite"
-              >
-                <Eye className="h-4 w-4 text-white" />
-                <span className="text-white font-semibold text-sm">
-                  {liveViews.toLocaleString()} views
-                </span>
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <section
+            key={s.id}
+            data-index={i}
+            className="snap-start min-h-[100svh] w-full flex items-center justify-center"
+          >
+            <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
+              {/* header */}
+              <div className="flex items-center justify-between p-3 border-b">
+                <Link
+                  to={`/creator/${s.profiles?.username || s.user_id}`}
+                  className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback>{initialsFor(s)}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-sm font-semibold">{nameFor(s)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
+                    </p>
+                  </div>
+                </Link>
+                <Button size="icon" variant="ghost">
+                  <MoreVertical className="h-5 w-5" />
+                </Button>
               </div>
 
-              <video
-                ref={(el) => (videoRefs.current[s.id] = el)}
-                src={s.video_url}
-                poster={s.thumbnail_url || undefined}
-                className="w-full h-full object-cover"
-                loop={false}
-                playsInline
-                muted={!!muted[s.id]}
-                onClick={() => togglePlay(s.id)}
-              />
+              {/* video */}
+              <div className="relative bg-black aspect-[9/16] max-h-[600px]">
+                {/* top mask */}
+                <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
-              {/* play/pause overlay */}
-              {!isPlaying && (
+                <video
+                  ref={(el) => (videoRefs.current[i] = el)}
+                  src={s.video_url}
+                  poster={s.thumbnail_url ?? undefined}
+                  className="w-full h-full object-cover"
+                  playsInline
+                  muted={muted[i] ?? true}
+                  onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
+                />
+
+                {/* play hint when paused (if ever) */}
                 <div
-                  className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer z-10"
-                  onClick={() => togglePlay(s.id)}
+                  className="absolute inset-0 flex items-center justify-center bg-black/0"
+                  onClick={() => scrollTo(i)} // single tap recenters/ensures snap
                 >
-                  <div className="bg-white/90 rounded-full p-4">
-                    <Play className="h-8 w-8 text-black" />
-                  </div>
+                  <div className="bg-white/80 rounded-full p-3 opacity-0 pointer-events-none" />
                 </div>
-              )}
 
-              {/* mute toggle (only while playing) */}
-              {isPlaying && (
+                {/* mute toggle */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleMute(s.id);
+                    toggleMute(i);
                   }}
                   className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
                 >
-                  {muted[s.id] ? (
+                  {muted[i] ? (
                     <VolumeX className="h-4 w-4 text-white" />
                   ) : (
                     <Volume2 className="h-4 w-4 text-white" />
                   )}
                 </button>
-              )}
-            </div>
-
-            {/* actions */}
-            <div className="p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => handleLike(s.id)}
-                    className={likedIds.has(s.id) ? "text-red-500" : ""}
-                  >
-                    <Heart
-                      className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`}
-                    />
-                  </Button>
-
-                  <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
-                    <MessageCircle className="h-6 w-6" />
-                  </Button>
-
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => {
-                      const url = `${window.location.origin}/splik/${s.id}`;
-                      navigator.clipboard.writeText(url);
-                      toast({ title: "Link copied!" });
-                    }}
-                  >
-                    <Share2 className="h-6 w-6" />
-                  </Button>
-                </div>
-
-                <Button size="icon" variant="ghost">
-                  <Bookmark className="h-6 w-6" />
-                </Button>
               </div>
 
-              {/* caption */}
-              {s.description && (
-                <p className="text-sm">
-                  <span className="font-semibold mr-2">{nameFor(s)}</span>
-                  {s.description}
-                </p>
-              )}
-            </div>
+              {/* actions */}
+              <div className="p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => handleLike(s.id)}
+                      className={likedIds.has(s.id) ? "text-red-500" : ""}
+                    >
+                      <Heart
+                        className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`}
+                      />
+                    </Button>
 
-            {/* comments dialog (simple inline version to keep rest unchanged) */}
-            {showCommentsFor === s.id && (
-              <div className="px-3 pb-4">
-                <div className="border-t pt-3 space-y-3">
-                  {loadingComments ? (
-                    <div className="text-sm text-muted-foreground">Loading…</div>
-                  ) : comments.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No comments yet</div>
-                  ) : (
-                    comments.map((c) => (
-                      <div key={c.id} className="text-sm">
-                        <span className="font-semibold mr-2">
-                          {c.profiles?.first_name || "User"}
-                        </span>
-                        {c.content}
-                      </div>
-                    ))
-                  )}
+                    <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
+                      <MessageCircle className="h-6 w-6" />
+                    </Button>
 
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Add a comment…"
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") submitComment();
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => {
+                        const url = `${window.location.origin}/splik/${s.id}`;
+                        navigator.clipboard.writeText(url);
+                        toast({ title: "Link copied!" });
                       }}
-                    />
-                    <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
-                      <Send className="h-4 w-4" />
+                    >
+                      <Share2 className="h-6 w-6" />
                     </Button>
                   </div>
+
+                  <Button size="icon" variant="ghost">
+                    <Bookmark className="h-6 w-6" />
+                  </Button>
                 </div>
+
+                {/* caption */}
+                {s.description && (
+                  <p className="text-sm">
+                    <span className="font-semibold mr-2">{nameFor(s)}</span>
+                    {s.description}
+                  </p>
+                )}
               </div>
-            )}
-          </Card>
+
+              {/* comments inline */}
+              {showCommentsFor === s.id && (
+                <div className="px-3 pb-4">
+                  <div className="border-t pt-3 space-y-3">
+                    {loadingComments ? (
+                      <div className="text-sm text-muted-foreground">Loading…</div>
+                    ) : comments.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">No comments yet</div>
+                    ) : (
+                      comments.map((c) => (
+                        <div key={c.id} className="text-sm">
+                          <span className="font-semibold mr-2">
+                            {c.profiles?.first_name || "User"}
+                          </span>
+                          {c.content}
+                        </div>
+                      ))
+                    )}
+
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Add a comment…"
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && submitComment()}
+                      />
+                      <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </section>
         );
       })}
     </div>
