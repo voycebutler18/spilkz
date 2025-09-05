@@ -19,6 +19,7 @@ import Footer from "@/components/layout/Footer";
 import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import { Switch } from "@/components/ui/switch";
+import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import {
   BarChart3,
   Video,
