@@ -794,7 +794,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       }}
                       maxRange={3}
                       step={0.1}
-                      className="my-4"
+                      className="my-4 touch-none select-none"  // 👈 prevents page scroll; disables text selection while dragging
                     />
 
                     <div className="flex gap-2 flex-wrap">
