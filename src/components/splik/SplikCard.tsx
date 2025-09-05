@@ -233,10 +233,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const videoHeight = isMobile ? "60vh" : "500px";
-  const isBoosted =
+  const isBoosted = Boolean(
     (splik as any).isBoosted ||
     (splik as any).is_currently_boosted ||
-    ((splik as any).boost_score && (splik as any).boost_score > 0);
+    (((splik as any).boost_score ?? 0) > 0)
+  );
 
   return (
     <div
