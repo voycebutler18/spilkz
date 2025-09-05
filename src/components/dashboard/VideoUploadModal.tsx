@@ -627,17 +627,28 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Alert>
               )}
 
-              {/* Additional MOV-specific help */}
-              {file && (file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')) && (
+              {/* Desktop-specific MOV information */}
+              {file && (file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')) && !detectEnvironment().isMobile && (
                 <Alert className="border-blue-500/20 bg-blue-500/5">
                   <AlertCircle className="h-4 w-4 text-blue-500" />
                   <AlertDescription className="text-sm">
-                    <strong>MOV File Tips:</strong> 
-                    <ul className="list-disc list-inside mt-1 space-y-1">
-                      <li>If you see a black screen, try clicking play - audio may work even if video doesn't preview</li>
-                      <li>The upload will succeed even if preview fails</li>
-                      <li>Videos shot on iPhone/Mac work best when exported as "High Efficiency" or converted to MP4</li>
-                    </ul>
+                    <strong>Desktop MOV Limitation:</strong> 
+                    <div className="mt-1">
+                      MOV files often show black screens on desktop browsers due to codec licensing restrictions (especially H.264/AAC in QuickTime containers). This is a browser limitation, not an issue with your file.
+                    </div>
+                    <div className="mt-2 text-xs">
+                      <strong>Your video will work fine after upload</strong> - it will play properly on mobile devices, smart TVs, and most media players.
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Mobile MOV tips */}
+              {file && (file.type === 'video/quicktime' || file.name.toLowerCase().endsWith('.mov')) && detectEnvironment().isMobile && (
+                <Alert className="border-green-500/20 bg-green-500/5">
+                  <AlertCircle className="h-4 w-4 text-green-500" />
+                  <AlertDescription className="text-sm">
+                    <strong>Mobile MOV Support:</strong> MOV files typically work better on mobile devices. If preview works here, your video should play well after upload.
                   </AlertDescription>
                 </Alert>
               )}
