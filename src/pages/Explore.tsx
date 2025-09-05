@@ -62,7 +62,11 @@ const Explore = () => {
                 .select("*")
                 .eq("id", s.user_id)
                 .maybeSingle();
-              return { ...s, profile: p || undefined };
+              
+              return {
+                ...s,
+                profile: p || undefined
+              };
             })
           );
           setTrendingSpliks(withProfiles || []);
@@ -143,7 +147,7 @@ const Explore = () => {
   };
 
   /**
-   * ======= ENHANCED AUTOPLAY MANAGER =======
+   * ======= ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES =======
    * **Autoplay**: The most-visible video plays automatically; others pause. 
    * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
    */
@@ -156,6 +160,22 @@ const Explore = () => {
       const videoVisibility = new Map<HTMLVideoElement, number>();
       let currentPlayingVideo: HTMLVideoElement | null = null;
       let isProcessing = false;
+
+      // Mobile video setup helper
+      const setupVideoForMobile = (video: HTMLVideoElement) => {
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('webkit-playsinline', 'true');
+        video.preload = 'metadata';
+        video.load(); // Force load to show first frame
+        
+        // Ensure first frame is visible
+        video.addEventListener('loadeddata', () => {
+          if (video.currentTime === 0) {
+            video.currentTime = 0.1;
+          }
+        }, { once: true });
+      };
 
       const getAllVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
 
@@ -197,15 +217,27 @@ const Explore = () => {
             // Pause all other videos first
             pauseAllVideos(targetVideo);
             
-            // Configure video for autoplay
-            targetVideo.playsInline = true;
-            targetVideo.preload = "metadata";
+            // Configure video for mobile autoplay
+            setupVideoForMobile(targetVideo);
+
+            // Mobile fix: ensure video has loaded enough data to display
+            if (targetVideo.readyState < 2) { // HAVE_CURRENT_DATA
+              targetVideo.load();
+              // Small delay to let load complete
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            // Force load first frame on mobile if needed
+            if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
+              targetVideo.currentTime = 0.1;
+            }
             
             // Attempt to play (muted first for autoplay policies)
             try {
               await targetVideo.play();
               currentPlayingVideo = targetVideo;
             } catch (playError) {
+              console.log("Autoplay prevented, trying muted:", playError);
               // If blocked, try with muted
               if (!targetVideo.muted) {
                 targetVideo.muted = true;
@@ -213,7 +245,16 @@ const Explore = () => {
                   await targetVideo.play();
                   currentPlayingVideo = targetVideo;
                 } catch (mutedError) {
-                  console.log("Video autoplay blocked:", mutedError);
+                  console.log("Video autoplay blocked even when muted:", mutedError);
+                  // Fallback: at least show the first frame
+                  if (targetVideo.currentTime === 0) {
+                    targetVideo.currentTime = 0.1;
+                  }
+                }
+              } else {
+                // Video is already muted but still failed - show first frame
+                if (targetVideo.currentTime === 0) {
+                  targetVideo.currentTime = 0.1;
                 }
               }
             }
@@ -243,16 +284,17 @@ const Explore = () => {
         { 
           root: null, 
           threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0],
-          rootMargin: "0px"
+          rootMargin: "10px" // Better mobile performance
         }
       );
 
       // Initialize videos and start observing
       const initializeVideos = () => {
         getAllVideos().forEach((video) => {
-          // Set initial muted state for autoplay compliance
-          if (video.muted === undefined || video.muted === null) {
-            video.muted = true;
+          // Set up mobile-friendly video attributes
+          if (!video.hasAttribute('data-mobile-initialized')) {
+            setupVideoForMobile(video);
+            video.setAttribute('data-mobile-initialized', 'true');
           }
           
           // Initialize visibility tracking
@@ -287,7 +329,7 @@ const Explore = () => {
       });
 
       // Start observing
-      initializeVideos();
+      setTimeout(initializeVideos, 100); // Initial delay for DOM readiness
       mutationObserver.observe(host, { 
         childList: true, 
         subtree: true 
