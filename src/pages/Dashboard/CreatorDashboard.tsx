@@ -21,10 +21,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-// ⚠️ Use the same VideoGrid you just fixed
-import { VideoGrid } from "@/components/VideoGrid";
+// Keep this import path exactly how you’re using it in your app
+import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
-import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
@@ -93,7 +92,6 @@ const CreatorDashboard = () => {
   }, []);
 
   const setupRealtimeUpdates = () => {
-    // Periodic refresh of stats (lightweight)
     const interval = setInterval(() => {
       if (profile) {
         fetchStats();
@@ -183,7 +181,6 @@ const CreatorDashboard = () => {
     if (!user) return;
 
     try {
-      // Fetch user's videos
       const { data: spliksData, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
@@ -192,7 +189,6 @@ const CreatorDashboard = () => {
 
       if (spliksError) throw spliksError;
 
-      // Lightweight profile for display on the cards
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("username, display_name, avatar_url")
@@ -203,16 +199,15 @@ const CreatorDashboard = () => {
         console.error("Error fetching profile for spliks:", profileError);
       }
 
-      // IMPORTANT: VideoGrid expects `splik.profiles`
+      // If your VideoGrid expects `profiles`, attach it here:
       const data =
-        spliksData?.map((splik) => ({
-          ...splik,
+        spliksData?.map((s) => ({
+          ...s,
           profiles: profileData || null,
         })) || [];
 
       setSpliks(data);
 
-      // Reactions-only metrics
       const totalReactions =
         data.reduce(
           (acc: number, s: any) =>
@@ -298,12 +293,6 @@ const CreatorDashboard = () => {
       console.error("Error updating privacy:", error);
       toast.error("Failed to update privacy settings");
     }
-  };
-
-  const handleDeleted = (id: string) => {
-    setSpliks((prev) => prev.filter((s) => s.id !== id));
-    // also refresh stats
-    fetchStats();
   };
 
   if (loading) {
@@ -429,48 +418,7 @@ const CreatorDashboard = () => {
           {/* My Videos */}
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
-              <>
-                {/* The grid shows per-card delete for owner */}
-                <VideoGrid
-                  spliks={spliks}
-                  onDeletedSplik={(id) => handleDeleted(id)}
-                />
-
-                {/* Optional “Manage Videos” list (kept for convenience) */}
-                <Card className="mt-6">
-                  <CardHeader>
-                    <CardTitle className="text-base">Manage Videos</CardTitle>
-                    <CardDescription>
-                      Delete videos you no longer want on your profile.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="divide-y">
-                      {spliks.map((s) => (
-                        <div
-                          key={s.id}
-                          className="py-3 flex items-center justify-between gap-3"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-medium truncate">
-                              {s.title || "Untitled video"}
-                            </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {s.video_url}
-                            </p>
-                          </div>
-                          <DeleteSplikButton
-                            splikId={s.id}
-                            videoUrl={s.video_url}
-                            thumbnailUrl={s.thumbnail_url}
-                            onDeleted={() => handleDeleted(s.id)}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
+              <VideoGrid spliks={spliks} />
             ) : (
               <Card className="p-12 text-center">
                 <Video className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -519,7 +467,6 @@ const CreatorDashboard = () => {
               <CardContent>
                 {editingProfile ? (
                   <div className="space-y-6">
-                    {/* Avatar uploader */}
                     <div>
                       <p className="text-sm text-muted-foreground mb-2">
                         Profile Photo
@@ -590,7 +537,6 @@ const CreatorDashboard = () => {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {/* Avatar preview */}
                     <div className="flex items-center gap-3">
                       <Avatar className="h-16 w-16 ring-2 ring-primary/20">
                         <AvatarImage src={profile?.avatar_url || undefined} />
@@ -642,7 +588,6 @@ const CreatorDashboard = () => {
                       </div>
                     )}
 
-                    {/* Privacy Settings */}
                     <div className="border-t pt-4 mt-2 space-y-4">
                       <h3 className="font-semibold text-sm">Privacy Settings</h3>
 
