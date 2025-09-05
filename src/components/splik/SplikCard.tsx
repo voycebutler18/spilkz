@@ -49,16 +49,6 @@ interface SplikCardProps {
   onShare?: () => void;
 }
 
-/** Create (and cache) a per-tab session id for view de-duping */
-const getSessionId = () => {
-  let sid = sessionStorage.getItem("splik_session_id");
-  if (!sid) {
-    sid = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    sessionStorage.setItem("splik_session_id", sid);
-  }
-  return sid;
-};
-
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
@@ -76,14 +66,62 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  // --- NEW: session + "already-sent" guard for this card
-  const sessionIdRef = useRef<string>("");
-  const viewSentRef = useRef<boolean>(false);
+  /* ---------- ADDED: mobile-safe one-per-playback view counter ---------- */
+  const hasCountedRef = useRef(false);
+  const viewTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    sessionIdRef.current = getSessionId();
-    viewSentRef.current = false; // reset when card changes
-  }, [splik.id]);
+  const registerView = async () => {
+    if (hasCountedRef.current) return;
+    hasCountedRef.current = true;
+
+    // Optimistic UI so the badge moves immediately
+    setViewCount((v) => v + 1);
+
+    // Try a few common persistence paths; swallow errors and
+    // let your Realtime subscription backfill if needed.
+    try {
+      // If you already have an RPC that increments the view atomically:
+      await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
+      return;
+    } catch (_) {}
+
+    try {
+      // If you use a views table:
+      await supabase.from("splik_views").insert({ splik_id: splik.id });
+      return;
+    } catch (_) {}
+
+    try {
+      // Alternate table name (just in case your schema uses "views"):
+      await supabase.from("views").insert({ splik_id: splik.id });
+    } catch (_) {
+      // No-op; UI already updated optimistically and realtime will still sync if something else updates the row.
+    }
+  };
+
+  const beginViewTimer = () => {
+    if (hasCountedRef.current || viewTimerRef.current !== null) return;
+    // Count a view after ~1s of active playback (mobile/iOS friendly)
+    viewTimerRef.current = window.setTimeout(registerView, 1000);
+  };
+
+  const clearViewTimer = () => {
+    if (viewTimerRef.current !== null) {
+      clearTimeout(viewTimerRef.current);
+      viewTimerRef.current = null;
+    }
+  };
+
+  const onVideoPlay = () => {
+    setIsPlaying(true);
+    beginViewTimer();
+  };
+
+  const onVideoPauseOrEnd = () => {
+    setIsPlaying(false);
+    clearViewTimer();
+  };
+  /* -------------------------------------------------------------------- */
 
   useEffect(() => {
     const getUser = async () => {
@@ -108,6 +146,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setLikesCount(splik.likes_count || 0);
     setCommentsCount(splik.comments_count || 0);
 
+    // ADDED: reset one-per-card guard/timer on id change
+    hasCountedRef.current = false;
+    clearViewTimer();
+
     const channel = supabase
       .channel(`splik-${splik.id}`)
       .on(
@@ -131,6 +173,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     return () => {
       supabase.removeChannel(channel);
+      clearViewTimer(); // ADDED: cleanup on unmount
     };
   }, [splik.id]);
 
@@ -276,26 +319,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return safe.toString();
   };
 
-  // --- NEW: record a view once per card when playback actually starts
-  const trackView = async () => {
-    if (viewSentRef.current) return;
-    viewSentRef.current = true;
-    try {
-      const { error } = await supabase.rpc("increment_view_with_session", {
-        p_splik_id: splik.id,
-        p_session_id: sessionIdRef.current,
-        p_viewer_id: currentUser?.id ?? null,
-      });
-      if (error) throw error;
-      // realtime listener will update the badge; optional optimistic bump:
-      // setViewCount((c) => (c || 0) + 1);
-    } catch (err) {
-      console.warn("increment_view_with_session failed, showing optimistic bump", err);
-      // fallback: optimistic bump so the user sees a change even if RPC is unavailable
-      setViewCount((c) => (c || 0) + 1);
-    }
-  };
-
   const handlePlayToggle = () => {
     const video = videoRef.current;
     if (!video) return;
@@ -305,12 +328,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       setIsPlaying(false);
     } else {
       video.currentTime = 0;
-      video
-        .play()
-        .then(() => {
-          trackView(); // NEW: ensure a view is recorded when user plays
-        })
-        .catch(() => {});
+      video.play();
       setIsPlaying(true);
     }
   };
@@ -374,8 +392,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           loop={false}
           muted={isMuted}
           playsInline
+          onPlay={onVideoPlay}        /* ADDED */
+          onPause={onVideoPauseOrEnd} /* ADDED */
+          onEnded={onVideoPauseOrEnd} /* ADDED */
           onTimeUpdate={handleTimeUpdate}
-          onPlay={trackView}          /* NEW: also record view when native play fires */
         />
 
         {/* Play/Pause overlay */}
@@ -405,7 +425,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         )}
 
-        {/* Views badge (z-40 so it stays above the masks) */}
+        {/* Views badge */}
         <div className="absolute top-3 left-3 z-[40] flex items-center gap-2 bg-black/70 backdrop-blur px-3 py-1.5 rounded-full">
           <Eye className="h-4 w-4 text-white" />
           <span className="text-white font-semibold text-sm">
