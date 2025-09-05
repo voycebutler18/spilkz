@@ -66,7 +66,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  /* ---------- ADDED: mobile-safe one-per-playback view counter ---------- */
+  /* ---------- CORRECTED: mobile-safe one-per-playback view counter ---------- */
   const hasCountedRef = useRef(false);
   const viewTimerRef = useRef<number | null>(null);
 
@@ -74,28 +74,55 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     if (hasCountedRef.current) return;
     hasCountedRef.current = true;
 
-    // Optimistic UI so the badge moves immediately
-    setViewCount((v) => v + 1);
-
-    // Try a few common persistence paths; swallow errors and
-    // let your Realtime subscription backfill if needed.
     try {
-      // If you already have an RPC that increments the view atomically:
-      await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
-      return;
-    } catch (_) {}
+      // 1) Prefer an RPC that atomically increments and RETURNS the new count
+      //    (see SQL below for an example). If it returns { new_count: number },
+      //    reflect it in the badge so it "sticks" across reloads.
+      const rpc = await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
+      if (!rpc.error && rpc.data != null) {
+        // rpc.data may be an object or a number depending on your function
+        const newCount =
+          typeof rpc.data === "number"
+            ? rpc.data
+            : (rpc.data.new_count ?? rpc.data.view_count ?? rpc.data.views);
+        if (typeof newCount === "number") {
+          setViewCount(newCount);
+          return;
+        }
+      }
 
-    try {
-      // If you use a views table:
+      // 2) Fallback: explicit read-then-write (not strictly atomic, but works if you
+      //    don't have the RPC yet). We only update the UI after DB confirms.
+      const { data: row, error: selErr } = await supabase
+        .from("spliks")
+        .select("view_count, views")
+        .eq("id", splik.id)
+        .maybeSingle();
+
+      if (!selErr && row) {
+        const curr = (row.view_count ?? row.views ?? 0) as number;
+        const { data: updated, error: updErr } = await supabase
+          .from("spliks")
+          .update({ view_count: curr + 1 })
+          .eq("id", splik.id)
+          .select("view_count, views")
+          .maybeSingle();
+
+        if (!updErr && updated) {
+          setViewCount((updated.view_count ?? updated.views ?? curr + 1) as number);
+          return;
+        }
+      }
+
+      // 3) Last resort: write a row to a views table if you use one.
+      //    If you have a trigger that bumps spliks.view_count, it will fire here.
       await supabase.from("splik_views").insert({ splik_id: splik.id });
-      return;
-    } catch (_) {}
 
-    try {
-      // Alternate table name (just in case your schema uses "views"):
-      await supabase.from("views").insert({ splik_id: splik.id });
-    } catch (_) {
-      // No-op; UI already updated optimistically and realtime will still sync if something else updates the row.
+      // Don't change the badge here — Realtime UPDATE on `spliks`
+      // (your existing subscription) will bring the new total in.
+    } catch {
+      // Swallow; the realtime subscription will still keep the UI in sync
+      // if another path updates the row.
     }
   };
 
@@ -146,7 +173,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setLikesCount(splik.likes_count || 0);
     setCommentsCount(splik.comments_count || 0);
 
-    // ADDED: reset one-per-card guard/timer on id change
+    // CORRECTED: reset one-per-card guard/timer on id change
     hasCountedRef.current = false;
     clearViewTimer();
 
@@ -173,7 +200,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     return () => {
       supabase.removeChannel(channel);
-      clearViewTimer(); // ADDED: cleanup on unmount
+      clearViewTimer(); // CORRECTED: cleanup on unmount
     };
   }, [splik.id]);
 
@@ -392,9 +419,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           loop={false}
           muted={isMuted}
           playsInline
-          onPlay={onVideoPlay}        /* ADDED */
-          onPause={onVideoPauseOrEnd} /* ADDED */
-          onEnded={onVideoPauseOrEnd} /* ADDED */
+          onPlay={onVideoPlay}        /* CORRECTED */
+          onPause={onVideoPauseOrEnd} /* CORRECTED */
+          onEnded={onVideoPauseOrEnd} /* CORRECTED */
           onTimeUpdate={handleTimeUpdate}
         />
 
