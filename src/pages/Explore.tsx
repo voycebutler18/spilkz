@@ -143,105 +143,164 @@ const Explore = () => {
   };
 
   /**
-   * ======= Autoplay manager (single page scroll, no nested scroller) =======
-   * - Picks the most visible <video> in the feed and plays it (muted for autoplay).
-   * - Pauses others. If current falls below ~45% visible, it pauses and switches.
-   * - Works with videos inside your SplikCard (we observe any <video> under the feed).
+   * ======= ENHANCED AUTOPLAY MANAGER =======
+   * **Autoplay**: The most-visible video plays automatically; others pause. 
+   * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
    */
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
       if (!host) return;
 
-      // Track visibility ratios for videos in this section
-      const ratios = new Map<HTMLVideoElement, number>();
-      let current: HTMLVideoElement | null = null;
+      // Track visibility ratios and current playing video
+      const videoVisibility = new Map<HTMLVideoElement, number>();
+      let currentPlayingVideo: HTMLVideoElement | null = null;
+      let isProcessing = false;
 
-      const getVideos = () =>
-        Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
+      const getAllVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
 
-      const pauseAll = (except?: HTMLVideoElement | null) => {
-        getVideos().forEach((v) => {
-          if (v !== except && !v.paused) v.pause();
+      const pauseAllVideos = (exceptVideo?: HTMLVideoElement) => {
+        getAllVideos().forEach((video) => {
+          if (video !== exceptVideo && !video.paused) {
+            video.pause();
+          }
         });
       };
 
-      const pickAndPlay = () => {
-        const items = [...ratios.entries()].sort((a, b) => b[1] - a[1]);
-        const top = items[0];
-        const next = top && top[1] >= 0.6 ? top[0] : null;
+      const findMostVisibleVideo = (): HTMLVideoElement | null => {
+        const visibilityEntries = Array.from(videoVisibility.entries());
+        if (visibilityEntries.length === 0) return null;
 
-        if (next && next !== current) {
-          // Pause previous
-          if (current) current.pause();
+        // Sort by visibility ratio descending
+        const sortedVideos = visibilityEntries.sort((a, b) => b[1] - a[1]);
+        const mostVisible = sortedVideos[0];
+        
+        // Only return if visibility is above threshold
+        return mostVisible && mostVisible[1] >= 0.6 ? mostVisible[0] : null;
+      };
 
-          // Ensure muted autoplay works, but don't re-mute if user unmuted
-          if (!next.muted && next.paused) {
-            // keep user's choice; if blocked, we'll try muted
+      const handleVideoPlayback = async () => {
+        if (isProcessing) return;
+        isProcessing = true;
+
+        try {
+          const targetVideo = findMostVisibleVideo();
+          
+          // If current video falls below 45% visibility, pause it
+          if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
+            currentPlayingVideo.pause();
+            currentPlayingVideo = null;
           }
-          next.playsInline = true;
-          next.preload = "metadata";
 
-          next
-            .play()
-            .catch(() => {
-              // If autoplay blocked, try muted
-              next.muted = true;
-              return next.play().catch(() => {});
-            })
-            .finally(() => {
-              current = next;
-              pauseAll(next);
-            });
-        } else if (!next) {
-          // No sufficiently visible video -> pause all
-          pauseAll(null);
-          current = null;
+          // Switch to new target video if different from current
+          if (targetVideo && targetVideo !== currentPlayingVideo) {
+            // Pause all other videos first
+            pauseAllVideos(targetVideo);
+            
+            // Configure video for autoplay
+            targetVideo.playsInline = true;
+            targetVideo.preload = "metadata";
+            
+            // Attempt to play (muted first for autoplay policies)
+            try {
+              await targetVideo.play();
+              currentPlayingVideo = targetVideo;
+            } catch (playError) {
+              // If blocked, try with muted
+              if (!targetVideo.muted) {
+                targetVideo.muted = true;
+                try {
+                  await targetVideo.play();
+                  currentPlayingVideo = targetVideo;
+                } catch (mutedError) {
+                  console.log("Video autoplay blocked:", mutedError);
+                }
+              }
+            }
+          } else if (!targetVideo && currentPlayingVideo) {
+            // No sufficiently visible video - pause current
+            currentPlayingVideo.pause();
+            currentPlayingVideo = null;
+          }
+        } catch (error) {
+          console.error("Error handling video playback:", error);
+        } finally {
+          isProcessing = false;
         }
       };
 
-      const io = new IntersectionObserver(
+      // Create intersection observer with multiple thresholds for smooth tracking
+      const intersectionObserver = new IntersectionObserver(
         (entries) => {
-          for (const e of entries) {
-            const vid = e.target as HTMLVideoElement;
-            ratios.set(vid, e.intersectionRatio);
-
-            // If current falls out, pause quickly
-            if (vid === current && e.intersectionRatio < 0.45) {
-              vid.pause();
-              current = null;
-            }
+          for (const entry of entries) {
+            const video = entry.target as HTMLVideoElement;
+            videoVisibility.set(video, entry.intersectionRatio);
           }
-          pickAndPlay();
+          
+          // Handle playback changes
+          handleVideoPlayback();
         },
-        { root: null, threshold: [0, 0.25, 0.5, 0.75, 1] }
+        { 
+          root: null, 
+          threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0],
+          rootMargin: "0px"
+        }
       );
 
-      // Observe current videos
-      getVideos().forEach((v) => {
-        // set muted initially so autoplay works; user can unmute via your SplikCard UI
-        if (v.muted === undefined) v.muted = true;
-        io.observe(v);
-      });
-
-      // If SplikCards render later, observe newly added videos too
-      const mo = new MutationObserver(() => {
-        getVideos().forEach((v) => {
-          if (!ratios.has(v)) {
-            v.muted = v.muted ?? true;
-            io.observe(v);
+      // Initialize videos and start observing
+      const initializeVideos = () => {
+        getAllVideos().forEach((video) => {
+          // Set initial muted state for autoplay compliance
+          if (video.muted === undefined || video.muted === null) {
+            video.muted = true;
+          }
+          
+          // Initialize visibility tracking
+          if (!videoVisibility.has(video)) {
+            videoVisibility.set(video, 0);
+            intersectionObserver.observe(video);
           }
         });
-      });
-      mo.observe(host, { childList: true, subtree: true });
-
-      // Cleanup
-      return () => {
-        io.disconnect();
-        mo.disconnect();
-        pauseAll(null);
       };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+
+      // Watch for dynamically added videos (SplikCards loading)
+      const mutationObserver = new MutationObserver((mutations) => {
+        let hasNewVideos = false;
+        
+        mutations.forEach((mutation) => {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const element = node as Element;
+              // Check if the added node contains videos
+              const videos = element.querySelectorAll ? element.querySelectorAll("video") : [];
+              if (videos.length > 0) {
+                hasNewVideos = true;
+              }
+            }
+          });
+        });
+
+        if (hasNewVideos) {
+          // Small delay to ensure DOM is fully updated
+          setTimeout(initializeVideos, 100);
+        }
+      });
+
+      // Start observing
+      initializeVideos();
+      mutationObserver.observe(host, { 
+        childList: true, 
+        subtree: true 
+      });
+
+      // Cleanup function
+      return () => {
+        intersectionObserver.disconnect();
+        mutationObserver.disconnect();
+        pauseAllVideos();
+        videoVisibility.clear();
+        currentPlayingVideo = null;
+      };
     }, deps);
   };
 
