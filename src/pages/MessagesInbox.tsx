@@ -7,23 +7,23 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { 
-  AlertDialog, 
-  AlertDialogAction, 
-  AlertDialogCancel, 
-  AlertDialogContent, 
-  AlertDialogDescription, 
-  AlertDialogFooter, 
-  AlertDialogHeader, 
-  AlertDialogTitle 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MoreVertical, Trash2, MessageCircle, Clock, User } from "lucide-react";
+import { MoreVertical, Trash2, MessageCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 type Row = {
@@ -35,11 +35,11 @@ type Row = {
   last_created_at: string;
 };
 
-type ProfileLite = { 
-  id: string; 
-  display_name: string | null; 
-  username: string | null; 
-  avatar_url: string | null; 
+type ProfileLite = {
+  id: string;
+  display_name: string | null;
+  username: string | null;
+  avatar_url: string | null;
 };
 
 export default function MessagesInbox() {
@@ -48,7 +48,10 @@ export default function MessagesInbox() {
   const [profiles, setProfiles] = useState<Record<string, ProfileLite>>({});
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [conversationToDelete, setConversationToDelete] = useState<{ otherId: string; otherName: string } | null>(null);
+  const [conversationToDelete, setConversationToDelete] = useState<{
+    otherId: string;
+    otherName: string;
+  } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
@@ -56,95 +59,143 @@ export default function MessagesInbox() {
   }, []);
 
   const refreshUnread = async (myId: string, others: string[]) => {
-    if (!others.length) return setUnreadIds(new Set());
+    if (!others.length) {
+      setUnreadIds(new Set());
+      return;
+    }
     const { data, error } = await supabase
       .from("messages")
       .select("sender_id")
       .eq("recipient_id", myId)
       .is("read_at", null)
       .in("sender_id", others);
-    if (!error) setUnreadIds(new Set((data || []).map(d => d.sender_id)));
+
+    if (error) {
+      console.error("refreshUnread error:", error);
+      return;
+    }
+    setUnreadIds(new Set((data || []).map((d) => d.sender_id)));
   };
 
   const loadConversations = async () => {
     if (!me) return;
-    
+
     const { data, error } = await supabase
       .from("latest_dm_threads")
       .select("*")
       .order("last_created_at", { ascending: false });
-    
+
     if (error) {
+      console.error("loadConversations error:", error);
       toast.error("Failed to load conversations");
       return;
     }
-    
-    const mine = (data || []).filter((r: Row) => r.sender_id === me || r.recipient_id === me);
+
+    const mine = (data || []).filter(
+      (r: Row) => r.sender_id === me || r.recipient_id === me
+    );
     setRows(mine);
 
-    const ids = Array.from(new Set(mine.map(r => r.sender_id === me ? r.recipient_id : r.sender_id)));
+    const ids = Array.from(
+      new Set(
+        mine.map((r) => (r.sender_id === me ? r.recipient_id : r.sender_id))
+      )
+    );
+
     if (ids.length) {
-      const { data: profs } = await supabase
+      const { data: profs, error: pErr } = await supabase
         .from("profiles")
         .select("id, display_name, username, avatar_url")
         .in("id", ids);
-      const map: Record<string, ProfileLite> = {};
-      (profs || []).forEach(p => map[p.id] = p);
-      setProfiles(map);
+
+      if (pErr) {
+        console.error("profiles fetch error:", pErr);
+      } else {
+        const map: Record<string, ProfileLite> = {};
+        (profs || []).forEach((p) => (map[p.id] = p));
+        setProfiles(map);
+      }
+
       refreshUnread(me, ids);
+    } else {
+      setProfiles({});
+      setUnreadIds(new Set());
     }
   };
 
+  useEffect(() => {
+    if (me) loadConversations();
+
+    if (!me) return;
+    const channel = supabase
+      .channel(`inbox-${me}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "messages" },
+        () => {
+          const others = Object.keys(profiles);
+          if (others.length) refreshUnread(me, others);
+          // keep list current on any message change
+          loadConversations();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me]);
+
   const deleteConversation = async (otherId: string) => {
     if (!me || !otherId) return;
-    
+
+    // Optimistic UI: remove the thread locally
+    const prevRows = rows;
     setIsDeleting(true);
-    try {
-      // Delete messages where I'm the sender and they're the recipient
-      const { error: error1 } = await supabase
-        .from("messages")
-        .delete()
-        .eq("sender_id", me)
-        .eq("recipient_id", otherId);
-      
-      if (error1) throw error1;
-      
-      // Delete messages where they're the sender and I'm the recipient  
-      const { error: error2 } = await supabase
-        .from("messages")
-        .delete()
-        .eq("sender_id", otherId)
-        .eq("recipient_id", me);
-      
-      if (error2) throw error2;
-      
-      toast.success("Conversation deleted successfully");
-      
-      // Remove the conversation from local state immediately
-      setRows(prevRows => prevRows.filter(r => {
-        const otherUserId = r.sender_id === me ? r.recipient_id : r.sender_id;
+    setRows((r) =>
+      r.filter((row) => {
+        const otherUserId = row.sender_id === me ? row.recipient_id : row.sender_id;
         return otherUserId !== otherId;
-      }));
-      
-      // Remove from profiles
-      setProfiles(prev => {
-        const newProfiles = { ...prev };
-        delete newProfiles[otherId];
-        return newProfiles;
+      })
+    );
+
+    try {
+      // One atomic delete for both directions
+      const { error } = await supabase
+        .from("messages")
+        .delete()
+        .or(
+          `and(sender_id.eq.${me},recipient_id.eq.${otherId}),and(sender_id.eq.${otherId},recipient_id.eq.${me})`
+        );
+
+      if (error) {
+        // revert UI if the delete is blocked (e.g., RLS)
+        setRows(prevRows);
+        console.error("deleteConversation error:", error);
+        toast.error(`Failed to delete conversation: ${error.message}`);
+        return;
+      }
+
+      // Clean up local caches
+      setProfiles((prev) => {
+        const next = { ...prev };
+        delete next[otherId];
+        return next;
       });
-      
-      // Remove from unread
-      setUnreadIds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(otherId);
-        return newSet;
+      setUnreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(otherId);
+        return next;
       });
-      
-    } catch (error) {
-      console.error("Error deleting conversation:", error);
-      toast.error("Failed to delete conversation");
-      // Refresh the list in case of error to get correct state
+
+      toast.success("Conversation deleted");
+      // Make sure the view is up to date
       await loadConversations();
+    } catch (err: any) {
+      setRows(prevRows);
+      console.error("deleteConversation exception:", err);
+      toast.error(err?.message || "Failed to delete conversation");
     } finally {
       setIsDeleting(false);
       setDeleteDialogOpen(false);
@@ -155,8 +206,9 @@ export default function MessagesInbox() {
   const formatRelativeTime = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
-    const diffInHours = Math.abs(now.getTime() - date.getTime()) / (1000 * 60 * 60);
-    
+    const diffInHours =
+      Math.abs(now.getTime() - date.getTime()) / (1000 * 60 * 60);
+
     if (diffInHours < 1) {
       const diffInMinutes = Math.floor(diffInHours * 60);
       return `${diffInMinutes}m ago`;
@@ -169,25 +221,13 @@ export default function MessagesInbox() {
     }
   };
 
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  };
-
-  useEffect(() => {
-    if (me) loadConversations();
-
-    if (!me) return;
-    const channel = supabase
-      .channel(`inbox-${me}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages" },
-        () => {
-          const others = Object.keys(profiles);
-          if (others.length) refreshUnread(me, others);
-        })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [me]);
+  const getInitials = (name: string) =>
+    name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
@@ -225,18 +265,24 @@ export default function MessagesInbox() {
               </div>
             </Card>
           ) : (
-            rows.map(r => {
+            rows.map((r) => {
               const otherId = r.sender_id === me ? r.recipient_id : r.sender_id;
               const other = profiles[otherId];
               const hasUnread = unreadIds.has(otherId);
-              const displayName = other?.display_name || other?.username || "User";
-              
+              const displayName =
+                other?.display_name || other?.username || "User";
+
               return (
-                <Card key={r.thread_key} className={`group hover:shadow-md transition-all duration-200 border ${hasUnread ? 'border-primary/20 bg-primary/5' : 'hover:border-primary/20'}`}>
+                <Card
+                  key={r.thread_key}
+                  className={`group hover:shadow-md transition-all duration-200 border ${
+                    hasUnread ? "border-primary/20 bg-primary/5" : "hover:border-primary/20"
+                  }`}
+                >
                   <div className="p-4">
                     <div className="flex items-center justify-between">
-                      <Link 
-                        to={`/messages/${otherId}`} 
+                      <Link
+                        to={`/messages/${otherId}`}
                         className="flex items-center gap-4 flex-1 min-w-0"
                       >
                         <Avatar className="h-12 w-12 border-2 border-background shadow-sm">
@@ -245,17 +291,30 @@ export default function MessagesInbox() {
                             {getInitials(displayName)}
                           </AvatarFallback>
                         </Avatar>
-                        
+
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <h3 className={`font-semibold truncate ${hasUnread ? 'text-primary' : ''}`}>
+                            <h3
+                              className={`font-semibold truncate ${
+                                hasUnread ? "text-primary" : ""
+                              }`}
+                            >
                               {displayName}
                             </h3>
                             {hasUnread && (
-                              <Badge variant="default" className="h-2 w-2 p-0 rounded-full" />
+                              <Badge
+                                variant="default"
+                                className="h-2 w-2 p-0 rounded-full"
+                              />
                             )}
                           </div>
-                          <p className={`text-sm truncate ${hasUnread ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                          <p
+                            className={`text-sm truncate ${
+                              hasUnread
+                                ? "text-foreground font-medium"
+                                : "text-muted-foreground"
+                            }`}
+                          >
                             {r.last_body}
                           </p>
                           <div className="flex items-center gap-1 mt-1">
@@ -266,22 +325,25 @@ export default function MessagesInbox() {
                           </div>
                         </div>
                       </Link>
-                      
+
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 p-0"
                           >
                             <MoreVertical className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
                             onClick={() => {
-                              setConversationToDelete({ otherId, otherName: displayName });
+                              setConversationToDelete({
+                                otherId,
+                                otherName: displayName,
+                              });
                               setDeleteDialogOpen(true);
                             }}
                           >
@@ -305,18 +367,22 @@ export default function MessagesInbox() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete your conversation with{' '}
-              <span className="font-medium">{conversationToDelete?.otherName}</span>?
-              This action cannot be undone and all messages will be permanently deleted.
+              Are you sure you want to delete your conversation with{" "}
+              <span className="font-medium">
+                {conversationToDelete?.otherName}
+              </span>
+              ? This action cannot be undone and all messages will be permanently
+              deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>
-              Cancel
-            </AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               disabled={isDeleting}
-              onClick={() => conversationToDelete && deleteConversation(conversationToDelete.otherId)}
+              onClick={() =>
+                conversationToDelete &&
+                deleteConversation(conversationToDelete.otherId)
+              }
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isDeleting ? "Deleting..." : "Delete"}
