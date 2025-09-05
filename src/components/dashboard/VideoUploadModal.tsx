@@ -21,6 +21,9 @@ import {
   VolumeX,
   AlertCircle,
   Film,
+  Zap,
+  Smartphone,
+  Info,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -28,11 +31,10 @@ import { Progress } from "@/components/ui/progress";
 import { VideoRangeSlider } from "./VideoRangeSlider";
 import { Slider } from "@/components/ui/slider";
 
-// ✅ New ffmpeg.wasm API (v0.12+)
+// ffmpeg v0.12+ API
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 
-/** Simple env detection (no deps) */
 const isIOS =
   typeof navigator !== "undefined" &&
   (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -50,13 +52,18 @@ interface VideoUploadModalProps {
 const MAX_VIDEO_DURATION = 3; // 3 seconds max
 const DESKTOP_MAX_SIZE = 500 * 1024 * 1024; // 500MB
 const MOBILE_MAX_SIZE = 150 * 1024 * 1024; // safer cap for mobile/iOS
+const PREFERRED_EXTS = [".mp4", "mp4"]; // messaging only
 
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeedMBps, setUploadSpeedMBps] = useState(0);
+  const [uploadETA, setUploadETA] = useState<string | null>(null);
+
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [originalDuration, setOriginalDuration] = useState<number>(0);
   const [processingVideo, setProcessingVideo] = useState(false);
@@ -69,7 +76,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // ffmpeg/transcode state (v0.12+)
+  // ffmpeg/transcode state
   const [transcoding, setTranscoding] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
   const ffmpegRef = useRef<FFmpeg | null>(null);
@@ -82,7 +89,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi";
   const maxFileSize = isMobile ? MOBILE_MAX_SIZE : DESKTOP_MAX_SIZE;
 
-  /** Helpers */
   const isMOV = (f: File | null) =>
     !!f && (f.type === "video/quicktime" || /\.mov$/i.test(f.name));
 
@@ -104,7 +110,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   };
 
-  /** Load current user */
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -113,7 +118,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     getUser();
   }, []);
 
-  /** Cleanup object URL + RAF */
   useEffect(() => {
     return () => {
       if (videoPreview) URL.revokeObjectURL(videoPreview);
@@ -121,44 +125,40 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     };
   }, [videoPreview]);
 
-  /** Lazy-init FFmpeg (v0.12+) */
   const getFFmpeg = useCallback(async () => {
     if (ffmpegRef.current) return ffmpegRef.current;
     const ffmpeg = new FFmpeg();
-    // progress: 0..1
     ffmpeg.on("progress", ({ progress }) => {
       if (typeof progress === "number") {
         setTranscodeProgress(Math.min(99, Math.round(progress * 100)));
       }
     });
-    await ffmpeg.load(); // will fetch ffmpeg-core files from CDN
+    await ffmpeg.load();
     ffmpegRef.current = ffmpeg;
     return ffmpeg;
   }, []);
 
-  /** MOV → MP4 preview proxy (v0.12+) */
+  // FASTER proxy: 720p cap, ultrafast, higher CRF, mono 96k
   const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
     setTranscoding(true);
     setTranscodeProgress(1);
     try {
       const ffmpeg = await getFFmpeg();
-
       const inputName = "input.mov";
       const outputName = "output.mp4";
 
-      // write source file into ffmpeg FS
       await ffmpeg.writeFile(inputName, await fetchFile(movFile));
 
-      // Exec with new API (array args)
       await ffmpeg.exec([
         "-i", inputName,
-        "-vf", "scale='min(1280,iw)':-2",
-        "-r", "30",
+        "-vf", "scale='min(1280,iw)':-2", // cap width at 1280 for speed
+        "-r", "30",                      // stable seek & smaller
         "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
+        "-preset", "ultrafast",          // fastest encode
+        "-crf", "28",                    // smaller & faster than 23
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-ac", "1",                      // mono
+        "-b:a", "96k",                   // smaller
         "-movflags", "+faststart",
         outputName
       ]);
@@ -171,7 +171,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   }, [getFFmpeg]);
 
-  /** File select */
   const handleFileSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const selectedFile = e.target.files?.[0];
@@ -181,7 +180,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setVideoReady(false);
       setProcessingVideo(true);
 
-      // Validate type/size
       const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
       const validTypes = [
         "video/mp4",
@@ -215,18 +213,32 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
         setTitle(fileName);
 
-        // MOV → create MP4 proxy for preview/trimming
+        // Helpful notice: Prefer MP4
+        if (/\.(mov)$/i.test(selectedFile.name)) {
+          toast({
+            title: "Heads up: MOV selected",
+            description: "MP4 uploads preview and upload faster. Converting now for smooth trimming.",
+          });
+        } else if (/\.(mp4)$/i.test(selectedFile.name)) {
+          toast({
+            title: "Great choice",
+            description: "MP4 loads and uploads fastest.",
+          });
+        }
+
         if (isMOV(selectedFile)) {
           try {
-            toast({
-              title: "Preparing preview…",
-              description: "Converting MOV to MP4 for smooth preview.",
-            });
+            // Mobile specific hint
+            if (isMobile) {
+              toast({
+                title: "Converting on mobile",
+                description: "MOV → MP4 for preview. This can take a bit on phones.",
+              });
+            }
             const mp4Blob = await transcodeMovToMp4(selectedFile);
             const url = URL.createObjectURL(mp4Blob);
             setVideoPreview(url);
 
-            // Probe metadata from proxy
             const probe = document.createElement("video");
             probe.preload = "metadata";
             probe.src = url;
@@ -253,8 +265,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   setShowTrimmer(true);
                   setTrimRange([0, MAX_VIDEO_DURATION]);
                   toast({
-                    title: "Select your 3-second clip",
-                    description: `Your video is ${duration.toFixed(1)}s long. Use the trimmer to pick any 3s segment.`,
+                    title: "Pick your 3-second moment",
+                    description: `Your video is ${duration.toFixed(1)}s long.`,
                   });
                 } else {
                   setShowTrimmer(false);
@@ -265,10 +277,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
               probe.onerror = () =>
                 finish(false, new Error("Failed to read MP4 preview metadata."));
-              setTimeout(
-                () => finish(false, new Error("Video metadata timeout")),
-                8000
-              );
+              setTimeout(() => finish(false, new Error("Video metadata timeout")), 8000);
             });
           } catch (e: any) {
             console.error(e);
@@ -282,7 +291,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           return;
         }
 
-        // Non-MOV: normal preview flow
+        // Non-MOV
         const url = URL.createObjectURL(selectedFile);
         setVideoPreview(url);
 
@@ -312,8 +321,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               setShowTrimmer(true);
               setTrimRange([0, MAX_VIDEO_DURATION]);
               toast({
-                title: "Select your 3-second clip",
-                description: `Your video is ${duration.toFixed(1)}s long. Use the trimmer to pick any 3s segment.`,
+                title: "Pick your 3-second moment",
+                description: `Your video is ${duration.toFixed(1)}s long.`,
               });
             } else {
               setShowTrimmer(false);
@@ -342,7 +351,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     [toast, maxFileSize, videoPreview, transcodeMovToMp4]
   );
 
-  /** Bind preview element events (non-null preview only) */
   useEffect(() => {
     if (!videoRef.current || !videoPreview) return;
 
@@ -372,7 +380,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     };
   }, [videoPreview, trimRange]);
 
-  /** Loop playhead inside trim range */
   useEffect(() => {
     if (!videoRef.current || !isPlaying) return;
     const el = videoRef.current;
@@ -391,7 +398,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
   const togglePlayPause = () => {
     if (!videoRef.current || !videoReady || videoError) return;
-
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -406,15 +412,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         .play()
         .then(() => setIsPlaying(true))
         .catch(() => {
-          // fallback to muted (autoplay constraints)
           videoRef.current!.muted = true;
           setIsMuted(true);
           videoRef.current!
             .play()
             .then(() => setIsPlaying(true))
-            .catch(() => {
-              setVideoError("Playback failed. This video may use an unsupported codec.");
-            });
+            .catch(() => setVideoError("Playback failed. Unsupported codec?"));
         });
     }
   };
@@ -431,6 +434,70 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     const newTime = Math.max(trimRange[0], Math.min(value[0], trimRange[1]));
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
+  };
+
+  /**
+   * Upload with real-time progress using Supabase Signed Upload URL + XHR.
+   * Shows % complete, MB/s, and ETA.
+   */
+  const uploadWithProgress = async (
+    bucket: string,
+    filePath: string,
+    blob: Blob
+  ): Promise<{ publicUrl: string }> => {
+    // 1) Make a signed upload URL
+    const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(filePath);
+    if (error || !data?.signedUrl) throw error || new Error("Failed to create signed upload URL.");
+
+    // 2) XHR PUT to signed URL for progress
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadSpeedMBps(0);
+    setUploadETA(null);
+
+    const startedAt = Date.now();
+    const totalBytes = blob.size;
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", data.signedUrl, true);
+      xhr.setRequestHeader("content-type", (blob as any).type || "application/octet-stream");
+      // The signed URL includes auth via query params, so no Authorization header required.
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const loaded = event.loaded;
+        const pct = Math.max(1, Math.floor((loaded / totalBytes) * 100));
+        setUploadProgress(pct);
+
+        const seconds = (Date.now() - startedAt) / 1000;
+        if (seconds > 0) {
+          const MBps = (loaded / (1024 * 1024)) / seconds;
+          setUploadSpeedMBps(MBps);
+
+          const remainingBytes = totalBytes - loaded;
+          const etaSec = remainingBytes / (MBps * 1024 * 1024);
+          const m = Math.floor(etaSec / 60);
+          const s = Math.max(0, Math.ceil(etaSec % 60));
+          setUploadETA(`${m > 0 ? `${m}m ` : ""}${s}s`);
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Upload failed (network error)."));
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Upload failed (status ${xhr.status}).`));
+        }
+      };
+
+      xhr.send(blob);
+    });
+
+    // 3) Get a public URL for playback later
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    return { publicUrl: pub.publicUrl };
   };
 
   const handleUpload = async () => {
@@ -452,33 +519,20 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
 
     setUploading(true);
-    setUploadProgress(10);
+    setUploadProgress(1);
 
     try {
       const fileExt = file.name.split(".").pop();
       const fileName = `${currentUser.id}/${Date.now()}.${fileExt}`;
 
-      setUploadProgress(30);
-
-      const { error: uploadError } = await supabase.storage
-        .from("spliks")
-        .upload(fileName, file, { cacheControl: "3600", upsert: false });
-      if (uploadError) throw uploadError;
-
-      setUploadProgress(70);
-
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("spliks").getPublicUrl(fileName);
-
-      setUploadProgress(85);
+      // Upload original file with progress (fastest path via signed URL)
+      const { publicUrl } = await uploadWithProgress("spliks", fileName, file);
 
       // Always cap at 3s
       const finalStart = showTrimmer ? trimRange[0] : 0;
-      const finalEnd = showTrimmer
-        ? trimRange[1]
-        : Math.min(3, originalDuration || 3);
+      const finalEnd = showTrimmer ? trimRange[1] : Math.min(3, originalDuration || 3);
 
+      // Save row
       const { error: dbError } = await supabase.from("spliks").insert({
         user_id: currentUser.id,
         title,
@@ -506,13 +560,14 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setDescription("");
       if (videoPreview) URL.revokeObjectURL(videoPreview);
       setVideoPreview(null);
-      setUploadProgress(0);
       setCurrentTime(0);
       setIsPlaying(false);
       setVideoReady(false);
       setVideoError(null);
       setShowTrimmer(false);
       setTrimRange([0, 3]);
+      setUploadSpeedMBps(0);
+      setUploadETA(null);
 
       onUploadComplete();
       onClose();
@@ -525,7 +580,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       });
     } finally {
       setUploading(false);
-      setUploadProgress(0);
     }
   };
 
@@ -548,6 +602,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     return `${mins}:${secs.toString().padStart(2, "0")}.${ms}`;
   };
 
+  const isPreferred = (f: File | null) => !!f && /\.mp4$/i.test(f.name);
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -559,18 +615,31 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Info Alert about 3-second limit */}
+          {/* MP4 preferred notice */}
           <Alert className="border-primary/20 bg-primary/5">
-            <Scissors className="h-4 w-4 text-primary" />
-            <AlertDescription className="text-sm">
-              <strong>3-second clips only:</strong> Videos longer than 3 seconds can be trimmed to select the perfect moment.
-            </AlertDescription>
+            <div className="flex items-center gap-2">
+              <Zap className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-sm">
+                <strong>Tip:</strong> <span className="font-semibold">MP4 uploads and previews the fastest.</span> MOVs may convert first for trimming (slower on phones).
+              </AlertDescription>
+            </div>
           </Alert>
+
+          {isMobile && (
+            <Alert className="border-muted-foreground/20 bg-muted/10">
+              <div className="flex items-center gap-2">
+                <Smartphone className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  On mobile, we’ll show a live conversion status if you upload a MOV.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
 
           {processingVideo ? (
             <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
               <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Processing your video...</h3>
+              <h3 className="text-lg font-semibold mb-2">Processing your video…</h3>
               <p className="text-sm text-muted-foreground">Preparing for 3-second clip</p>
             </div>
           ) : !file ? (
@@ -584,7 +653,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
               <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
               <p className="text-xs text-muted-foreground mb-2">
-                Supported: MP4, MOV, FLV, WebM, AVI (max {isMobile ? "150MB" : "500MB"})
+                Supported: MP4 (preferred), MOV, FLV, WebM, AVI (max {isMobile ? "150MB" : "500MB"})
               </p>
               <p className="text-xs text-primary font-medium">Videos will be trimmed to exactly 3 seconds</p>
               <input
@@ -611,8 +680,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               {transcoding && (
                 <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-                  <p className="text-sm font-medium">Converting MOV to MP4 for preview…</p>
-                  <p className="text-xs text-muted-foreground mt-1">{transcodeProgress}%</p>
+                  <p className="text-sm font-medium">
+                    Converting MOV to MP4 for preview… {transcodeProgress}%
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    For fastest uploads next time, choose MP4.
+                  </p>
                 </div>
               )}
 
@@ -800,13 +873,21 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               </div>
 
-              {/* Upload progress */}
+              {/* Upload progress with speed & ETA */}
               {uploading && (
                 <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1">
+                      <Info className="h-3.5 w-3.5" />
+                      <span>
+                        Uploading… {uploadProgress}%{uploadETA ? ` • ETA ${uploadETA}` : ""}
+                      </span>
+                    </div>
+                    <div className="font-mono">
+                      {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
+                    </div>
+                  </div>
                   <Progress value={uploadProgress} className="w-full" />
-                  <p className="text-sm text-center text-muted-foreground">
-                    Uploading... {uploadProgress}%
-                  </p>
                 </div>
               )}
 
@@ -825,20 +906,19 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     setVideoError(null);
                     setShowTrimmer(false);
                     setTrimRange([0, 3]);
+                    setUploadSpeedMBps(0);
+                    setUploadETA(null);
                   }}
                   disabled={uploading}
                 >
                   <X className="h-4 w-4 mr-2" />
                   Remove
                 </Button>
-                <Button
-                  onClick={handleUpload}
-                  disabled={uploading || !title}
-                >
+                <Button onClick={handleUpload} disabled={uploading || !title}>
                   {uploading ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Uploading...
+                      Uploading…
                     </>
                   ) : (
                     "Upload Splik"
