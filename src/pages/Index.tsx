@@ -232,21 +232,6 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Google Search Console Verification Meta Tag */}
-      <Helmet>
-        <meta name="google-site-verification" content="716071527491513" />
-        <title>Splikz - Share Your World in Short Videos</title>
-        <meta name="description" content="Discover and share amazing short videos on Splikz. Join our community and express yourself through creative content." />
-        <meta property="og:title" content="Splikz - Share Your World in Short Videos" />
-        <meta property="og:description" content="Discover and share amazing short videos on Splikz. Join our community and express yourself through creative content." />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://splikz.com" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Splikz - Share Your World in Short Videos" />
-        <meta name="twitter:description" content="Discover and share amazing short videos on Splikz. Join our community and express yourself through creative content." />
-        <link rel="canonical" href="https://splikz.com" />
-      </Helmet>
-
       <Header />
 
       {/* Enhanced refresh controls */}
