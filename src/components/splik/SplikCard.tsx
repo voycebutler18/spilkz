@@ -226,7 +226,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       )}
     >
       {/* 1) Keep a white cover bar to hide stray '0' (stays above video) */}
-      <div className="absolute inset-x-0 top-0 h-5 bg-white z-[50] pointer-events-none" />
+      <div className="absolute inset-x-0 top-0 h-5 bg-black z-[50] pointer-events-none" />
 
       {/* 2) Splikz logo — fully visible (no fade), above the white bar */}
       <div className="absolute top-2 left-3 z-[60]">
