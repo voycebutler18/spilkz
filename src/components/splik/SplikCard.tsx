@@ -70,25 +70,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const hasCountedRef = useRef(false);
   const viewTimerRef = useRef<number | null>(null);
 
-  // Check if user has already viewed this video
-  const checkIfAlreadyViewed = async () => {
-    if (!currentUser) return false;
-    
-    try {
-      const { data } = await supabase
-        .from("splik_views") // or "views" depending on your table name
-        .select("id")
-        .eq("splik_id", splik.id)
-        .eq("user_id", currentUser.id)
-        .maybeSingle();
-      
-      return !!data;
-    } catch (error) {
-      console.error("Error checking view status:", error);
-      return false;
-    }
-  };
-
   const registerView = async () => {
     if (hasCountedRef.current) return;
     
@@ -576,40 +557,61 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </DropdownMenu>
         </div>
 
-        {/* ACTIONS */}
-        <div className="flex items-center justify-between">
+        {/* ENGAGEMENT ACTIONS - What matters most */}
+        <div className="flex items-center justify-between gap-1">
           <Button
             variant="ghost"
             size="sm"
             onClick={handleSplik}
             className={cn(
-              "flex items-center space-x-2 transition-colors",
-              isLiked && "text-purple-600 hover:text-purple-700"
+              "flex items-center space-x-2 transition-colors flex-1",
+              isLiked && "text-red-500 hover:text-red-600"
             )}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            <span className="text-xs">{formatCount(likesCount)}</span>
+            <span className="text-xs font-medium">{formatCount(likesCount)}</span>
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={handleComment} className="flex items-center space-x-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleComment} 
+            className="flex items-center space-x-2 flex-1 hover:text-blue-500"
+          >
             <MessageCircle className="h-4 w-4" />
-            <span className="text-xs">{formatCount(commentsCount)}</span>
+            <span className="text-xs font-medium">{formatCount(commentsCount)}</span>
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={handleShare} className="flex items-center space-x-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={handleShare} 
+            className="flex items-center space-x-2 flex-1 hover:text-green-500"
+          >
             <Share2 className="h-4 w-4" />
-            <span className="text-xs">Share</span>
+            <span className="text-xs font-medium">Share</span>
           </Button>
 
           <Button
             variant="ghost"
             size="sm"
             onClick={toggleFavorite}
-            className={cn("flex items-center space-x-2 transition-colors", isFavorited && "text-yellow-500 hover:text-yellow-600")}
+            className={cn(
+              "flex items-center space-x-2 transition-colors flex-1",
+              isFavorited && "text-yellow-500 hover:text-yellow-600"
+            )}
           >
             <Bookmark className={cn("h-4 w-4", isFavorited && "fill-current")} />
+            <span className="text-xs font-medium">Save</span>
           </Button>
         </div>
+
+        {/* Engagement explainer */}
+        {(likesCount === 0 && commentsCount === 0) && (
+          <div className="mt-2 text-xs text-muted-foreground text-center italic">
+            Be the first to react! 💜
+          </div>
+        )}
       </div>
 
       {/* MODALS */}
