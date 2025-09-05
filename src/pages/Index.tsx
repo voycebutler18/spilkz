@@ -237,7 +237,10 @@ const Index = () => {
         <meta name="description" content="Watch and share short vertical videos on Splikz" />
         
         {/* Google Search Console Verification - Replace with your actual verification code */}
-        <meta name="google-site-verification" content="ca-pub-7160715578591513" />
+        <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE_HERE" />
+        
+        {/* Google AdSense Verification */}
+        <meta name="google-adsense-account" content="ca-pub-7160715578591513" />
         
         {/* Open Graph tags for better social sharing */}
         <meta property="og:title" content="Splikz - Short Video Platform" />
