@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -67,42 +66,82 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  /* ---------- ADDED: mobile-safe one-per-playback view counter ---------- */
+  /* ---------- FIXED: persistent view tracking ---------- */
   const hasCountedRef = useRef(false);
   const viewTimerRef = useRef<number | null>(null);
 
-  const registerView = async () => {
-    if (hasCountedRef.current) return;
-    hasCountedRef.current = true;
-
-    // Optimistic UI so the badge moves immediately
-    setViewCount((v) => v + 1);
-
-    // Try a few common persistence paths; swallow errors and
-    // let your Realtime subscription backfill if needed.
+  // Check if user has already viewed this video
+  const checkIfAlreadyViewed = async () => {
+    if (!currentUser) return false;
+    
     try {
-      // If you already have an RPC that increments the view atomically:
-      await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
-      return;
-    } catch (_) {}
-
-    try {
-      // If you use a views table:
-      await supabase.from("splik_views").insert({ splik_id: splik.id });
-      return;
-    } catch (_) {}
-
-    try {
-      // Alternate table name (just in case your schema uses "views"):
-      await supabase.from("views").insert({ splik_id: splik.id });
-    } catch (_) {
-      // No-op; UI already updated optimistically and realtime will still sync if something else updates the row.
+      const { data } = await supabase
+        .from("splik_views") // or "views" depending on your table name
+        .select("id")
+        .eq("splik_id", splik.id)
+        .eq("user_id", currentUser.id)
+        .maybeSingle();
+      
+      return !!data;
+    } catch (error) {
+      console.error("Error checking view status:", error);
+      return false;
     }
   };
 
-  const beginViewTimer = () => {
+  const registerView = async () => {
+    if (hasCountedRef.current) return;
+    
+    // For anonymous users, use sessionStorage to prevent double counting in same session
+    if (!currentUser) {
+      const sessionKey = `viewed_${splik.id}`;
+      if (sessionStorage.getItem(sessionKey)) return;
+      sessionStorage.setItem(sessionKey, "true");
+    }
+    
+    hasCountedRef.current = true;
+
+    // Optimistic UI update
+    setViewCount((v) => v + 1);
+
+    try {
+      if (currentUser) {
+        // For logged-in users, insert with user_id to prevent duplicates
+        await supabase.from("splik_views").insert({ 
+          splik_id: splik.id,
+          user_id: currentUser.id 
+        });
+      } else {
+        // For anonymous users, just increment the counter
+        await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
+      }
+    } catch (error) {
+      console.error("Error registering view:", error);
+      // Revert optimistic update on error
+      setViewCount((v) => Math.max(0, v - 1));
+    }
+  };
+
+  const beginViewTimer = async () => {
     if (hasCountedRef.current || viewTimerRef.current !== null) return;
-    // Count a view after ~1s of active playback (mobile/iOS friendly)
+    
+    // For logged-in users, check if they've already viewed this video
+    if (currentUser) {
+      const alreadyViewed = await checkIfAlreadyViewed();
+      if (alreadyViewed) {
+        hasCountedRef.current = true;
+        return;
+      }
+    } else {
+      // For anonymous users, check sessionStorage
+      const sessionKey = `viewed_${splik.id}`;
+      if (sessionStorage.getItem(sessionKey)) {
+        hasCountedRef.current = true;
+        return;
+      }
+    }
+    
+    // Start the timer
     viewTimerRef.current = window.setTimeout(registerView, 1000);
   };
 
@@ -122,7 +161,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsPlaying(false);
     clearViewTimer();
   };
-  /* -------------------------------------------------------------------- */
 
   useEffect(() => {
     const getUser = async () => {
@@ -138,8 +176,21 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           .maybeSingle();
 
         setIsLiked(!!data);
+        
+        // Check if user has already viewed this video
+        const alreadyViewed = await checkIfAlreadyViewed();
+        if (alreadyViewed) {
+          hasCountedRef.current = true;
+        }
+      } else {
+        // For anonymous users, check sessionStorage
+        const sessionKey = `viewed_${splik.id}`;
+        if (sessionStorage.getItem(sessionKey)) {
+          hasCountedRef.current = true;
+        }
       }
     };
+
     getUser();
     checkIfFavorited();
 
@@ -147,8 +198,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setLikesCount(splik.likes_count || 0);
     setCommentsCount(splik.comments_count || 0);
 
-    // ADDED: reset one-per-card guard/timer on id change
-    hasCountedRef.current = false;
+    // Reset timer but keep the viewed status
     clearViewTimer();
 
     const channel = supabase
@@ -174,9 +224,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     return () => {
       supabase.removeChannel(channel);
-      clearViewTimer(); // ADDED: cleanup on unmount
+      clearViewTimer();
     };
-  }, [splik.id]);
+  }, [splik.id, currentUser?.id]); // Added currentUser.id as dependency
 
   const handleSplik = async () => {
     if (!currentUser) {
@@ -393,9 +443,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           loop={false}
           muted={isMuted}
           playsInline
-          onPlay={onVideoPlay}        /* ADDED */
-          onPause={onVideoPauseOrEnd} /* ADDED */
-          onEnded={onVideoPauseOrEnd} /* ADDED */
+          onPlay={onVideoPlay}
+          onPause={onVideoPauseOrEnd}
+          onEnded={onVideoPauseOrEnd}
           onTimeUpdate={handleTimeUpdate}
         />
 
