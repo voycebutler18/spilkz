@@ -2,21 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* Design system (HSL-only) + dark-first visual direction */
 
 @layer base {
   :root {
-    /* Splikz Brand Colors */
+    /* Brand */
     --violet: 272 91% 58%;
     --violet-glow: 272 100% 75%;
     --teal: 174 100% 45%;
     --teal-glow: 174 100% 65%;
     --slate: 220 14% 20%;
     --neon: 45 100% 51%;
-    
-    /* Core System Colors */
+
+    /* Radii & Elevation */
+    --radius: 0.75rem;
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.10);
+    --shadow-md: 0 6px 20px -2px hsl(0 0% 0% / 0.30);
+    --shadow-lg: 0 20px 40px -8px hsl(0 0% 0% / 0.45);
+    --shadow-glow: 0 0 40px hsl(var(--violet-glow) / 0.45);
+
+    /* Motion */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    /* Focus */
+    --ring: 272 91% 58%;
+    --focus-ring: 0 0 0 3px hsl(var(--ring) / 0.45);
+
+    /* LIGHT THEME (fallback if not dark) */
     --background: 0 0% 100%;
     --foreground: 220 14% 20%;
 
@@ -40,31 +53,14 @@ All colors MUST be HSL.
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    
+
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
 
     --border: 220 14% 91%;
     --input: 220 14% 91%;
-    --ring: 272 91% 58%;
 
-    --radius: 0.75rem;
-    
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(var(--violet)), hsl(var(--teal)));
-    --gradient-subtle: linear-gradient(180deg, hsl(var(--background)), hsl(var(--muted)));
-    --gradient-amplified: linear-gradient(135deg, hsl(var(--neon)), hsl(var(--violet-glow)));
-    
-    /* Shadows */
-    --shadow-sm: 0 1px 2px 0 hsl(var(--slate) / 0.05);
-    --shadow-md: 0 4px 6px -1px hsl(var(--slate) / 0.1);
-    --shadow-lg: 0 10px 15px -3px hsl(var(--slate) / 0.1);
-    --shadow-glow: 0 0 40px hsl(var(--violet-glow) / 0.3);
-    
-    /* Animations */
-    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-bounce: all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-
+    /* Sidebars (light) */
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 220 14% 26%;
     --sidebar-primary: 272 91% 58%;
@@ -75,8 +71,8 @@ All colors MUST be HSL.
     --sidebar-ring: 272 91% 58%;
   }
 
+  /* DARK THEME (default site look; add class="dark" on <html>) */
   .dark {
-    /* Dark mode overrides */
     --background: 220 14% 8%;
     --foreground: 0 0% 95%;
 
@@ -93,7 +89,7 @@ All colors MUST be HSL.
     --secondary-foreground: 0 0% 100%;
 
     --muted: 220 14% 18%;
-    --muted-foreground: 220 14% 65%;
+    --muted-foreground: 220 14% 70%;
 
     --accent: 174 100% 45%;
     --accent-foreground: 0 0% 100%;
@@ -101,21 +97,18 @@ All colors MUST be HSL.
     --destructive: 0 62% 30%;
     --destructive-foreground: 0 0% 100%;
 
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
     --border: 220 14% 18%;
     --input: 220 14% 18%;
-    --ring: 272 91% 58%;
-    
-    /* Dark mode gradients */
+
+    /* Dark gradients */
     --gradient-primary: linear-gradient(135deg, hsl(var(--violet)), hsl(var(--teal)));
-    --gradient-subtle: linear-gradient(180deg, hsl(var(--background)), hsl(220 14% 12%));
+    --gradient-subtle: linear-gradient(180deg, hsl(220 14% 10%), hsl(220 14% 8%));
     --gradient-amplified: linear-gradient(135deg, hsl(var(--neon)), hsl(var(--violet-glow)));
-    
-    /* Dark mode shadows */
-    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.1);
-    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.2);
-    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.3);
-    --shadow-glow: 0 0 40px hsl(var(--violet-glow) / 0.5);
-    
+
+    /* Sidebars (dark) */
     --sidebar-background: 220 14% 10%;
     --sidebar-foreground: 0 0% 95%;
     --sidebar-primary: 272 91% 58%;
@@ -132,7 +125,68 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
-  body {
-    @apply bg-background text-foreground;
+  html {
+    color-scheme: dark light;
   }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--ring) / 0.25);
+    color: hsl(var(--foreground));
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: calc(var(--radius) * 0.66);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Soft surfaces + card polish (rounded corners, subtle borders, light shadows) */
+@layer components {
+  .surface { @apply rounded-xl border bg-card shadow-sm; }
+  .surface-2 { @apply rounded-2xl border bg-card shadow-md; }
+  .surface-3 { @apply rounded-2xl border bg-popover shadow-lg; }
+
+  .card-soft {
+    border-radius: var(--radius);
+    background: hsl(var(--card));
+    color: hsl(var(--card-foreground));
+    box-shadow: var(--shadow-md);
+    border: 1px solid hsl(var(--border) / 1);
+  }
+
+  .btn-soft {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-sm;
+    border-radius: calc(var(--radius) - 0.25rem);
+    background: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+    border: 1px solid hsl(var(--border));
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition-smooth);
+  }
+  .btn-soft:hover { background: hsl(var(--card)); border-color: hsl(var(--border) / 0.9); }
+  .btn-soft:active { transform: translateY(0.5px); }
+}
+
+/* Consistent type scale so videos pop */
+@layer base {
+  h1 { @apply text-3xl md:text-4xl font-semibold tracking-[-0.01em]; }
+  h2 { @apply text-2xl md:text-3xl font-semibold; }
+  h3 { @apply text-xl md:text-2xl font-semibold; }
+  p  { @apply text-[15px] md:text-base leading-relaxed; }
+  small { @apply text-xs text-muted-foreground; }
 }
