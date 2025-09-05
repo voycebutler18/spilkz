@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Helmet } from "react-helmet";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import SplikCard from "@/components/splik/SplikCard";
@@ -13,8 +14,8 @@ import { createHomeFeed, forceNewRotation, type SplikWithScore } from "@/lib/fee
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [spliks, setSpliks] = useState<any[]>([]);
+  const [user, setUser] = useState(null);
+  const [spliks, setSpliks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const { toast } = useToast();
@@ -37,7 +38,7 @@ const Index = () => {
     fetchDynamicFeed();
   }, [user]);
 
-  const fetchDynamicFeed = async (showToast: boolean = false, forceNewShuffle: boolean = false) => {
+  const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
     if (showToast) {
       setRefreshing(true);
     } else {
@@ -81,8 +82,8 @@ const Index = () => {
 
       // 3. Apply session-based home feed rotation
       const rotatedFeed = createHomeFeed(
-        allSpliks as SplikWithScore[] || [],
-        boostedList as SplikWithScore[] || [],
+        allSpliks || [],
+        boostedList || [],
         { 
           userId: user?.id,
           feedType: 'home',
@@ -160,11 +161,11 @@ const Index = () => {
     setUploadModalOpen(true);
   };
 
-  const handleSplik = async (splikId: string) => {
+  const handleSplik = async (splikId) => {
     console.log('Splik:', splikId);
   };
 
-  const handleReact = async (splikId: string) => {
+  const handleReact = async (splikId) => {
     if (!user) {
       toast({
         title: "Sign in required",
@@ -205,7 +206,7 @@ const Index = () => {
     }
   };
 
-  const handleShare = async (splikId: string) => {
+  const handleShare = async (splikId) => {
     const url = `${window.location.origin}/video/${splikId}`;
     try {
       if (navigator.share) {
@@ -231,6 +232,21 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Google Search Console Verification Meta Tag */}
+      <Helmet>
+        <meta name="google-site-verification" content="716071527491513" />
+        <title>Splikz - Share Your World in Short Videos</title>
+        <meta name="description" content="Discover and share amazing short videos on Splikz. Join our community and express yourself through creative content." />
+        <meta property="og:title" content="Splikz - Share Your World in Short Videos" />
+        <meta property="og:description" content="Discover and share amazing short videos on Splikz. Join our community and express yourself through creative content." />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://splikz.com" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Splikz - Share Your World in Short Videos" />
+        <meta name="twitter:description" content="Discover and share amazing short videos on Splikz. Join our community and express yourself through creative content." />
+        <link rel="canonical" href="https://splikz.com" />
+      </Helmet>
+
       <Header />
 
       {/* Enhanced refresh controls */}
