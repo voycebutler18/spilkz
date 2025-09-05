@@ -33,11 +33,12 @@ const VideoContainer = ({ src, poster, className = '', onClick }: VideoContainer
     video.addEventListener('loadeddata', handleLoadedData);
     video.addEventListener('error', handleError);
 
-    // Set up intersection observer for autoplay
+    // Set up intersection observer for autoplay with 45% threshold
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting && !hasError) {
+          // Check if video is at least 45% visible
+          if (entry.intersectionRatio >= 0.45 && !hasError) {
             video.play().catch((err) => {
               console.log('Autoplay prevented:', err);
             });
@@ -46,7 +47,9 @@ const VideoContainer = ({ src, poster, className = '', onClick }: VideoContainer
           }
         });
       },
-      { threshold: 0.5 }
+      { 
+        threshold: [0, 0.25, 0.45, 0.5, 0.75, 1.0] // Multiple thresholds to catch the 45% mark
+      }
     );
 
     observer.observe(video);
