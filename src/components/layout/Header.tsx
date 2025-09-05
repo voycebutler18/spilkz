@@ -1,7 +1,7 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut } from "lucide-react";
+import { Sparkles, LogOut, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet";
 import {
@@ -102,7 +102,7 @@ const Header: React.FC = () => {
     "U";
 
   return (
-    <header className="sticky top-0 z-[120] w-full border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-3 sm:px-4">
         {/* Left: Logo */}
         <Link to="/" className="flex items-center gap-2">
@@ -184,11 +184,8 @@ const Header: React.FC = () => {
         <div className="md:hidden">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Open menu">
-                {/* Simple hamburger */}
-                <span className="block h-[2px] w-5 bg-foreground" />
-                <span className="mt-1 block h-[2px] w-5 bg-foreground" />
-                <span className="mt-1 block h-[2px] w-5 bg-foreground" />
+              <Button variant="ghost" size="icon" aria-label="Open menu" className="relative">
+                <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
 
