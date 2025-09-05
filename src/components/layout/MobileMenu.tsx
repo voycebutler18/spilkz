@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -10,40 +10,36 @@ interface MobileMenuProps {
   onClose: () => void;
 }
 
-const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
-  const [user, setUser] = useState<null | { id: string }>(null);
+const DASHBOARD_PATH = "/dashboard"; // <-- change if your desktop header uses a different path
 
-  // Keep auth state in sync (mobile Safari keeps the sheet mounted)
+const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
+  const [isAuthed, setIsAuthed] = useState(false);
+  const navigate = useNavigate();
+
   useEffect(() => {
     let mounted = true;
 
-    // 1) fetch the current session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (mounted) setUser(session?.user ?? null);
+    // initial session check
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setIsAuthed(!!data.session);
     });
 
-    // 2) listen for future login/logout/refresh events
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
+    // live auth updates
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthed(!!session);
     });
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, []);
-
-  // 3) when the drawer opens, re-check once more (fixes stale state on iOS)
-  useEffect(() => {
-    if (!open) return;
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
-  }, [open]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     onClose();
+    navigate("/");
   };
 
   return (
@@ -79,34 +75,31 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
           </Link>
         </nav>
 
-        {/* Auth-aware actions */}
-        {user ? (
-          <div className="mt-8 flex flex-col space-y-2">
-            <Button variant="outline" asChild onClick={onClose}>
-              {/* Use your own profile route; /profile exists in your codebase */}
-              <Link to="/profile">My profile</Link>
-            </Button>
-            <Button variant="outline" asChild onClick={onClose}>
-              <Link to="/creator-dashboard">Creator Dashboard</Link>
-            </Button>
-            <Button variant="destructive" onClick={handleSignOut}>
-              Sign out
-            </Button>
-          </div>
-        ) : (
-          <div className="mt-8 flex flex-col space-y-2">
-            <Button variant="outline" asChild onClick={onClose}>
-              <Link to="/login">Log in</Link>
-            </Button>
-            <Button
-              className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
-              asChild
-              onClick={onClose}
-            >
-              <Link to="/signup">Sign up</Link>
-            </Button>
-          </div>
-        )}
+        <div className="mt-8 flex flex-col space-y-2">
+          {isAuthed ? (
+            <>
+              <Button variant="outline" asChild onClick={onClose}>
+                <Link to={DASHBOARD_PATH}>Creator Dashboard</Link>
+              </Button>
+              <Button variant="destructive" onClick={handleSignOut}>
+                Sign out
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" asChild onClick={onClose}>
+                <Link to="/login">Log in</Link>
+              </Button>
+              <Button
+                className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
+                asChild
+                onClick={onClose}
+              >
+                <Link to="/signup">Sign up</Link>
+              </Button>
+            </>
+          )}
+        </div>
       </SheetContent>
     </Sheet>
   );
