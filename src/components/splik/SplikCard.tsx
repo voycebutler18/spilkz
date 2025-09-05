@@ -62,7 +62,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [showBoostModal, setShowBoostModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
+  const viewedRef = useRef(false);
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
@@ -125,7 +127,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         await supabase.from("likes").insert({ user_id: currentUser.id, splik_id: splik.id });
       }
       onSplik?.();
-    } catch (error) {
+    } catch {
       setIsLiked(!newLikedState);
       setLikesCount((prev) => (!newLikedState ? prev + 1 : Math.max(0, prev - 1)));
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
@@ -138,12 +140,14 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const checkIfFavorited = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
+
     const { data } = await supabase
       .from("favorites")
       .select("id")
       .eq("user_id", user.id)
       .eq("splik_id", splik.id)
       .maybeSingle();
+
     setIsFavorited(!!data);
   };
 
@@ -153,9 +157,14 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
       return;
     }
+
     try {
       if (isFavorited) {
-        const { error } = await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
+        const { error } = await supabase
+          .from("favorites")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("splik_id", splik.id);
         if (!error) {
           setIsFavorited(false);
           toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
@@ -191,8 +200,19 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const handlePlayToggle = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (isPlaying) { video.pause(); setIsPlaying(false); }
-    else { video.currentTime = 0; video.play(); setIsPlaying(true); }
+
+    if (isPlaying) {
+      video.pause();
+      setIsPlaying(false);
+    } else {
+      video.currentTime = 0;
+      video.play();
+      setIsPlaying(true);
+      if (!viewedRef.current) {
+        viewedRef.current = true;
+        // place view tracking call here if you add one later
+      }
+    }
   };
 
   const handleTimeUpdate = () => {
@@ -225,33 +245,23 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* 1) Keep a white cover bar to hide stray '0' (stays above video) */}
-      <div className="absolute inset-x-0 top-0 h-5 bg-black z-[50] pointer-events-none" />
-
-      {/* 2) Splikz logo — fully visible (no fade), above the white bar */}
-      <div className="absolute top-2 left-3 z-[60]">
-        <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
-          <Sparkles className="h-4 w-4 text-purple-400" />
-          <span className="text-sm font-bold text-white">Splikz</span>
-        </div>
-      </div>
-
-      {/* BOOSTED BADGE */}
-      {isBoosted && (
-        <div className="absolute top-3 right-3 z-[60]">
-          <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
-            <Rocket className="h-3 w-3 mr-1" />
-            Promoted
-          </Badge>
-        </div>
-      )}
-
       {/* VIDEO AREA */}
       <div
-        className="relative bg-black overflow-hidden group rounded-t-xl"
+        className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
         style={{ height: videoHeight, maxHeight: "80vh" }}
         onClick={handlePlayToggle}
       >
+        {/* Top black bar INSIDE the wrapper to hide any seam */}
+        <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-[60] rounded-t-xl" />
+
+        {/* Splikz logo (unchanged, fully visible) */}
+        <div className="absolute top-2 left-3 z-[70]">
+          <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
+            <Sparkles className="h-4 w-4 text-purple-400" />
+            <span className="text-sm font-bold text-white">Splikz</span>
+          </div>
+        </div>
+
         <video
           ref={videoRef}
           src={splik.video_url}
@@ -290,7 +300,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           )}
         </div>
 
-        {/* Title & description (gradient only behind text) */}
+        {/* Title & description overlay */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40">
           <div className="bg-gradient-to-t from-black/70 via-black/35 to-transparent px-4 pt-10 pb-3">
             <h3 className="text-white font-semibold text-sm truncate">
@@ -307,7 +317,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           <Button
             size="icon"
             variant="ghost"
-            className="absolute bottom-3 right-3 z-[60] text-white hover:bg-white/20"
+            className="absolute bottom-3 right-3 z-[70] text-white hover:bg-white/20"
             onClick={(e) => {
               e.stopPropagation();
               toggleMute();
@@ -317,6 +327,16 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         )}
       </div>
+
+      {/* BOOSTED BADGE */}
+      {isBoosted && (
+        <div className="absolute top-3 right-3 z-[60]">
+          <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
+            <Rocket className="h-3 w-3 mr-1" />
+            Promoted
+          </Badge>
+        </div>
+      )}
 
       {/* CREATOR + MENU */}
       <div className="p-4">
