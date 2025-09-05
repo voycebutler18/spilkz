@@ -1,3 +1,4 @@
+/* SplikCard.tsx */
 import { useState, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,7 @@ import {
   Volume2,
   VolumeX,
   Rocket,
-  Sparkles, // 👈 for the Splikz logo mark
+  Sparkles,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
@@ -67,9 +68,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   useEffect(() => {
     const getUser = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user);
 
       if (user) {
@@ -93,12 +92,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       .channel(`splik-${splik.id}`)
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "spliks",
-          filter: `id=eq.${splik.id}`,
-        },
+        { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${splik.id}` },
         (payload) => {
           if (payload.new) {
             const newData = payload.new as any;
@@ -116,11 +110,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   const handleSplik = async () => {
     if (!currentUser) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like spliks",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to like spliks", variant: "destructive" });
       return;
     }
 
@@ -130,130 +120,62 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     try {
       if (!newLikedState) {
-        await supabase
-          .from("likes")
-          .delete()
-          .eq("user_id", currentUser.id)
-          .eq("splik_id", splik.id);
+        await supabase.from("likes").delete().eq("user_id", currentUser.id).eq("splik_id", splik.id);
       } else {
-        await supabase.from("likes").insert({
-          user_id: currentUser.id,
-          splik_id: splik.id,
-        });
+        await supabase.from("likes").insert({ user_id: currentUser.id, splik_id: splik.id });
       }
-
       onSplik?.();
     } catch (error) {
       setIsLiked(!newLikedState);
-      setLikesCount((prev) =>
-        !newLikedState ? prev + 1 : Math.max(0, prev - 1)
-      );
-
+      setLikesCount((prev) => (!newLikedState ? prev + 1 : Math.max(0, prev - 1)));
       console.error("Error toggling like:", error);
-      toast({
-        title: "Error",
-        description: "Failed to update like",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
     }
   };
 
-  const handleComment = () => {
-    setShowCommentsModal(true);
-    onReact?.();
-  };
-
-  const handleShare = () => {
-    setShowShareModal(true);
-    onShare?.();
-  };
+  const handleComment = () => { setShowCommentsModal(true); onReact?.(); };
+  const handleShare = () => { setShowShareModal(true); onShare?.(); };
 
   const checkIfFavorited = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
     const { data } = await supabase
       .from("favorites")
       .select("id")
       .eq("user_id", user.id)
       .eq("splik_id", splik.id)
       .maybeSingle();
-
     setIsFavorited(!!data);
   };
 
   const toggleFavorite = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to save videos",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
       return;
     }
-
     try {
       if (isFavorited) {
-        const { error } = await supabase
-          .from("favorites")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("splik_id", splik.id);
-
-        if (!error) {
-          setIsFavorited(false);
-          toast({
-            title: "Removed from favorites",
-            description: "Video removed from your favorites",
-          });
-        }
+        const { error } = await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
+        if (!error) { setIsFavorited(false); toast({ title: "Removed from favorites", description: "Video removed from your favorites" }); }
       } else {
-        const { error } = await supabase.from("favorites").insert({
-          user_id: user.id,
-          splik_id: splik.id,
-        });
-
-        if (!error) {
-          setIsFavorited(true);
-          toast({
-            title: "Added to favorites!",
-            description: "Video saved to your favorites",
-          });
-        }
+        const { error } = await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
+        if (!error) { setIsFavorited(true); toast({ title: "Added to favorites!", description: "Video saved to your favorites" }); }
       }
     } catch (error) {
       console.error("Error toggling favorite:", error);
-      toast({
-        title: "Error",
-        description: "Failed to update favorites",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     }
   };
 
   const handleCopyLink = () => {
     const url = `${window.location.origin}/splik/${splik.id}`;
     navigator.clipboard.writeText(url);
-    toast({
-      title: "Link copied!",
-      description: "Video link copied to clipboard",
-    });
+    toast({ title: "Link copied!", description: "Video link copied to clipboard" });
   };
 
   const handleReport = () => setShowReportModal(true);
-
-  const handleBlock = () => {
-    toast({
-      title: "User blocked",
-      description: "You won't see content from this user anymore",
-    });
-  };
+  const handleBlock = () => toast({ title: "User blocked", description: "You won't see content from this user anymore" });
 
   const formatCount = (count: number | undefined | null) => {
     const safe = count ?? 0;
@@ -265,15 +187,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const handlePlayToggle = () => {
     const video = videoRef.current;
     if (!video) return;
-
-    if (isPlaying) {
-      video.pause();
-      setIsPlaying(false);
-    } else {
-      video.currentTime = 0;
-      video.play();
-      setIsPlaying(true);
-    }
+    if (isPlaying) { video.pause(); setIsPlaying(false); }
+    else { video.currentTime = 0; video.play(); setIsPlaying(true); }
   };
 
   const handleTimeUpdate = () => {
@@ -306,8 +221,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* TOP COVER BAR (matches page background) — hides stray “0” */}
-      <div className="absolute inset-x-0 top-0 h-5 bg-background z-[40] pointer-events-none" />
+      {/* NOTE: removed the white/cover bar so the video reaches the very top */}
 
       {/* BOOSTED BADGE */}
       {isBoosted && (
@@ -319,9 +233,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         </div>
       )}
 
-      {/* VIDEO AREA */}
+      {/* VIDEO AREA — rounded top so it visually covers the top edge */}
       <div
-        className="relative bg-black overflow-hidden group"
+        className="relative bg-black overflow-hidden group rounded-t-xl"
         style={{ height: videoHeight, maxHeight: "80vh" }}
         onClick={handlePlayToggle}
       >
@@ -329,19 +243,24 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           ref={videoRef}
           src={splik.video_url}
           poster={splik.thumbnail_url}
-          className="w-full h-full object-cover"
+          className="block w-full h-full object-cover"  // block removes any inline-gap; fills top edge
           loop={false}
           muted={isMuted}
           playsInline
           onTimeUpdate={handleTimeUpdate}
         />
 
-        {/* Splikz logo watermark (top-left, below the cover bar) */}
-        <div className="pointer-events-none absolute top-2 left-3 z-30 flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-purple-500" />
-          <span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-teal-400">
-            Splikz
-          </span>
+        {/* 📌 Top micro-gradient (barely visible) — still hides any stray characters */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-black/30 to-transparent z-20" />
+
+        {/* 🔥 Splikz logo — more visible: pill bg + blur + shadow */}
+        <div className="pointer-events-none absolute top-2 left-3 z-30">
+          <div className="flex items-center gap-1.5 rounded-full px-2.5 py-1 bg-black/55 backdrop-blur-sm">
+            <Sparkles className="h-4 w-4 text-purple-300 drop-shadow" />
+            <span className="text-[13px] font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-300 to-teal-300 drop-shadow">
+              Splikz
+            </span>
+          </div>
         </div>
 
         {/* Center play/pause icon */}
@@ -371,16 +290,14 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           )}
         </div>
 
-        {/* Title & description (gradient just behind text) */}
+        {/* Title & description (gradient only behind text) */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
           <div className="bg-gradient-to-t from-black/70 via-black/35 to-transparent px-4 pt-10 pb-3">
             <h3 className="text-white font-semibold text-sm truncate">
               {splik.title || "Untitled"}
             </h3>
             {splik.description ? (
-              <p className="text-white/85 text-xs truncate">
-                {splik.description}
-              </p>
+              <p className="text-white/85 text-xs truncate">{splik.description}</p>
             ) : null}
           </div>
         </div>
@@ -481,10 +398,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             variant="ghost"
             size="sm"
             onClick={handleSplik}
-            className={cn(
-              "flex items-center space-x-2 transition-colors flex-1",
-              isLiked && "text-red-500 hover:text-red-600"
-            )}
+            className={cn("flex items-center space-x-2 transition-colors flex-1", isLiked && "text-red-500 hover:text-red-600")}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
             <span className="text-xs font-medium">{formatCount(likesCount)}</span>
@@ -514,10 +428,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             variant="ghost"
             size="sm"
             onClick={toggleFavorite}
-            className={cn(
-              "flex items-center space-x-2 transition-colors flex-1",
-              isFavorited && "text-yellow-500 hover:text-yellow-600"
-            )}
+            className={cn("flex items-center space-x-2 transition-colors flex-1", isFavorited && "text-yellow-500 hover:text-yellow-600")}
           >
             <Bookmark className={cn("h-4 w-4", isFavorited && "fill-current")} />
             <span className="text-xs font-medium">Save</span>
@@ -538,14 +449,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         videoId={splik.id}
         videoTitle={splik.title || "Check out this splik!"}
       />
-
       <CommentsModal
         isOpen={showCommentsModal}
         onClose={() => setShowCommentsModal(false)}
         splikId={splik.id}
         splikTitle={splik.title}
       />
-
       <ReportModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
@@ -553,7 +462,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         videoTitle={splik.title || splik.description || "Untitled Video"}
         creatorName={splik.profile?.display_name || splik.profile?.username || "Unknown Creator"}
       />
-
       {showBoostModal && (
         <BoostModal
           isOpen={showBoostModal}
