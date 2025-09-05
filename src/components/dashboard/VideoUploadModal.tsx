@@ -28,8 +28,9 @@ import { Progress } from "@/components/ui/progress";
 import { VideoRangeSlider } from "./VideoRangeSlider";
 import { Slider } from "@/components/ui/slider";
 
-// NEW: ffmpeg.wasm imports
-import { createFFmpeg, fetchFile } from "@ffmpeg/ffmpeg";
+// ✅ New ffmpeg.wasm API (v0.12+)
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile } from "@ffmpeg/util";
 
 /** Simple env detection (no deps) */
 const isIOS =
@@ -68,10 +69,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // NEW: ffmpeg/transcode state
+  // ffmpeg/transcode state (v0.12+)
   const [transcoding, setTranscoding] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
-  const ffmpegRef = useRef<ReturnType<typeof createFFmpeg> | null>(null);
+  const ffmpegRef = useRef<FFmpeg | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -103,54 +104,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   };
 
-  // NEW: lazy-load ffmpeg
-  const getFFmpeg = useCallback(async () => {
-    if (ffmpegRef.current) return ffmpegRef.current;
-    const ffmpeg = createFFmpeg({
-      log: false,
-      // corePath: "/ffmpeg/ffmpeg-core.js", // optional: host it yourself
-    });
-    ffmpeg.setProgress(({ ratio }) => {
-      if (ratio) setTranscodeProgress(Math.min(99, Math.round(ratio * 100)));
-    });
-    await ffmpeg.load();
-    ffmpegRef.current = ffmpeg;
-    return ffmpeg;
-  }, []);
-
-  // NEW: MOV → MP4 proxy for preview
-  const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
-    setTranscoding(true);
-    setTranscodeProgress(1);
-    try {
-      const ffmpeg = await getFFmpeg();
-      const inputName = "input.mov";
-      const outputName = "output.mp4";
-
-      ffmpeg.FS("writeFile", inputName, await fetchFile(movFile));
-
-      await ffmpeg.run(
-        "-i", inputName,
-        "-vf", "scale='min(1280,iw)':-2",
-        "-r", "30",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        outputName
-      );
-
-      const data = ffmpeg.FS("readFile", outputName);
-      return new Blob([data.buffer], { type: "video/mp4" });
-    } finally {
-      setTranscoding(false);
-      setTranscodeProgress(0);
-    }
-  }, [getFFmpeg]);
-
-  /** Auth */
+  /** Load current user */
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -166,6 +120,56 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [videoPreview]);
+
+  /** Lazy-init FFmpeg (v0.12+) */
+  const getFFmpeg = useCallback(async () => {
+    if (ffmpegRef.current) return ffmpegRef.current;
+    const ffmpeg = new FFmpeg();
+    // progress: 0..1
+    ffmpeg.on("progress", ({ progress }) => {
+      if (typeof progress === "number") {
+        setTranscodeProgress(Math.min(99, Math.round(progress * 100)));
+      }
+    });
+    await ffmpeg.load(); // will fetch ffmpeg-core files from CDN
+    ffmpegRef.current = ffmpeg;
+    return ffmpeg;
+  }, []);
+
+  /** MOV → MP4 preview proxy (v0.12+) */
+  const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
+    setTranscoding(true);
+    setTranscodeProgress(1);
+    try {
+      const ffmpeg = await getFFmpeg();
+
+      const inputName = "input.mov";
+      const outputName = "output.mp4";
+
+      // write source file into ffmpeg FS
+      await ffmpeg.writeFile(inputName, await fetchFile(movFile));
+
+      // Exec with new API (array args)
+      await ffmpeg.exec([
+        "-i", inputName,
+        "-vf", "scale='min(1280,iw)':-2",
+        "-r", "30",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        outputName
+      ]);
+
+      const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+      return new Blob([data], { type: "video/mp4" });
+    } finally {
+      setTranscoding(false);
+      setTranscodeProgress(0);
+    }
+  }, [getFFmpeg]);
 
   /** File select */
   const handleFileSelect = useCallback(
@@ -211,7 +215,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
         setTitle(fileName);
 
-        // CHANGED: handle MOV by creating an MP4 preview proxy instead of disabling preview
+        // MOV → create MP4 proxy for preview/trimming
         if (isMOV(selectedFile)) {
           try {
             toast({
@@ -278,7 +282,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           return;
         }
 
-        // Non-MOV: normal preview
+        // Non-MOV: normal preview flow
         const url = URL.createObjectURL(selectedFile);
         setVideoPreview(url);
 
@@ -309,9 +313,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               setTrimRange([0, MAX_VIDEO_DURATION]);
               toast({
                 title: "Select your 3-second clip",
-                description: `Your video is ${duration.toFixed(
-                  1
-                )}s long. Use the trimmer to pick any 3s segment.`,
+                description: `Your video is ${duration.toFixed(1)}s long. Use the trimmer to pick any 3s segment.`,
               });
             } else {
               setShowTrimmer(false);
@@ -370,7 +372,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     };
   }, [videoPreview, trimRange]);
 
-  /** Loop inside trim range */
+  /** Loop playhead inside trim range */
   useEffect(() => {
     if (!videoRef.current || !isPlaying) return;
     const el = videoRef.current;
@@ -605,7 +607,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Alert>
               )}
 
-              {/* NEW: MOV transcode progress */}
+              {/* MOV transcode progress */}
               {transcoding && (
                 <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
@@ -618,7 +620,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               <div className="flex justify-center">
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
                   <div className="relative" style={{ paddingBottom: "177.78%" }}>
-                    {/* If no preview yet and not transcoding, show placeholder */}
                     {!videoPreview && !transcoding ? (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
                         <Film className="h-10 w-10 opacity-70 mb-2" />
@@ -750,7 +751,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                             }
                           }}
                         >
-                        Middle 3s
+                          Middle 3s
                         </Button>
                       )}
                       {originalDuration > 3 && (
@@ -832,12 +833,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Button>
                 <Button
                   onClick={handleUpload}
-                  disabled={
-                    uploading ||
-                    !title ||
-                    // allow upload even if preview had a soft error
-                    false
-                  }
+                  disabled={uploading || !title}
                 >
                   {uploading ? (
                     <>
