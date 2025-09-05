@@ -66,63 +66,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  /* ---------- ADDED: mobile-safe one-per-playback view counter ---------- */
-  const hasCountedRef = useRef(false);
-  const viewTimerRef = useRef<number | null>(null);
-
-  const registerView = async () => {
-    if (hasCountedRef.current) return;
-    hasCountedRef.current = true;
-
-    // Optimistic UI so the badge moves immediately
-    setViewCount((v) => v + 1);
-
-    // Try a few common persistence paths; swallow errors and
-    // let your Realtime subscription backfill if needed.
-    try {
-      // If you already have an RPC that increments the view atomically:
-      await supabase.rpc("increment_splik_view", { p_splik_id: splik.id });
-      return;
-    } catch (_) {}
-
-    try {
-      // If you use a views table:
-      await supabase.from("splik_views").insert({ splik_id: splik.id });
-      return;
-    } catch (_) {}
-
-    try {
-      // Alternate table name (just in case your schema uses "views"):
-      await supabase.from("views").insert({ splik_id: splik.id });
-    } catch (_) {
-      // No-op; UI already updated optimistically and realtime will still sync if something else updates the row.
-    }
-  };
-
-  const beginViewTimer = () => {
-    if (hasCountedRef.current || viewTimerRef.current !== null) return;
-    // Count a view after ~1s of active playback (mobile/iOS friendly)
-    viewTimerRef.current = window.setTimeout(registerView, 1000);
-  };
-
-  const clearViewTimer = () => {
-    if (viewTimerRef.current !== null) {
-      clearTimeout(viewTimerRef.current);
-      viewTimerRef.current = null;
-    }
-  };
-
-  const onVideoPlay = () => {
-    setIsPlaying(true);
-    beginViewTimer();
-  };
-
-  const onVideoPauseOrEnd = () => {
-    setIsPlaying(false);
-    clearViewTimer();
-  };
-  /* -------------------------------------------------------------------- */
-
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -145,10 +88,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setViewCount(splik.view_count || splik.views || 0);
     setLikesCount(splik.likes_count || 0);
     setCommentsCount(splik.comments_count || 0);
-
-    // ADDED: reset one-per-card guard/timer on id change
-    hasCountedRef.current = false;
-    clearViewTimer();
 
     const channel = supabase
       .channel(`splik-${splik.id}`)
@@ -173,7 +112,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     return () => {
       supabase.removeChannel(channel);
-      clearViewTimer(); // ADDED: cleanup on unmount
     };
   }, [splik.id]);
 
@@ -384,19 +322,44 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         {/* IN-VIDEO MASK — keep the top of the video itself black */}
         <div className="absolute inset-x-0 top-0 h-8 bg-black z-[30] pointer-events-none" />
 
+        {/* ==== ONLY CHANGE: use <source> with correct MIME types ==== */}
         <video
           ref={videoRef}
-          src={splik.video_url}
           poster={splik.thumbnail_url}
           className="w-full h-full object-cover"
           loop={false}
           muted={isMuted}
           playsInline
-          onPlay={onVideoPlay}        /* ADDED */
-          onPause={onVideoPauseOrEnd} /* ADDED */
-          onEnded={onVideoPauseOrEnd} /* ADDED */
           onTimeUpdate={handleTimeUpdate}
-        />
+          preload="metadata"
+          onError={() => {
+            console.warn("Video failed to play:", splik.video_url);
+          }}
+        >
+          {/* Prefer HLS if you ever store a .m3u8 url */}
+          {/\.(m3u8)(\?|$)/i.test(splik.video_url) && (
+            <source src={splik.video_url} type="application/vnd.apple.mpegurl" />
+          )}
+
+          {/* MP4 */}
+          {/\.(mp4)(\?|$)/i.test(splik.video_url) && (
+            <source src={splik.video_url} type="video/mp4" />
+          )}
+
+          {/* MOV */}
+          {/\.(mov)(\?|$)/i.test(splik.video_url) && (
+            <source src={splik.video_url} type="video/quicktime" />
+          )}
+
+          {/* Fallback when URL has no extension */}
+          {!/\.(mp4|mov|m3u8)(\?|$)/i.test(splik.video_url) && (
+            <>
+              <source src={splik.video_url} type="video/mp4" />
+              <source src={splik.video_url} type="video/quicktime" />
+            </>
+          )}
+        </video>
+        {/* ====== END of the only change ====== */}
 
         {/* Play/Pause overlay */}
         <div
