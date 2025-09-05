@@ -9,7 +9,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { createHomeFeed, type SplikWithScore } from "@/lib/feed";
+import { createHomeFeed, forceNewRotation, type SplikWithScore } from "@/lib/feed";
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -37,7 +37,7 @@ const Index = () => {
     fetchDynamicFeed();
   }, [user]);
 
-  const fetchDynamicFeed = async (showToast: boolean = false) => {
+  const fetchDynamicFeed = async (showToast: boolean = false, forceNewShuffle: boolean = false) => {
     if (showToast) {
       setRefreshing(true);
     } else {
@@ -45,6 +45,11 @@ const Index = () => {
     }
     
     try {
+      // Force new rotation if requested
+      if (forceNewShuffle) {
+        forceNewRotation();
+      }
+
       // 1. Get all spliks for rotation
       const { data: allSpliks, error: spliksError } = await supabase
         .from('spliks')
@@ -74,7 +79,7 @@ const Index = () => {
       // Don't throw error for boosted content if none exist
       const boostedList = boostedSpliks || [];
 
-      // 3. Apply home feed rotation algorithm
+      // 3. Apply session-based home feed rotation
       const rotatedFeed = createHomeFeed(
         allSpliks as SplikWithScore[] || [],
         boostedList as SplikWithScore[] || [],
@@ -115,8 +120,8 @@ const Index = () => {
       
       if (showToast) {
         toast({
-          title: "Feed refreshed!",
-          description: "Showing you a fresh mix of videos",
+          title: forceNewShuffle ? "Feed reshuffled!" : "Feed refreshed!",
+          description: forceNewShuffle ? "Showing you a completely new mix" : "Updated with latest content",
         });
       }
     } catch (error) {
@@ -133,9 +138,14 @@ const Index = () => {
     }
   };
 
-  // Force refresh feed
+  // Force refresh feed with new shuffle
   const refreshFeed = () => {
-    fetchDynamicFeed(true);
+    fetchDynamicFeed(true, true);
+  };
+
+  // Refresh without new shuffle (just get latest content)
+  const refreshContent = () => {
+    fetchDynamicFeed(true, false);
   };
 
   const handleUploadClick = () => {
@@ -223,9 +233,20 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Header />
 
-      {/* Refresh indicator */}
+      {/* Enhanced refresh controls */}
       <div className="w-full pt-2 pb-2">
-        <div className="container flex justify-center">
+        <div className="container flex justify-center gap-2">
+          <Button 
+            variant="ghost"
+            size="sm"
+            onClick={refreshContent}
+            disabled={refreshing || loading}
+            className="text-xs text-muted-foreground hover:text-primary transition-colors"
+          >
+            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Updating...' : 'Update'}
+          </Button>
+          <div className="h-4 w-px bg-border"></div>
           <Button 
             variant="ghost"
             size="sm"
@@ -234,7 +255,7 @@ const Index = () => {
             className="text-xs text-muted-foreground hover:text-primary transition-colors"
           >
             <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh Feed'}
+            {refreshing ? 'Shuffling...' : 'Shuffle'}
           </Button>
         </div>
       </div>
@@ -252,13 +273,21 @@ const Index = () => {
               <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
               <p className="text-muted-foreground mb-4">Be the first to post a splik!</p>
-              <Button 
-                onClick={refreshFeed}
-                variant="outline"
-                disabled={refreshing}
-              >
-                {refreshing ? 'Loading...' : 'Refresh Feed'}
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                <Button 
+                  onClick={refreshContent}
+                  variant="outline"
+                  disabled={refreshing}
+                >
+                  {refreshing ? 'Loading...' : 'Get Latest'}
+                </Button>
+                <Button 
+                  onClick={refreshFeed}
+                  disabled={refreshing}
+                >
+                  {refreshing ? 'Shuffling...' : 'Shuffle Feed'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ) : (
@@ -266,7 +295,7 @@ const Index = () => {
             {/* Content info */}
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
               <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • Feed rotates every hour
+                Showing {spliks.length} videos • New shuffle on each refresh
               </p>
             </div>
             
@@ -295,20 +324,30 @@ const Index = () => {
                 </div>
               ))}
               
-              {/* Load more section */}
+              {/* Load more section with both options */}
               <div className="text-center py-6 border-t border-border/40">
                 <p className="text-sm text-muted-foreground mb-3">
-                  Want to see more videos?
+                  Want to see more?
                 </p>
-                <Button 
-                  onClick={refreshFeed}
-                  variant="outline"
-                  disabled={refreshing}
-                  className="flex items-center gap-2"
-                >
-                  <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                  {refreshing ? 'Loading...' : 'Refresh for More'}
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                  <Button 
+                    onClick={refreshContent}
+                    variant="outline"
+                    disabled={refreshing}
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    {refreshing ? 'Loading...' : 'Get Latest'}
+                  </Button>
+                  <Button 
+                    onClick={refreshFeed}
+                    disabled={refreshing}
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    {refreshing ? 'Shuffling...' : 'Shuffle Feed'}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -322,7 +361,7 @@ const Index = () => {
           onClose={() => setUploadModalOpen(false)}
           onUploadComplete={() => {
             setUploadModalOpen(false);
-            refreshFeed(); // Refresh to show new video at top
+            refreshContent(); // Refresh to show new video
             toast({
               title: "Upload successful!",
               description: "Your video is now live and appears at the top of feeds",
