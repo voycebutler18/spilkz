@@ -1,4 +1,4 @@
-/* SplikCard.tsx */
+// src/components/SplikCard.tsx
 import { useState, useEffect, useRef } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -95,9 +95,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${splik.id}` },
         (payload) => {
           if (payload.new) {
-            const newData = payload.new as any;
-            setLikesCount(newData.likes_count || 0);
-            setCommentsCount(newData.comments_count || 0);
+            const next = payload.new as any;
+            setLikesCount(next.likes_count || 0);
+            setCommentsCount(next.comments_count || 0);
           }
         }
       )
@@ -128,7 +128,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     } catch (error) {
       setIsLiked(!newLikedState);
       setLikesCount((prev) => (!newLikedState ? prev + 1 : Math.max(0, prev - 1)));
-      console.error("Error toggling like:", error);
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
     }
   };
@@ -157,13 +156,18 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     try {
       if (isFavorited) {
         const { error } = await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-        if (!error) { setIsFavorited(false); toast({ title: "Removed from favorites", description: "Video removed from your favorites" }); }
+        if (!error) {
+          setIsFavorited(false);
+          toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
+        }
       } else {
         const { error } = await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
-        if (!error) { setIsFavorited(true); toast({ title: "Added to favorites!", description: "Video saved to your favorites" }); }
+        if (!error) {
+          setIsFavorited(true);
+          toast({ title: "Added to favorites!", description: "Video saved to your favorites" });
+        }
       }
-    } catch (error) {
-      console.error("Error toggling favorite:", error);
+    } catch {
       toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     }
   };
@@ -221,11 +225,20 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* NOTE: removed the white/cover bar so the video reaches the very top */}
+      {/* 1) Keep a white cover bar to hide stray '0' (stays above video) */}
+      <div className="absolute inset-x-0 top-0 h-5 bg-white z-[50] pointer-events-none" />
+
+      {/* 2) Splikz logo — fully visible (no fade), above the white bar */}
+      <div className="absolute top-2 left-3 z-[60]">
+        <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
+          <Sparkles className="h-4 w-4 text-purple-400" />
+          <span className="text-sm font-bold text-white">Splikz</span>
+        </div>
+      </div>
 
       {/* BOOSTED BADGE */}
       {isBoosted && (
-        <div className="absolute top-3 left-3 z-30">
+        <div className="absolute top-3 right-3 z-[60]">
           <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
             <Rocket className="h-3 w-3 mr-1" />
             Promoted
@@ -233,7 +246,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         </div>
       )}
 
-      {/* VIDEO AREA — rounded top so it visually covers the top edge */}
+      {/* VIDEO AREA */}
       <div
         className="relative bg-black overflow-hidden group rounded-t-xl"
         style={{ height: videoHeight, maxHeight: "80vh" }}
@@ -243,25 +256,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           ref={videoRef}
           src={splik.video_url}
           poster={splik.thumbnail_url}
-          className="block w-full h-full object-cover"  // block removes any inline-gap; fills top edge
+          className="block w-full h-full object-cover"
           loop={false}
           muted={isMuted}
           playsInline
           onTimeUpdate={handleTimeUpdate}
         />
-
-        {/* 📌 Top micro-gradient (barely visible) — still hides any stray characters */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-4 bg-gradient-to-b from-black/30 to-transparent z-20" />
-
-        {/* 🔥 Splikz logo — more visible: pill bg + blur + shadow */}
-        <div className="pointer-events-none absolute top-2 left-3 z-30">
-          <div className="flex items-center gap-1.5 rounded-full px-2.5 py-1 bg-black/55 backdrop-blur-sm">
-            <Sparkles className="h-4 w-4 text-purple-300 drop-shadow" />
-            <span className="text-[13px] font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-300 to-teal-300 drop-shadow">
-              Splikz
-            </span>
-          </div>
-        </div>
 
         {/* Center play/pause icon */}
         <div className="absolute inset-0 flex items-center justify-center">
@@ -291,7 +291,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         </div>
 
         {/* Title & description (gradient only behind text) */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40">
           <div className="bg-gradient-to-t from-black/70 via-black/35 to-transparent px-4 pt-10 pb-3">
             <h3 className="text-white font-semibold text-sm truncate">
               {splik.title || "Untitled"}
@@ -307,7 +307,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           <Button
             size="icon"
             variant="ghost"
-            className="absolute bottom-3 right-3 z-30 text-white hover:bg-white/20"
+            className="absolute bottom-3 right-3 z-[60] text-white hover:bg-white/20"
             onClick={(e) => {
               e.stopPropagation();
               toggleMute();
@@ -398,7 +398,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             variant="ghost"
             size="sm"
             onClick={handleSplik}
-            className={cn("flex items-center space-x-2 transition-colors flex-1", isLiked && "text-red-500 hover:text-red-600")}
+            className={cn(
+              "flex items-center space-x-2 transition-colors flex-1",
+              isLiked && "text-red-500 hover:text-red-600"
+            )}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
             <span className="text-xs font-medium">{formatCount(likesCount)}</span>
@@ -428,7 +431,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             variant="ghost"
             size="sm"
             onClick={toggleFavorite}
-            className={cn("flex items-center space-x-2 transition-colors flex-1", isFavorited && "text-yellow-500 hover:text-yellow-600")}
+            className={cn(
+              "flex items-center space-x-2 transition-colors flex-1",
+              isFavorited && "text-yellow-500 hover:text-yellow-600"
+            )}
           >
             <Bookmark className={cn("h-4 w-4", isFavorited && "fill-current")} />
             <span className="text-xs font-medium">Save</span>
