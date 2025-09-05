@@ -100,18 +100,51 @@ export default function MessagesInbox() {
     
     setIsDeleting(true);
     try {
-      const { error } = await supabase
+      // Delete messages where I'm the sender and they're the recipient
+      const { error: error1 } = await supabase
         .from("messages")
         .delete()
-        .or(`and(sender_id.eq.${me},recipient_id.eq.${otherId}),and(sender_id.eq.${otherId},recipient_id.eq.${me})`);
+        .eq("sender_id", me)
+        .eq("recipient_id", otherId);
       
-      if (error) throw error;
+      if (error1) throw error1;
+      
+      // Delete messages where they're the sender and I'm the recipient  
+      const { error: error2 } = await supabase
+        .from("messages")
+        .delete()
+        .eq("sender_id", otherId)
+        .eq("recipient_id", me);
+      
+      if (error2) throw error2;
       
       toast.success("Conversation deleted successfully");
-      await loadConversations(); // Refresh the list
+      
+      // Remove the conversation from local state immediately
+      setRows(prevRows => prevRows.filter(r => {
+        const otherUserId = r.sender_id === me ? r.recipient_id : r.sender_id;
+        return otherUserId !== otherId;
+      }));
+      
+      // Remove from profiles
+      setProfiles(prev => {
+        const newProfiles = { ...prev };
+        delete newProfiles[otherId];
+        return newProfiles;
+      });
+      
+      // Remove from unread
+      setUnreadIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(otherId);
+        return newSet;
+      });
+      
     } catch (error) {
       console.error("Error deleting conversation:", error);
       toast.error("Failed to delete conversation");
+      // Refresh the list in case of error to get correct state
+      await loadConversations();
     } finally {
       setIsDeleting(false);
       setDeleteDialogOpen(false);
