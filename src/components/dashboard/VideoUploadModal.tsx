@@ -35,6 +35,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number>();
@@ -43,7 +44,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi";
   const maxFileSize = 500 * 1024 * 1024; // 500MB
 
-  // --- helper: infer MIME type if browser didn't set File.type ---
+  // Enhanced MIME type inference with better MOV support
   const inferMimeFromName = (name: string): string => {
     const ext = name.split(".").pop()?.toLowerCase();
     switch (ext) {
@@ -87,6 +88,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
+    // Reset previous error state
+    setVideoError(null);
+
     // Validate file type
     const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
     const validTypes = ['video/mp4', 'video/quicktime', 'video/x-flv', 'video/webm', 'video/x-msvideo'];
@@ -120,13 +124,31 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const url = URL.createObjectURL(selectedFile);
       setVideoPreview(url);
       
-      // Load video to get duration
+      // Load video to get duration with better error handling
       const video = document.createElement('video');
       video.src = url;
+      video.preload = 'metadata';
+      
+      // For MOV files, try to set additional attributes
+      if (fileType === 'video/quicktime') {
+        video.setAttribute('type', 'video/quicktime');
+      }
       
       await new Promise((resolve, reject) => {
+        let resolved = false;
+        
         video.onloadedmetadata = () => {
+          if (resolved) return;
+          resolved = true;
+          
           const duration = video.duration;
+          
+          // Check for valid duration
+          if (isNaN(duration) || duration <= 0) {
+            reject(new Error("Invalid video duration"));
+            return;
+          }
+          
           setOriginalDuration(duration);
           
           // Show trimmer if video is longer than 3 seconds
@@ -146,20 +168,32 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           resolve(null);
         };
         
-        video.onerror = () => {
-          reject(new Error("Failed to load video"));
+        video.onerror = (e) => {
+          if (resolved) return;
+          resolved = true;
+          console.error("Video loading error:", e);
+          reject(new Error(`Failed to load video. This ${fileType} file may not be supported by your browser.`));
         };
+
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            reject(new Error("Video loading timeout"));
+          }
+        }, 10000);
       });
       
       // Extract title from filename
       const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
       setTitle(fileName);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error processing video:', error);
+      setVideoError(error.message);
       toast({
         title: "Error processing video",
-        description: "Failed to process your video. Please try again.",
+        description: error.message || "Failed to process your video. Please try again.",
         variant: "destructive",
       });
       setFile(null);
@@ -169,31 +203,51 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   }, [toast]);
 
-  // Setup video element when preview is ready
+  // Setup video element when preview is ready with better error handling
   useEffect(() => {
     if (!videoRef.current || !videoPreview) return;
 
     const video = videoRef.current;
     
     const handleLoadedMetadata = () => {
-      console.log("Video metadata loaded");
+      console.log("Video metadata loaded for preview");
       video.currentTime = trimRange[0];
       setVideoReady(true);
+      setVideoError(null);
+    };
+    
+    const handleCanPlay = () => {
+      console.log("Video can play");
+      setVideoReady(true);
+      setVideoError(null);
     };
     
     const handleError = (e: Event) => {
-      console.error("Video error:", e);
+      console.error("Video preview error:", e);
+      const errorMsg = file?.type === 'video/quicktime' 
+        ? "MOV file playback issue. The file may use unsupported codecs."
+        : "Video playback error. Please try a different file.";
+      setVideoError(errorMsg);
       setVideoReady(false);
+    };
+
+    const handleLoadStart = () => {
+      console.log("Video load started");
+      setVideoError(null);
     };
     
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('canplay', handleCanPlay);
     video.addEventListener('error', handleError);
+    video.addEventListener('loadstart', handleLoadStart);
     
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('canplay', handleCanPlay);
       video.removeEventListener('error', handleError);
+      video.removeEventListener('loadstart', handleLoadStart);
     };
-  }, [videoPreview, trimRange]);
+  }, [videoPreview, trimRange, file?.type]);
 
   // Handle playback loop within trim range
   useEffect(() => {
@@ -241,7 +295,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         setIsMuted(true);
         videoRef.current!.play().then(() => {
           setIsPlaying(true);
-        }).catch(console.error);
+        }).catch((playErr) => {
+          console.error("Muted playback also failed:", playErr);
+          setVideoError("Playback failed. This video format may not be supported.");
+        });
       });
     }
   };
@@ -345,6 +402,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setCurrentTime(0);
       setIsPlaying(false);
       setVideoReady(false);
+      setVideoError(null);
       
       onUploadComplete();
       onClose();
@@ -434,12 +492,22 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Video Error Alert */}
+              {videoError && (
+                <Alert className="border-red-500/20 bg-red-500/5">
+                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <AlertDescription className="text-sm">
+                    <strong>Playback Error:</strong> {videoError}
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* Instagram-style vertical video preview */}
               <div className="flex justify-center">
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: '360px', maxWidth: '100%' }}>
                   {/* 9:16 aspect ratio container for Instagram-style */}
                   <div className="relative" style={{ paddingBottom: '177.78%' }}>
-                    {/* ---------- ONLY CHANGED BLOCK: add <source> with MIME type ---------- */}
+                    {/* Enhanced video element with better codec support */}
                     <video
                       key={videoPreview || "preview"}
                       ref={videoRef}
@@ -447,38 +515,52 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       loop={false}
                       muted={isMuted}
                       playsInline
-                      preload="auto"
+                      preload="metadata"
                       controls={false}
-                      onError={(e) => {
-                        console.warn("Preview failed to play:", file?.type, file?.name);
-                      }}
+                      crossOrigin="anonymous"
                     >
-                      {/* try exact MIME the File reports or inferred */}
                       {videoPreview && file && (
-                        <source
-                          src={videoPreview}
-                          type={file.type || inferMimeFromName(file.name)}
-                        />
-                      )}
-                      {/* extra fallback if extension is ambiguous */}
-                      {videoPreview && (
                         <>
-                          <source src={videoPreview} type="video/mp4" />
-                          <source src={videoPreview} type="video/quicktime" />
+                          {/* Primary source with exact MIME type */}
+                          <source
+                            src={videoPreview}
+                            type={file.type || inferMimeFromName(file.name)}
+                          />
+                          {/* Fallback sources for better compatibility */}
+                          {file.name.toLowerCase().endsWith('.mov') && (
+                            <>
+                              <source src={videoPreview} type="video/quicktime" />
+                              <source src={videoPreview} type="video/mp4" />
+                            </>
+                          )}
+                          {file.name.toLowerCase().endsWith('.mp4') && (
+                            <source src={videoPreview} type="video/mp4" />
+                          )}
                         </>
                       )}
+                      Your browser does not support the video tag or this video format.
                     </video>
-                    {/* -------------------------------------------------------------------- */}
                     
                     {/* Loading overlay if video not ready */}
-                    {!videoReady && (
+                    {!videoReady && !videoError && (
                       <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
                         <Loader2 className="h-8 w-8 animate-spin text-white" />
                       </div>
                     )}
+
+                    {/* Error overlay */}
+                    {videoError && (
+                      <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4">
+                        <div className="text-center text-white">
+                          <AlertCircle className="h-12 w-12 mx-auto mb-2 text-red-400" />
+                          <p className="text-sm">Preview unavailable</p>
+                          <p className="text-xs text-gray-400 mt-1">Video can still be uploaded</p>
+                        </div>
+                      </div>
+                    )}
                     
                     {/* Video controls overlay */}
-                    {videoReady && (
+                    {videoReady && !videoError && (
                       <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40">
                         {/* Play/Pause button */}
                         <button
@@ -530,12 +612,17 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               </div>
 
-              {/* Format warning for non-MP4 files */}
+              {/* Format warning for non-MP4 files with better messaging */}
               {file && file.type !== 'video/mp4' && (
                 <Alert className="border-orange-500/20 bg-orange-500/5">
                   <AlertCircle className="h-4 w-4 text-orange-500" />
                   <AlertDescription className="text-sm">
-                    <strong>Format Notice:</strong> {file.type === 'video/quicktime' ? 'MOV' : file.type.split('/')[1].toUpperCase()} files may have playback issues. For best compatibility, use MP4 format.
+                    <strong>Format Notice:</strong> 
+                    {file.type === 'video/quicktime' ? (
+                      <> MOV files may have playback issues in browsers but will upload successfully. Consider converting to MP4 for better compatibility.</>
+                    ) : (
+                      <> {file.type.split('/')[1].toUpperCase()} files may have playback issues. For best compatibility, use MP4 format.</>
+                    )}
                   </AlertDescription>
                 </Alert>
               )}
@@ -669,6 +756,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     setDescription("");
                     setIsPlaying(false);
                     setVideoReady(false);
+                    setVideoError(null);
                   }}
                   disabled={uploading}
                 >
@@ -677,7 +765,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Button>
                 <Button
                   onClick={handleUpload}
-                  disabled={uploading || !title || !videoReady}
+                  disabled={uploading || !title || (!videoReady && !videoError)}
                 >
                   {uploading ? (
                     <>
