@@ -2,7 +2,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
 import Index from "./pages/Index";
 import About from "./pages/About";
 import Explore from "./pages/Explore";
@@ -27,9 +28,11 @@ import Contact from "./pages/support/Contact";
 import ForBrands from "./pages/business/ForBrands";
 import ForCreators from "./pages/business/ForCreators";
 import Press from "./pages/business/Press";
-import Prompts from "./pages/Prompts";
 
-// ADDED: messaging pages
+// NEW: Food page
+import Food from "./pages/Food";
+
+// Messaging pages
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
 
@@ -45,16 +48,25 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/about" element={<About />} />
           <Route path="/explore" element={<Explore />} />
-          <Route path="/prompts" element={<Prompts />} />
+
+          {/* Prompts removed. If someone hits it, redirect to /food */}
+          <Route path="/prompts" element={<Navigate to="/food" replace />} />
+
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+
           <Route path="/dashboard" element={<CreatorDashboard />} />
           <Route path="/dashboard/favorites" element={<Favorites />} />
+
           <Route path="/profile/:id" element={<Profile />} />
           <Route path="/creator/:username" element={<CreatorProfile />} />
           <Route path="/video/:id" element={<VideoPage />} />
+
+          {/* NEW: Food route */}
+          <Route path="/food" element={<Food />} />
+
           <Route path="/terms" element={<Terms />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/dmca" element={<DMCA />} />
@@ -67,7 +79,7 @@ const App = () => (
           <Route path="/creators" element={<ForCreators />} />
           <Route path="/press" element={<Press />} />
 
-          {/* ADDED: messaging routes */}
+          {/* Messaging routes */}
           <Route path="/messages" element={<MessagesInbox />} />
           <Route path="/messages/:otherId" element={<MessageThread />} />
 
