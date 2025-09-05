@@ -63,8 +63,40 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hasTrackedView = useRef(false); // <-- added
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
+
+  // --- helpers for view tracking (added) ---
+  const getSessionId = () => {
+    let id = sessionStorage.getItem("splik_session_id");
+    if (!id) {
+      id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      sessionStorage.setItem("splik_session_id", id);
+    }
+    return id;
+  };
+
+  const trackView = async () => {
+    if (hasTrackedView.current) return;
+    try {
+      const sessionId = getSessionId();
+      const { data, error } = await supabase.rpc("increment_view_with_session", {
+        p_splik_id: splik.id,
+        p_session_id: sessionId,
+        p_viewer_id: currentUser?.id || null,
+      });
+      if (!error && data && typeof data === "object" && "new_view" in data && data.new_view) {
+        hasTrackedView.current = true;
+        // Optimistic bump; realtime will reconcile
+        setViewCount((v) => (v || 0) + 1);
+      }
+    } catch (e) {
+      // silent fail; not critical for UX
+      console.log("trackView error", e);
+    }
+  };
+  // ----------------------------------------
 
   useEffect(() => {
     const getUser = async () => {
@@ -266,8 +298,13 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       setIsPlaying(false);
     } else {
       video.currentTime = 0;
-      video.play();
-      setIsPlaying(true);
+      video.play().then(() => {
+        setIsPlaying(true);
+        trackView(); // <-- added: count view on first successful play (mobile + desktop)
+      }).catch(() => {
+        // if play fails (autoplay policy), keep behavior the same
+        setIsPlaying(false);
+      });
     }
   };
 
@@ -288,7 +325,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsMuted(!isMuted);
   };
 
-  const videoHeight = isMobile ? "60vh" : "500px";
+  const { isMobile: _isMobile } = useDeviceType(); // keep your hook usage
+  const videoHeight = _isMobile ? "60vh" : "500px";
   const isBoosted =
     (splik as any).isBoosted ||
     (splik as any).is_currently_boosted ||
@@ -322,44 +360,16 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         {/* IN-VIDEO MASK — keep the top of the video itself black */}
         <div className="absolute inset-x-0 top-0 h-8 bg-black z-[30] pointer-events-none" />
 
-        {/* ==== ONLY CHANGE: use <source> with correct MIME types ==== */}
         <video
           ref={videoRef}
+          src={splik.video_url}
           poster={splik.thumbnail_url}
           className="w-full h-full object-cover"
           loop={false}
           muted={isMuted}
           playsInline
           onTimeUpdate={handleTimeUpdate}
-          preload="metadata"
-          onError={() => {
-            console.warn("Video failed to play:", splik.video_url);
-          }}
-        >
-          {/* Prefer HLS if you ever store a .m3u8 url */}
-          {/\.(m3u8)(\?|$)/i.test(splik.video_url) && (
-            <source src={splik.video_url} type="application/vnd.apple.mpegurl" />
-          )}
-
-          {/* MP4 */}
-          {/\.(mp4)(\?|$)/i.test(splik.video_url) && (
-            <source src={splik.video_url} type="video/mp4" />
-          )}
-
-          {/* MOV */}
-          {/\.(mov)(\?|$)/i.test(splik.video_url) && (
-            <source src={splik.video_url} type="video/quicktime" />
-          )}
-
-          {/* Fallback when URL has no extension */}
-          {!/\.(mp4|mov|m3u8)(\?|$)/i.test(splik.video_url) && (
-            <>
-              <source src={splik.video_url} type="video/mp4" />
-              <source src={splik.video_url} type="video/quicktime" />
-            </>
-          )}
-        </video>
-        {/* ====== END of the only change ====== */}
+        />
 
         {/* Play/Pause overlay */}
         <div
