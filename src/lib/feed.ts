@@ -1,166 +1,209 @@
-// src/lib/feed.ts
-import { supabase } from "@/integrations/supabase/client";
+// lib/feed.ts - Enhanced with dynamic rotation utilities
 
-/**
- * Simple deterministic shuffle so a user's order stays stable
- * until they refresh (we seed with a value stored in sessionStorage).
- */
-function seedRandom(seed: number) {
-  return () => {
-    // Mulberry32
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
+export interface RotationOptions {
+  userId?: string | null;
+  category?: string | null;
+  feedType?: 'home' | 'discovery' | 'nearby';
+  maxResults?: number;
 }
 
-export function shuffleDeterministic<T>(arr: T[], seed: number): T[] {
-  const rand = seedRandom(seed);
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-type FeedOptions = {
-  limit?: number;          // total items to return
-  category?: "food" | null;
-  forDiscover?: boolean;   // true = discovery weighting (slightly more trending)
-};
-
-type ProfileLite = {
-  username: string | null;
-  display_name: string | null;
-  avatar_url: string | null;
-};
-
-type Splik = {
+export interface SplikWithScore extends Record<string, any> {
   id: string;
-  user_id: string;
-  title?: string | null;
-  description?: string | null;
-  video_url: string;
-  thumbnail_url?: string | null;
   created_at: string;
-  views?: number | null;
-  likes_count?: number | null;
-  comments_count?: number | null;
-  is_food?: boolean | null;
-  profiles?: ProfileLite;
-};
-
-const DEFAULT_LIMIT = 24;
+  likes_count?: number;
+  comments_count?: number;
+  boost_score?: number;
+  tag?: string;
+  user_id: string;
+  rotationScore?: number;
+  discoveryScore?: number;
+}
 
 /**
- * Returns a blended, reshuffled feed:
- * - Recent window (last 48h) boosted
- * - Plus a trending window (last 7d)
- * - Deterministic shuffle per refresh using a session seed
- * - Optional category filter (e.g., food)
+ * Hash a string to create a consistent numeric seed
  */
-export async function fetchBlendedFeed(opts: FeedOptions = {}): Promise<Splik[]> {
-  const {
-    limit = DEFAULT_LIMIT,
-    category = null,
-    forDiscover = false,
-  } = opts;
-
-  // keep the same ordering until the user refreshes the page
-  const seedKey = forDiscover ? "__feed_seed_discover" : "__feed_seed_home";
-  let seed = Number(sessionStorage.getItem(seedKey));
-  if (!seed || Number.isNaN(seed)) {
-    seed = Math.floor(Math.random() * 1_000_000_000);
-    sessionStorage.setItem(seedKey, String(seed));
+export const hashString = (str: string): number => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
   }
+  return Math.abs(hash);
+};
 
-  // Time windows
+/**
+ * Generate seeded random number for consistent rotation
+ */
+export const seededRandom = (seed: number): number => {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+};
+
+/**
+ * Create time-based seed that changes at different intervals
+ */
+export const createTimeSeed = (interval: 'hour' | 'halfHour' | 'day' | 'week' = 'hour'): number => {
   const now = new Date();
-  const recentCutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString(); // 48h
-  const trendingCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(); // 7d
+  const currentHour = now.getHours();
+  const currentDay = now.getDate();
+  const currentMonth = now.getMonth();
+  const currentWeek = Math.floor(now.getDate() / 7);
 
-  // Filters
-  const foodFilter = category === "food" ? { is_food: true as const } : {};
-  const recentLimit = Math.ceil(limit * (forDiscover ? 0.55 : 0.7));   // Discover: 55% recent, Home: 70% recent
-  const trendingLimit = limit * 2; // overfetch, we’ll blend & cut
-
-  // --- 1) Recent (boost freshness), newest first
-  const recentQuery = supabase
-    .from("spliks")
-    .select("*")
-    .gte("created_at", recentCutoff)
-    .match(foodFilter)
-    .order("created_at", { ascending: false })
-    .limit(recentLimit);
-
-  const { data: recentRaw, error: recentErr } = await recentQuery;
-  if (recentErr) {
-    console.error("Recent query error:", recentErr);
+  switch (interval) {
+    case 'halfHour':
+      const currentHalfHour = Math.floor(now.getMinutes() / 30);
+      return currentHalfHour + (currentHour * 2) + (currentDay * 48);
+    
+    case 'day':
+      return currentDay + (currentMonth * 31);
+    
+    case 'week':
+      return currentWeek + (currentMonth * 4);
+    
+    case 'hour':
+    default:
+      return currentHour + (currentDay * 24);
   }
+};
 
-  // --- 2) Trending (last 7d), sort by a simple engagement score
-  const trendingQuery = supabase
-    .from("spliks")
-    .select("*")
-    .gte("created_at", trendingCutoff)
-    .match(foodFilter)
-    .order("created_at", { ascending: false }) // temp order; we’ll score & reorder in JS
-    .limit(trendingLimit);
+/**
+ * Apply rotation algorithm optimized for home feed
+ */
+export const applyHomeFeedRotation = (
+  spliks: SplikWithScore[], 
+  options: RotationOptions = {}
+): SplikWithScore[] => {
+  const { userId, maxResults = 40 } = options;
+  
+  if (!spliks.length) return [];
 
-  const { data: trendingRaw, error: trendingErr } = await trendingQuery;
-  if (trendingErr) {
-    console.error("Trending query error:", trendingErr);
-  }
+  const userSeed = userId ? hashString(userId) : 0;
+  const timeSeed = createTimeSeed('hour');
+  const combinedSeed = userSeed + timeSeed;
 
-  const recent = (recentRaw || []) as Splik[];
-  const trendingScored = (trendingRaw || []).map((s) => {
-    const views = s.views || 0;
-    const likes = s.likes_count || 0;
-    const comments = s.comments_count || 0;
-    // quick score: likes double-weighted, light view weight
-    const score = likes * 2 + comments * 1 + Math.min(views / 20, 15);
-    return { ...s, __score: score } as Splik & { __score: number };
+  const weightedSpliks = spliks.map((splik, index) => {
+    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
+    
+    const recencyScore = Math.max(0, 100 - ageInHours);
+    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 2;
+    const randomFactor = seededRandom(combinedSeed + index) * 60;
+    const boostFactor = splik.boost_score || 0;
+    
+    return {
+      ...splik,
+      rotationScore: recencyScore + engagementScore + randomFactor + boostFactor
+    };
   });
 
-  // sort trending by score desc, take a chunk
-  const trendingTop = trendingScored
-    .sort((a, b) => b.__score - a.__score)
-    .slice(0, Math.ceil(limit * (forDiscover ? 0.45 : 0.3))); // Discover: 45% trending, Home: 30%
+  return weightedSpliks
+    .sort((a, b) => b.rotationScore! - a.rotationScore!)
+    .slice(0, maxResults);
+};
 
-  // merge unique by id
-  const mergedMap = new Map<string, Splik>();
-  for (const s of recent) mergedMap.set(s.id, s);
-  for (const s of trendingTop) if (!mergedMap.has(s.id)) mergedMap.set(s.id, s);
+/**
+ * Apply rotation algorithm optimized for discovery feed
+ */
+export const applyDiscoveryFeedRotation = (
+  spliks: SplikWithScore[], 
+  options: RotationOptions = {}
+): SplikWithScore[] => {
+  const { userId, category, maxResults = 50 } = options;
+  
+  if (!spliks.length) return [];
 
-  // deterministic shuffle so order is stable for this session (until refresh)
-  const shuffled = shuffleDeterministic(Array.from(mergedMap.values()), seed).slice(0, limit);
+  const userSeed = userId ? hashString(userId) : 0;
+  const categorySeed = category ? hashString(category) : 0;
+  const timeSeed = createTimeSeed('halfHour');
+  const combinedSeed = userSeed + categorySeed + timeSeed;
 
-  // attach light profile to each splik for your VideoGrid
-  if (shuffled.length) {
-    const userIds = [...new Set(shuffled.map((s) => s.user_id))];
-    const { data: profiles, error: pErr } = await supabase
-      .from("profiles")
-      .select("id,username,display_name,avatar_url")
-      .in("id", userIds);
+  const weightedSpliks = spliks.map((splik, index) => {
+    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
+    
+    const diversityScore = seededRandom(combinedSeed + index + hashString(splik.id)) * 80;
+    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 1.5;
+    const recencyBonus = ageInHours < 24 ? 20 : ageInHours < 168 ? 10 : 0;
+    const categoryMatch = category && splik.tag?.toLowerCase().includes(category) ? 30 : 0;
+    
+    return {
+      ...splik,
+      discoveryScore: diversityScore + engagementScore + recencyBonus + categoryMatch
+    };
+  });
 
-    const map = new Map<string, ProfileLite>();
-    if (!pErr) {
-      (profiles || []).forEach((p: any) => {
-        map.set(p.id, {
-          username: p.username ?? null,
-          display_name: p.display_name ?? null,
-          avatar_url: p.avatar_url ?? null,
-        });
+  return weightedSpliks
+    .sort((a, b) => b.discoveryScore! - a.discoveryScore!)
+    .slice(0, maxResults);
+};
+
+/**
+ * Separate fresh content from older content
+ */
+export const separateFreshContent = (
+  spliks: SplikWithScore[], 
+  freshHours: number = 3
+): { fresh: SplikWithScore[], older: SplikWithScore[] } => {
+  const cutoffTime = new Date(Date.now() - freshHours * 60 * 60 * 1000).toISOString();
+  
+  const fresh = spliks
+    .filter(s => s.created_at >= cutoffTime)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  
+  const older = spliks
+    .filter(s => s.created_at < cutoffTime);
+  
+  return { fresh, older };
+};
+
+/**
+ * Mix boosted content into regular feed
+ */
+export const mixBoostedContent = (
+  regularContent: SplikWithScore[],
+  boostedContent: SplikWithScore[],
+  interval: number = 4
+): SplikWithScore[] => {
+  const finalFeed: SplikWithScore[] = [];
+  let boostedIndex = 0;
+
+  regularContent.forEach((splik, index) => {
+    finalFeed.push(splik);
+    
+    if ((index + 1) % interval === 0 && boostedIndex < boostedContent.length) {
+      finalFeed.push({
+        ...boostedContent[boostedIndex],
+        isBoosted: true
       });
+      boostedIndex++;
     }
+  });
 
-    return shuffled.map((s) => ({
-      ...s,
-      profiles: map.get(s.user_id) || undefined,
-    }));
-  }
+  return finalFeed;
+};
 
-  return shuffled;
-}
+/**
+ * Create complete home feed with rotation logic
+ */
+export const createHomeFeed = (
+  allSpliks: SplikWithScore[],
+  boostedSpliks: SplikWithScore[],
+  options: RotationOptions = {}
+): SplikWithScore[] => {
+  const { fresh, older } = separateFreshContent(allSpliks);
+  
+  const rotatedOlder = applyHomeFeedRotation(older, options);
+  const markedFresh = fresh.map(splik => ({ ...splik, isFresh: true }));
+  const mixedContent = mixBoostedContent(rotatedOlder, boostedSpliks);
+  
+  return [...markedFresh, ...mixedContent];
+};
+
+/**
+ * Create complete discovery feed with rotation logic
+ */
+export const createDiscoveryFeed = (
+  allSpliks: SplikWithScore[],
+  options: RotationOptions = {}
+): SplikWithScore[] => {
+  return applyDiscoveryFeedRotation(allSpliks, options);
+};
