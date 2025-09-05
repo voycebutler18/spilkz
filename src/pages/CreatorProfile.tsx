@@ -56,14 +56,21 @@ export function CreatorProfile() {
   // Resolve the slug to a profile (username first, then id). Canonicalize to /creator/:username.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    const run = async () => {
+      // If the router hasn't provided the param yet, don't do anything.
+      if (!slug || !slug.trim()) {
+        setLoading(false);
+        setProfile(null);
+        setSpliks([]);
+        return;
+      }
+
       setLoading(true);
       setProfile(null);
       setSpliks([]);
 
       try {
-        if (!slug) throw new Error("Missing slug");
-
         // 1) try username
         let { data, error } = await supabase
           .from("profiles")
@@ -90,7 +97,6 @@ export function CreatorProfile() {
         if (!data || error) {
           if (!cancelled) {
             setProfile(null);
-            setLoading(false);
           }
           return;
         }
@@ -98,14 +104,16 @@ export function CreatorProfile() {
         if (cancelled) return;
 
         setProfile(data);
-        await fetchSpliks(data.id);
+        await fetchSpliks(data.id, cancelled);
       } catch (e) {
         console.error("Error resolving profile:", e);
         if (!cancelled) toast.error("Failed to load profile");
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    };
+
+    run();
 
     return () => {
       cancelled = true;
@@ -117,7 +125,9 @@ export function CreatorProfile() {
   useEffect(() => {
     // clean previous subscription
     if (unsubRef.current) {
-      try { unsubRef.current(); } catch {}
+      try {
+        unsubRef.current();
+      } catch {}
       unsubRef.current = null;
     }
     if (!profile?.id) return;
@@ -147,7 +157,11 @@ export function CreatorProfile() {
 
     return () => {
       if (unsubRef.current) {
-        try { unsubRef.current(); } finally { unsubRef.current = null; }
+        try {
+          unsubRef.current();
+        } finally {
+          unsubRef.current = null;
+        }
       }
     };
   }, [profile?.id]);
@@ -159,11 +173,11 @@ export function CreatorProfile() {
       .eq("id", profileId)
       .maybeSingle();
     if (data) {
-      setProfile((prev) => (prev ? { ...prev, ...data } as Profile : prev));
+      setProfile((prev) => (prev ? ({ ...prev, ...data } as Profile) : prev));
     }
   };
 
-  const fetchSpliks = async (userId: string) => {
+  const fetchSpliks = async (userId: string, cancelled?: boolean) => {
     try {
       const { data, error } = await supabase
         .from("spliks")
@@ -172,6 +186,7 @@ export function CreatorProfile() {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
+      if (cancelled) return;
 
       const spliksWithProfiles = await Promise.all(
         (data || []).map(async (s) => {
@@ -184,7 +199,7 @@ export function CreatorProfile() {
         })
       );
 
-      setSpliks(spliksWithProfiles);
+      if (!cancelled) setSpliks(spliksWithProfiles);
     } catch (e) {
       console.error("Error fetching videos:", e);
       toast.error("Failed to load videos");
