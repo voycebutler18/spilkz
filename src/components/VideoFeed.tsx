@@ -102,7 +102,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     load();
   }, [user?.id]);
 
-  /* ========== ENHANCED AUTOPLAY MANAGER ========== */
+  /* ========== ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES ========== */
   /**
    * **Autoplay**: The most-visible video plays automatically; others pause. 
    * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
@@ -120,6 +120,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const sectionVisibility: Record<number, number> = {};
     let currentPlayingIndex: number | null = null;
     let isProcessing = false;
+
+    // Mobile video setup helper
+    const setupVideoForMobile = (video: HTMLVideoElement) => {
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute('webkit-playsinline', 'true');
+      video.preload = 'metadata';
+      video.load(); // Force load to show first frame
+    };
 
     const findMostVisibleSection = (): number | null => {
       const visibilityEntries = Object.entries(sectionVisibility);
@@ -163,9 +172,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           
           const targetVideo = videoRefs.current[targetIndex];
           if (targetVideo) {
-            // Configure video for autoplay
+            // Configure video for mobile autoplay
+            setupVideoForMobile(targetVideo);
             targetVideo.muted = muted[targetIndex] ?? true;
-            targetVideo.playsInline = true;
+
+            // Mobile fix: ensure video has loaded enough data to display
+            if (targetVideo.readyState < 2) { // HAVE_CURRENT_DATA
+              targetVideo.load();
+              // Small delay to let load complete
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            // Force load first frame on mobile if needed
+            if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
+              targetVideo.currentTime = 0.1;
+            }
 
             // Handle trim_start for 3s loop
             const startAt = Number(spliks[targetIndex]?.trim_start ?? 0);
@@ -190,7 +211,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               currentPlayingIndex = targetIndex;
               setActiveIndex(targetIndex);
             } catch (playError) {
-              // If autoplay blocked, try with muted
+              console.log("Autoplay prevented, trying muted:", playError);
+              // If autoplay blocked, ensure muted and try again
               if (!targetVideo.muted) {
                 targetVideo.muted = true;
                 setMuted((prev) => ({ ...prev, [targetIndex]: true }));
@@ -199,7 +221,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   currentPlayingIndex = targetIndex;
                   setActiveIndex(targetIndex);
                 } catch (mutedError) {
-                  console.log("Video autoplay blocked:", mutedError);
+                  console.log("Video autoplay blocked even when muted:", mutedError);
+                  // Fallback: at least show the first frame
+                  if (targetVideo.currentTime === 0) {
+                    targetVideo.currentTime = 0.1;
+                  }
+                }
+              } else {
+                // Video is already muted but still failed - show first frame
+                if (targetVideo.currentTime === 0) {
+                  targetVideo.currentTime = 0.1;
                 }
               }
             }
@@ -233,19 +264,43 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       { 
         root, 
         threshold: thresholds,
-        rootMargin: "0px"
+        rootMargin: "10px" // Better mobile performance
       }
     );
 
-    // Observe all sections
+    // Initialize all videos for mobile when they're added to DOM
+    const initializeVideos = () => {
+      videoRefs.current.forEach((video) => {
+        if (video && !video.hasAttribute('data-mobile-initialized')) {
+          setupVideoForMobile(video);
+          video.setAttribute('data-mobile-initialized', 'true');
+        }
+      });
+    };
+
+    // Observe all sections and initialize videos
     const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
     sections.forEach((section) => {
       intersectionObserver.observe(section);
     });
 
+    // Initialize videos after a short delay to ensure DOM is ready
+    setTimeout(initializeVideos, 100);
+
+    // Watch for new videos being added
+    const mutationObserver = new MutationObserver(() => {
+      setTimeout(initializeVideos, 100);
+    });
+
+    mutationObserver.observe(root, {
+      childList: true,
+      subtree: true
+    });
+
     // Cleanup function
     return () => {
       intersectionObserver.disconnect();
+      mutationObserver.disconnect();
       // Pause all videos
       videoRefs.current.forEach((video) => {
         if (video && !video.paused) {
@@ -394,7 +449,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   className="w-full h-full object-cover"
                   playsInline
                   muted={muted[i] ?? true}
+                  webkit-playsinline="true"
+                  preload="metadata"
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
+                  onLoadedData={() => {
+                    // Ensure first frame is visible on load
+                    const video = videoRefs.current[i];
+                    if (video && video.currentTime === 0) {
+                      video.currentTime = 0.1;
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover'
+                  }}
                 />
 
                 {/* play hint when paused (if ever) */}
