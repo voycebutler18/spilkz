@@ -5,62 +5,18 @@ import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Play } from "lucide-react";
-
-// Helper functions for dynamic feed rotation
-const hashString = (str: string): number => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash);
-};
-
-const seededRandom = (seed: number): number => {
-  const x = Math.sin(seed) * 10000;
-  return x - Math.floor(x);
-};
-
-const applyRotationAlgorithm = (spliks: any[], userId: string | null = null) => {
-  if (!spliks.length) return [];
-
-  // Create a seed that changes every hour + includes user ID for personalization
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentDay = now.getDate();
-  const userSeed = userId ? hashString(userId) : 0;
-  const timeSeed = currentHour + (currentDay * 24);
-  const combinedSeed = userSeed + timeSeed;
-
-  // Apply weighted shuffle based on engagement, recency, and randomization
-  const weightedSpliks = spliks.map((splik, index) => {
-    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
-    const recencyScore = Math.max(0, 100 - ageInHours); // Newer content scores higher
-    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 2;
-    const randomFactor = seededRandom(combinedSeed + index) * 60; // Random boost
-    const boostFactor = splik.boost_score || 0;
-    
-    return {
-      ...splik,
-      rotationScore: recencyScore + engagementScore + randomFactor + boostFactor
-    };
-  });
-
-  // Sort by rotation score and shuffle within score ranges
-  return weightedSpliks
-    .sort((a, b) => b.rotationScore - a.rotationScore)
-    .slice(0, 40); // Limit for performance
-};
+import { Button } from "@/components/ui/button";
+import { createHomeFeed, type SplikWithScore } from "@/lib/feed";
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -79,31 +35,26 @@ const Index = () => {
 
   useEffect(() => {
     fetchDynamicFeed();
-  }, [user]); // Refetch when user changes
+  }, [user]);
 
-  const fetchDynamicFeed = async () => {
-    setLoading(true);
+  const fetchDynamicFeed = async (showToast: boolean = false) => {
+    if (showToast) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    
     try {
-      // 1. Get fresh content (posted in last 3 hours) - always at top
-      const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-      const { data: freshSpliks, error: freshError } = await supabase
+      // 1. Get all spliks for rotation
+      const { data: allSpliks, error: spliksError } = await supabase
         .from('spliks')
         .select('*')
-        .gte('created_at', threeHoursAgo)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(150); // Get more content for better rotation
 
-      if (freshError && freshError.code !== 'PGRST116') throw freshError;
+      if (spliksError) throw spliksError;
 
-      // 2. Get older content for rotation
-      const { data: olderSpliks, error: olderError } = await supabase
-        .from('spliks')
-        .select('*')
-        .lt('created_at', threeHoursAgo)
-        .limit(100); // Get more content for better rotation
-
-      if (olderError && olderError.code !== 'PGRST116') throw olderError;
-
-      // 3. Get boosted content
+      // 2. Get boosted content
       const { data: boostedSpliks, error: boostedError } = await supabase
         .from('spliks')
         .select(`
@@ -121,48 +72,32 @@ const Index = () => {
         .limit(15);
 
       // Don't throw error for boosted content if none exist
-
-      // 4. Apply rotation algorithm to older content
-      const allOlderContent = [...(olderSpliks || [])];
-      const rotatedContent = applyRotationAlgorithm(allOlderContent, user?.id);
-
-      // 5. Combine content: Fresh at top, then rotated content with boosted mixed in
-      const finalFeed: any[] = [];
-      
-      // Add fresh content at the top with special flag
-      if (freshSpliks?.length) {
-        freshSpliks.forEach(splik => {
-          finalFeed.push({ ...splik, isFresh: true });
-        });
-      }
-
-      // Mix rotated content with boosted content
       const boostedList = boostedSpliks || [];
-      let boostedIndex = 0;
 
-      rotatedContent.forEach((splik, index) => {
-        finalFeed.push(splik);
-        
-        // Insert boosted content every 4 videos
-        if ((index + 1) % 4 === 0 && boostedIndex < boostedList.length) {
-          finalFeed.push({
-            ...boostedList[boostedIndex],
-            isBoosted: true
-          });
-          boostedIndex++;
-          
-          // Track impression for the boosted video
-          supabase.rpc('increment_boost_impression', {
-            p_splik_id: boostedList[boostedIndex - 1].id
-          }).catch(() => {
-            // Ignore errors for impression tracking
-          });
+      // 3. Apply home feed rotation algorithm
+      const rotatedFeed = createHomeFeed(
+        allSpliks as SplikWithScore[] || [],
+        boostedList as SplikWithScore[] || [],
+        { 
+          userId: user?.id,
+          feedType: 'home',
+          maxResults: 30 
         }
+      );
+
+      // 4. Track impressions for boosted content
+      const boostedInFeed = rotatedFeed.filter(s => s.isBoosted);
+      boostedInFeed.forEach(splik => {
+        supabase.rpc('increment_boost_impression', {
+          p_splik_id: splik.id
+        }).catch(() => {
+          // Ignore impression tracking errors
+        });
       });
 
-      // 6. Fetch profiles for all spliks
+      // 5. Fetch profiles for all spliks
       const spliksWithProfiles = await Promise.all(
-        finalFeed.slice(0, 30).map(async (splik) => { // Limit to 30 for initial load
+        rotatedFeed.map(async (splik) => {
           const { data: profileData } = await supabase
             .from('profiles')
             .select('*')
@@ -177,6 +112,13 @@ const Index = () => {
       );
 
       setSpliks(spliksWithProfiles);
+      
+      if (showToast) {
+        toast({
+          title: "Feed refreshed!",
+          description: "Showing you a fresh mix of videos",
+        });
+      }
     } catch (error) {
       console.error('Error fetching dynamic feed:', error);
       toast({
@@ -187,16 +129,13 @@ const Index = () => {
       setSpliks([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  // Force refresh feed (can be called on pull-to-refresh or button click)
+  // Force refresh feed
   const refreshFeed = () => {
-    fetchDynamicFeed();
-    toast({
-      title: "Feed refreshed",
-      description: "Showing you a fresh mix of videos",
-    });
+    fetchDynamicFeed(true);
   };
 
   const handleUploadClick = () => {
@@ -213,7 +152,6 @@ const Index = () => {
 
   const handleSplik = async (splikId: string) => {
     console.log('Splik:', splikId);
-    // Add your splik logic here
   };
 
   const handleReact = async (splikId: string) => {
@@ -285,21 +223,28 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Header />
 
-      {/* Pull to refresh indicator could go here */}
-      <div className="w-full pt-2">
-        <button 
-          onClick={refreshFeed}
-          className="mx-auto block text-xs text-muted-foreground hover:text-primary transition-colors"
-        >
-          Tap to refresh feed
-        </button>
+      {/* Refresh indicator */}
+      <div className="w-full pt-2 pb-2">
+        <div className="container flex justify-center">
+          <Button 
+            variant="ghost"
+            size="sm"
+            onClick={refreshFeed}
+            disabled={refreshing || loading}
+            className="text-xs text-muted-foreground hover:text-primary transition-colors"
+          >
+            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh Feed'}
+          </Button>
+        </div>
       </div>
 
       {/* Main Content */}
       <main className="w-full py-4 md:py-8 flex justify-center">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+            <p className="text-sm text-muted-foreground">Loading your personalized feed...</p>
           </div>
         ) : spliks.length === 0 ? (
           <Card className="max-w-md mx-auto mx-4">
@@ -307,29 +252,37 @@ const Index = () => {
               <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
               <p className="text-muted-foreground mb-4">Be the first to post a splik!</p>
-              <button 
+              <Button 
                 onClick={refreshFeed}
-                className="text-primary hover:underline"
+                variant="outline"
+                disabled={refreshing}
               >
-                Refresh Feed
-              </button>
+                {refreshing ? 'Loading...' : 'Refresh Feed'}
+              </Button>
             </CardContent>
           </Card>
         ) : (
           <div className="w-full px-2 sm:px-4">
+            {/* Content info */}
+            <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
+              <p className="text-xs text-center text-muted-foreground">
+                Showing {spliks.length} videos • Feed rotates every hour
+              </p>
+            </div>
+            
             {/* Mobile: Single column, Desktop: Centered single column */}
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
               {spliks.map((splik, index) => (
                 <div key={`${splik.id}-${index}`} className="relative">
                   {/* Fresh content indicator */}
                   {splik.isFresh && (
-                    <div className="absolute top-2 left-2 z-10 bg-green-500 text-white text-xs px-2 py-1 rounded-full">
+                    <div className="absolute top-2 left-2 z-10 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium">
                       Fresh
                     </div>
                   )}
                   {/* Boosted content indicator */}
                   {splik.isBoosted && (
-                    <div className="absolute top-2 right-2 z-10 bg-blue-500 text-white text-xs px-2 py-1 rounded-full">
+                    <div className="absolute top-2 right-2 z-10 bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium">
                       Sponsored
                     </div>
                   )}
@@ -342,15 +295,20 @@ const Index = () => {
                 </div>
               ))}
               
-              {/* Load more button */}
-              <div className="text-center py-4">
-                <button 
+              {/* Load more section */}
+              <div className="text-center py-6 border-t border-border/40">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Want to see more videos?
+                </p>
+                <Button 
                   onClick={refreshFeed}
-                  className="text-primary hover:underline"
-                  disabled={loading}
+                  variant="outline"
+                  disabled={refreshing}
+                  className="flex items-center gap-2"
                 >
-                  {loading ? 'Loading...' : 'Load More Videos'}
-                </button>
+                  <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                  {refreshing ? 'Loading...' : 'Refresh for More'}
+                </Button>
               </div>
             </div>
           </div>
@@ -364,10 +322,10 @@ const Index = () => {
           onClose={() => setUploadModalOpen(false)}
           onUploadComplete={() => {
             setUploadModalOpen(false);
-            refreshFeed(); // Use refresh to get the new video at the top
+            refreshFeed(); // Refresh to show new video at top
             toast({
-              title: "Upload successful",
-              description: "Your video has been uploaded and is now live!",
+              title: "Upload successful!",
+              description: "Your video is now live and appears at the top of feeds",
             });
           }}
         />
