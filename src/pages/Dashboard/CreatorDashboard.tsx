@@ -328,19 +328,19 @@ const CreatorDashboard = () => {
             Creator Dashboard
           </h1>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => navigate("/dashboard/favorites")}
-            >
-              <Bookmark className="mr-2 h-4 w-4" />
-              My Favorites
-            </Button>
-            <Button onClick={() => setUploadModalOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Upload Video
-            </Button>
-          </div>
-        </div>
+  <MessagesButton />
+  <Button
+    variant="outline"
+    onClick={() => navigate("/dashboard/favorites")}
+  >
+    <Bookmark className="mr-2 h-4 w-4" />
+    My Favorites
+  </Button>
+  <Button onClick={() => setUploadModalOpen(true)}>
+    <Plus className="mr-2 h-4 w-4" />
+    Upload Video
+  </Button>
+</div>
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
