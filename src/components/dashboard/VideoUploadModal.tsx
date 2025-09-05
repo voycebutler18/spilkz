@@ -50,8 +50,8 @@ interface VideoUploadModalProps {
 }
 
 const MAX_VIDEO_DURATION = 3; // 3 seconds max
-const DESKTOP_MAX_SIZE = 500 * 1024 * 1024; // 500MB
-const MOBILE_MAX_SIZE = 150 * 1024 * 1024; // safer cap for mobile/iOS
+const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
+const MOBILE_MAX_SIZE  = 1024 * 1024 * 1024; // 1GB
 const PREFERRED_EXTS = [".mp4", "mp4"]; // messaging only
 
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
