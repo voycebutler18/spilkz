@@ -1,209 +1,151 @@
-// lib/feed.ts - Enhanced with dynamic rotation utilities
+// lib/feed.ts - Complete feed rotation system with session-based randomization
 
-export interface RotationOptions {
-  userId?: string | null;
-  category?: string | null;
-  feedType?: 'home' | 'discovery' | 'nearby';
-  maxResults?: number;
-}
-
-export interface SplikWithScore extends Record<string, any> {
+export interface SplikWithScore {
   id: string;
-  created_at: string;
+  user_id: string;
   likes_count?: number;
   comments_count?: number;
   boost_score?: number;
   tag?: string;
-  user_id: string;
-  rotationScore?: number;
-  discoveryScore?: number;
+  created_at: string;
+  isBoosted?: boolean;
+  isFresh?: boolean;
+  // ... other splik properties
 }
 
-/**
- * Hash a string to create a consistent numeric seed
- */
-export const hashString = (str: string): number => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
+interface FeedOptions {
+  userId?: string;
+  category?: string | null;
+  feedType: 'home' | 'discovery' | 'nearby';
+  maxResults?: number;
+}
+
+// Generate a session-unique seed that persists during the session but changes on refresh
+const getSessionSeed = (): number => {
+  // Check if we already have a seed for this session
+  let seed = (window as any).__feedRotationSeed;
+  
+  if (!seed) {
+    // Generate a new seed based on current timestamp + random component
+    seed = Date.now() + Math.floor(Math.random() * 10000);
+    (window as any).__feedRotationSeed = seed;
   }
-  return Math.abs(hash);
+  
+  return seed;
 };
 
-/**
- * Generate seeded random number for consistent rotation
- */
-export const seededRandom = (seed: number): number => {
-  const x = Math.sin(seed) * 10000;
-  return x - Math.floor(x);
+// Simple seeded random number generator for consistent shuffling within a session
+const seededRandom = (seed: number): (() => number) => {
+  let current = seed;
+  return () => {
+    current = (current * 9301 + 49297) % 233280;
+    return current / 233280;
+  };
 };
 
-/**
- * Create time-based seed that changes at different intervals
- */
-export const createTimeSeed = (interval: 'hour' | 'halfHour' | 'day' | 'week' = 'hour'): number => {
-  const now = new Date();
-  const currentHour = now.getHours();
-  const currentDay = now.getDate();
-  const currentMonth = now.getMonth();
-  const currentWeek = Math.floor(now.getDate() / 7);
-
-  switch (interval) {
-    case 'halfHour':
-      const currentHalfHour = Math.floor(now.getMinutes() / 30);
-      return currentHalfHour + (currentHour * 2) + (currentDay * 48);
-    
-    case 'day':
-      return currentDay + (currentMonth * 31);
-    
-    case 'week':
-      return currentWeek + (currentMonth * 4);
-    
-    case 'hour':
-    default:
-      return currentHour + (currentDay * 24);
+// Shuffle array using seeded randomization
+const shuffleWithSeed = <T>(array: T[], seed: number): T[] => {
+  const shuffled = [...array];
+  const random = seededRandom(seed);
+  
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
+  
+  return shuffled;
 };
 
-/**
- * Apply rotation algorithm optimized for home feed
- */
-export const applyHomeFeedRotation = (
-  spliks: SplikWithScore[], 
-  options: RotationOptions = {}
-): SplikWithScore[] => {
-  const { userId, maxResults = 40 } = options;
+// Apply session-based rotation to any feed
+export const applySessionRotation = <T extends SplikWithScore>(
+  items: T[], 
+  options: FeedOptions
+): T[] => {
+  if (!items.length) return items;
   
-  if (!spliks.length) return [];
-
-  const userSeed = userId ? hashString(userId) : 0;
-  const timeSeed = createTimeSeed('hour');
-  const combinedSeed = userSeed + timeSeed;
-
-  const weightedSpliks = spliks.map((splik, index) => {
-    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
-    
-    const recencyScore = Math.max(0, 100 - ageInHours);
-    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 2;
-    const randomFactor = seededRandom(combinedSeed + index) * 60;
-    const boostFactor = splik.boost_score || 0;
-    
-    return {
-      ...splik,
-      rotationScore: recencyScore + engagementScore + randomFactor + boostFactor
-    };
-  });
-
-  return weightedSpliks
-    .sort((a, b) => b.rotationScore! - a.rotationScore!)
-    .slice(0, maxResults);
+  // Get session seed (same for entire session, new on refresh)
+  const sessionSeed = getSessionSeed();
+  
+  // Add user-specific salt to make it unique per user
+  const userSalt = options.userId ? options.userId.slice(-4) : '0000';
+  const finalSeed = sessionSeed + parseInt(userSalt, 36);
+  
+  // Shuffle the items with session seed
+  const shuffled = shuffleWithSeed(items, finalSeed);
+  
+  // Apply category filter if specified
+  const filtered = options.category 
+    ? shuffled.filter(item => 
+        item.tag?.toLowerCase().includes(options.category!.toLowerCase())
+      )
+    : shuffled;
+  
+  // Return requested number of results
+  return filtered.slice(0, options.maxResults || 30);
 };
 
-/**
- * Apply rotation algorithm optimized for discovery feed
- */
-export const applyDiscoveryFeedRotation = (
-  spliks: SplikWithScore[], 
-  options: RotationOptions = {}
-): SplikWithScore[] => {
-  const { userId, category, maxResults = 50 } = options;
-  
-  if (!spliks.length) return [];
-
-  const userSeed = userId ? hashString(userId) : 0;
-  const categorySeed = category ? hashString(category) : 0;
-  const timeSeed = createTimeSeed('halfHour');
-  const combinedSeed = userSeed + categorySeed + timeSeed;
-
-  const weightedSpliks = spliks.map((splik, index) => {
-    const ageInHours = (Date.now() - new Date(splik.created_at).getTime()) / (1000 * 60 * 60);
-    
-    const diversityScore = seededRandom(combinedSeed + index + hashString(splik.id)) * 80;
-    const engagementScore = (splik.likes_count || 0) + (splik.comments_count || 0) * 1.5;
-    const recencyBonus = ageInHours < 24 ? 20 : ageInHours < 168 ? 10 : 0;
-    const categoryMatch = category && splik.tag?.toLowerCase().includes(category) ? 30 : 0;
-    
-    return {
-      ...splik,
-      discoveryScore: diversityScore + engagementScore + recencyBonus + categoryMatch
-    };
-  });
-
-  return weightedSpliks
-    .sort((a, b) => b.discoveryScore! - a.discoveryScore!)
-    .slice(0, maxResults);
-};
-
-/**
- * Separate fresh content from older content
- */
-export const separateFreshContent = (
-  spliks: SplikWithScore[], 
-  freshHours: number = 3
-): { fresh: SplikWithScore[], older: SplikWithScore[] } => {
-  const cutoffTime = new Date(Date.now() - freshHours * 60 * 60 * 1000).toISOString();
-  
-  const fresh = spliks
-    .filter(s => s.created_at >= cutoffTime)
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  
-  const older = spliks
-    .filter(s => s.created_at < cutoffTime);
-  
-  return { fresh, older };
-};
-
-/**
- * Mix boosted content into regular feed
- */
-export const mixBoostedContent = (
-  regularContent: SplikWithScore[],
-  boostedContent: SplikWithScore[],
-  interval: number = 4
-): SplikWithScore[] => {
-  const finalFeed: SplikWithScore[] = [];
-  let boostedIndex = 0;
-
-  regularContent.forEach((splik, index) => {
-    finalFeed.push(splik);
-    
-    if ((index + 1) % interval === 0 && boostedIndex < boostedContent.length) {
-      finalFeed.push({
-        ...boostedContent[boostedIndex],
-        isBoosted: true
-      });
-      boostedIndex++;
-    }
-  });
-
-  return finalFeed;
-};
-
-/**
- * Create complete home feed with rotation logic
- */
+// Updated home feed with session-based rotation
 export const createHomeFeed = (
   allSpliks: SplikWithScore[],
-  boostedSpliks: SplikWithScore[],
-  options: RotationOptions = {}
+  boostedSpliks: SplikWithScore[] = [],
+  options: FeedOptions
 ): SplikWithScore[] => {
-  const { fresh, older } = separateFreshContent(allSpliks);
+  if (!allSpliks.length) return [];
   
-  const rotatedOlder = applyHomeFeedRotation(older, options);
-  const markedFresh = fresh.map(splik => ({ ...splik, isFresh: true }));
-  const mixedContent = mixBoostedContent(rotatedOlder, boostedSpliks);
+  // Mark boosted content
+  const markedBoosted = boostedSpliks.map(s => ({ ...s, isBoosted: true }));
   
-  return [...markedFresh, ...mixedContent];
+  // Mark fresh content (last 24 hours)
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const markedFresh = allSpliks.map(s => ({
+    ...s,
+    isFresh: new Date(s.created_at) > yesterday
+  }));
+  
+  // Combine all content
+  const allContent = [...markedBoosted, ...markedFresh];
+  
+  // Remove duplicates (boosted items might be in both arrays)
+  const uniqueContent = allContent.filter((item, index, array) => 
+    array.findIndex(i => i.id === item.id) === index
+  );
+  
+  // Apply session-based rotation
+  return applySessionRotation(uniqueContent, options);
 };
 
-/**
- * Create complete discovery feed with rotation logic
- */
+// Updated discovery feed with session-based rotation
 export const createDiscoveryFeed = (
   allSpliks: SplikWithScore[],
-  options: RotationOptions = {}
+  options: FeedOptions
 ): SplikWithScore[] => {
-  return applyDiscoveryFeedRotation(allSpliks, options);
+  if (!allSpliks.length) return [];
+  
+  // Apply session-based rotation
+  return applySessionRotation(allSpliks, options);
 };
+
+// Alias for backward compatibility (used in your Explore component)
+export const applyDiscoveryFeedRotation = applySessionRotation;
+
+// Force new rotation by clearing the session seed
+export const forceNewRotation = (): void => {
+  delete (window as any).__feedRotationSeed;
+};
+
+// Get rotation info for debugging
+export const getRotationInfo = () => ({
+  sessionSeed: (window as any).__feedRotationSeed || 'Not set',
+  nextRotationOn: 'Page refresh'
+});
+
+// Legacy time-based rotation functions (keep for compatibility if needed)
+export const createTimeBasedSeed = (intervalMinutes: number = 60): number => {
+  const now = new Date();
+  const intervalMs = intervalMinutes * 60 * 1000;
+  return Math.floor(now.getTime() / intervalMs);
+};
+
+// If you have existing functions in your feed.ts, keep them here as well
+// and just add the new session-based functions above
