@@ -1,3 +1,4 @@
+import LeftSidebar from "@/components/layout/LeftSidebar";
 import { useState, useEffect } from "react";
 import { Helmet } from "react-helmet";
 import { supabase } from "@/integrations/supabase/client";
@@ -61,7 +62,7 @@ const Index = () => {
       if (spliksError) throw spliksError;
 
       // 2. Get boosted content
-      const { data: boostedSpliks, error: boostedError } = await supabase
+      const { data: boostedSpliks } = await supabase
         .from('spliks')
         .select(`
           *,
@@ -263,126 +264,135 @@ const Index = () => {
 
       <Header />
 
-      {/* Enhanced refresh controls */}
-      <div className="w-full pt-2 pb-2">
-        <div className="container flex justify-center gap-2">
-          <Button 
-            variant="ghost"
-            size="sm"
-            onClick={refreshContent}
-            disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
-          >
-            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Updating...' : 'Update'}
-          </Button>
-          <div className="h-4 w-px bg-border"></div>
-          <Button 
-            variant="ghost"
-            size="sm"
-            onClick={refreshFeed}
-            disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
-          >
-            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Shuffling...' : 'Shuffle'}
-          </Button>
+      {/* ---- LAYOUT: Sidebar + Center content ---- */}
+      <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[224px_1fr]">
+        {/* Left Sidebar (fixed/sticky component) */}
+        <LeftSidebar />
+
+        {/* Center Column (your existing content) */}
+        <div>
+          {/* Enhanced refresh controls */}
+          <div className="w-full pt-2 pb-2">
+            <div className="container flex justify-center gap-2">
+              <Button 
+                variant="ghost"
+                size="sm"
+                onClick={refreshContent}
+                disabled={refreshing || loading}
+                className="text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'Updating...' : 'Update'}
+              </Button>
+              <div className="h-4 w-px bg-border"></div>
+              <Button 
+                variant="ghost"
+                size="sm"
+                onClick={refreshFeed}
+                disabled={refreshing || loading}
+                className="text-xs text-muted-foreground hover:text-primary transition-colors"
+              >
+                <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'Shuffling...' : 'Shuffle'}
+              </Button>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <main className="w-full py-4 md:py-8 flex justify-center">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Loading your personalized feed...</p>
+              </div>
+            ) : spliks.length === 0 ? (
+              <Card className="max-w-md mx-auto mx-4">
+                <CardContent className="p-8 text-center">
+                  <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
+                  <p className="text-muted-foreground mb-4">Be the first to post a splik!</p>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button 
+                      onClick={refreshContent}
+                      variant="outline"
+                      disabled={refreshing}
+                    >
+                      {refreshing ? 'Loading...' : 'Get Latest'}
+                    </Button>
+                    <Button 
+                      onClick={refreshFeed}
+                      disabled={refreshing}
+                    >
+                      {refreshing ? 'Shuffling...' : 'Shuffle Feed'}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="w-full px-2 sm:px-4">
+                {/* Content info */}
+                <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
+                  <p className="text-xs text-center text-muted-foreground">
+                    Showing {spliks.length} videos • New shuffle on each refresh
+                  </p>
+                </div>
+                
+                {/* Mobile: Single column, Desktop: Centered single column */}
+                <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
+                  {spliks.map((splik, index) => (
+                    <div key={`${splik.id}-${index}`} className="relative">
+                      {/* Fresh content indicator */}
+                      {splik.isFresh && (
+                        <div className="absolute top-2 left-2 z-10 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                          Fresh
+                        </div>
+                      )}
+                      {/* Boosted content indicator */}
+                      {splik.isBoosted && (
+                        <div className="absolute top-2 right-2 z-10 bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                          Sponsored
+                        </div>
+                      )}
+                      <SplikCard 
+                        splik={splik}
+                        onSplik={() => handleSplik(splik.id)}
+                        onReact={() => handleReact(splik.id)}
+                        onShare={() => handleShare(splik.id)}
+                      />
+                    </div>
+                  ))}
+                  
+                  {/* Load more section with both options */}
+                  <div className="text-center py-6 border-t border-border/40">
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Want to see more?
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                      <Button 
+                        onClick={refreshContent}
+                        variant="outline"
+                        disabled={refreshing}
+                        className="flex items-center gap-2"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                        {refreshing ? 'Loading...' : 'Get Latest'}
+                      </Button>
+                      <Button 
+                        onClick={refreshFeed}
+                        disabled={refreshing}
+                        className="flex items-center gap-2"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                        {refreshing ? 'Shuffling...' : 'Shuffle Feed'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
         </div>
       </div>
-
-      {/* Main Content */}
-      <main className="w-full py-4 md:py-8 flex justify-center">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-muted-foreground">Loading your personalized feed...</p>
-          </div>
-        ) : spliks.length === 0 ? (
-          <Card className="max-w-md mx-auto mx-4">
-            <CardContent className="p-8 text-center">
-              <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
-              <p className="text-muted-foreground mb-4">Be the first to post a splik!</p>
-              <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                <Button 
-                  onClick={refreshContent}
-                  variant="outline"
-                  disabled={refreshing}
-                >
-                  {refreshing ? 'Loading...' : 'Get Latest'}
-                </Button>
-                <Button 
-                  onClick={refreshFeed}
-                  disabled={refreshing}
-                >
-                  {refreshing ? 'Shuffling...' : 'Shuffle Feed'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="w-full px-2 sm:px-4">
-            {/* Content info */}
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
-              <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • New shuffle on each refresh
-              </p>
-            </div>
-            
-            {/* Mobile: Single column, Desktop: Centered single column */}
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {spliks.map((splik, index) => (
-                <div key={`${splik.id}-${index}`} className="relative">
-                  {/* Fresh content indicator */}
-                  {splik.isFresh && (
-                    <div className="absolute top-2 left-2 z-10 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                      Fresh
-                    </div>
-                  )}
-                  {/* Boosted content indicator */}
-                  {splik.isBoosted && (
-                    <div className="absolute top-2 right-2 z-10 bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                      Sponsored
-                    </div>
-                  )}
-                  <SplikCard 
-                    splik={splik}
-                    onSplik={() => handleSplik(splik.id)}
-                    onReact={() => handleReact(splik.id)}
-                    onShare={() => handleShare(splik.id)}
-                  />
-                </div>
-              ))}
-              
-              {/* Load more section with both options */}
-              <div className="text-center py-6 border-t border-border/40">
-                <p className="text-sm text-muted-foreground mb-3">
-                  Want to see more?
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                  <Button 
-                    onClick={refreshContent}
-                    variant="outline"
-                    disabled={refreshing}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                    {refreshing ? 'Loading...' : 'Get Latest'}
-                  </Button>
-                  <Button 
-                    onClick={refreshFeed}
-                    disabled={refreshing}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                    {refreshing ? 'Shuffling...' : 'Shuffle Feed'}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
 
       {/* Video Upload Modal */}
       {user && (
