@@ -596,3 +596,5 @@ export const UploadModalProvider: React.FC<{ children: React.ReactNode }> = ({ c
     </UploadModalContext.Provider>
   );
 };
+
+export default VideoPage;
