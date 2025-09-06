@@ -2,8 +2,6 @@
 import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import SplikCard from "@/components/splik/SplikCard";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
 import {
   Loader2,
   Utensils,
@@ -681,10 +679,6 @@ export default function Food() {
     return `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
   }, [coords]);
 
-  return (
-    <div className="min-h-screen bg-background">
-      <Header />
-
       {/* Page header */}
       <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
@@ -974,7 +968,6 @@ export default function Food() {
         </DialogContent>
       </Dialog>
 
-      <Footer />
     </div>
   );
 }
