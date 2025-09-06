@@ -11,7 +11,7 @@ import Footer from "@/components/layout/Footer";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, Eye, MessageSquare } from "lucide-react";
+import { MapPin, Calendar, Film, Users, Eye, MessageSquare, Heart } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -39,6 +39,8 @@ export function CreatorProfile() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
+  const [likedVideos, setLikedVideos] = useState<any[]>([]);
+  const [loadingLikedVideos, setLoadingLikedVideos] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showFollowersList, setShowFollowersList] = useState(false);
@@ -149,6 +151,16 @@ export function CreatorProfile() {
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "likes" },
+        () => {
+          // Refresh liked videos when likes change
+          if (currentUserId === profile.id) {
+            fetchLikedVideos();
+          }
+        }
+      )
       .subscribe();
 
     unsubRef.current = () => {
@@ -164,7 +176,7 @@ export function CreatorProfile() {
         }
       }
     };
-  }, [profile?.id]);
+  }, [profile?.id, currentUserId]);
 
   const refreshCounts = async (profileId: string) => {
     const { data } = await supabase
@@ -206,6 +218,55 @@ export function CreatorProfile() {
     }
   };
 
+  const fetchLikedVideos = async () => {
+    if (!currentUserId) return;
+    
+    setLoadingLikedVideos(true);
+    try {
+      // Fetch likes with the associated spliks and creator profiles
+      const { data: likes, error } = await supabase
+        .from("likes")
+        .select(`
+          id,
+          created_at,
+          spliks (
+            *,
+            profiles:user_id (
+              username,
+              display_name,
+              avatar_url
+            )
+          )
+        `)
+        .eq("user_id", currentUserId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      // Transform the data to match the expected format
+      const likedVideosData = likes
+        ?.filter(like => like.spliks) // Filter out any likes where the splik was deleted
+        .map(like => ({
+          ...like.spliks,
+          profiles: like.spliks?.profiles
+        })) || [];
+
+      setLikedVideos(likedVideosData);
+    } catch (e) {
+      console.error("Error fetching liked videos:", e);
+      toast.error("Failed to load liked videos");
+    } finally {
+      setLoadingLikedVideos(false);
+    }
+  };
+
+  // Fetch liked videos when the tab might be accessed and user is viewing their own profile
+  useEffect(() => {
+    if (currentUserId === profile?.id) {
+      fetchLikedVideos();
+    }
+  }, [currentUserId, profile?.id]);
+
   const formatDate = (date: string) =>
     new Date(date).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
@@ -233,6 +294,9 @@ export function CreatorProfile() {
       </div>
     );
   }
+
+  // Only show the liked tab if the user is viewing their own profile
+  const isOwnProfile = currentUserId === profile.id;
 
   return (
     <div className="min-h-screen bg-background">
@@ -327,10 +391,10 @@ export function CreatorProfile() {
         </Card>
 
         <Tabs defaultValue="videos" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className={`grid w-full ${isOwnProfile ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <TabsTrigger value="videos">Videos</TabsTrigger>
             <TabsTrigger value="about">About</TabsTrigger>
-            <TabsTrigger value="liked">Liked</TabsTrigger>
+            {isOwnProfile && <TabsTrigger value="liked">Liked</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="videos" className="mt-6">
@@ -388,12 +452,33 @@ export function CreatorProfile() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="liked" className="mt-6">
-            <Card className="p-12 text-center">
-              <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">Liked videos coming soon</p>
-            </Card>
-          </TabsContent>
+          {isOwnProfile && (
+            <TabsContent value="liked" className="mt-6">
+              {loadingLikedVideos ? (
+                <Card className="p-12 text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4" />
+                  <p className="text-muted-foreground">Loading liked videos...</p>
+                </Card>
+              ) : likedVideos.length > 0 ? (
+                <VideoGrid
+                  spliks={likedVideos}
+                  showCreatorInfo={true}
+                  onDeleteComment={async (commentId) => {
+                    const { error } = await supabase.from("comments").delete().eq("id", commentId);
+                    if (!error) toast.success("Comment deleted");
+                  }}
+                />
+              ) : (
+                <Card className="p-12 text-center">
+                  <Heart className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground mb-2">No liked videos yet</p>
+                  <p className="text-sm text-muted-foreground">
+                    Videos you like will appear here
+                  </p>
+                </Card>
+              )}
+            </TabsContent>
+          )}
         </Tabs>
       </div>
 
