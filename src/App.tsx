@@ -32,6 +32,8 @@ import Login from "./pages/Auth/Login";
 import Signup from "./pages/Auth/Signup";
 import AuthCallback from "./pages/Auth/AuthCallback";
 import ResetPassword from "./pages/Auth/ResetPassword";
+import AdminDashboard from "./pages/admin/AdminDashboard";
+
 
 // Dashboard
 import CreatorDashboard from "./pages/Dashboard/CreatorDashboard";
@@ -94,6 +96,7 @@ const App = () => (
             <Route path="/signup" element={<Signup />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/admin" element={<AdminDashboard />} />
 
             {/* Back-compat upload route (opens modal) */}
             <Route path="/upload" element={<UploadRoute />} />
