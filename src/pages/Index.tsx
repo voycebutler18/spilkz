@@ -1,13 +1,15 @@
 // src/pages/Index.tsx
 import { useState, useEffect } from "react";
 import { Helmet } from "react-helmet";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, RefreshCw, Play } from "lucide-react";
+import { Loader2, RefreshCw, Play, Rocket } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { createHomeFeed, forceNewRotation } from "@/lib/feed";
 
 type SplikWithProfile = any;
@@ -19,6 +21,7 @@ const Index = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   useEffect(() => {
     // Get current user
@@ -227,180 +230,221 @@ const Index = () => {
     }
   };
 
+  const handlePromote = (splikId: string) => {
+    // Public naming: "Promote Video". Route it to your dashboard flow.
+    // You can read the query param in your dashboard and open a promote modal there.
+    navigate(`/dashboard?promote=${encodeURIComponent(splikId)}`);
+  };
+
   return (
-    <div className="w-full">
-      <Helmet>
-        <title>Splikz - Short Video Platform</title>
-        <meta
-          name="description"
-          content="Watch and share short vertical videos on Splikz"
-        />
-        <meta
-          name="google-site-verification"
-          content="YOUR_VERIFICATION_CODE_HERE"
-        />
-        <meta name="google-adsense-account" content="ca-pub-7160715578591513" />
-        <script
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7160715578591513"
-          crossOrigin="anonymous"
-        />
-        <meta property="og:title" content="Splikz - Short Video Platform" />
-        <meta
-          property="og:description"
-          content="Watch and share short vertical videos on Splikz"
-        />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://splikz.com" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Splikz - Short Video Platform" />
-        <meta
-          name="twitter:description"
-          content="Watch and share short vertical videos on Splikz"
-        />
-      </Helmet>
+    <TooltipProvider>
+      <div className="w-full">
+        <Helmet>
+          <title>Splikz - Short Video Platform</title>
+          <meta
+            name="description"
+            content="Watch and share short vertical videos on Splikz"
+          />
+          <meta
+            name="google-site-verification"
+            content="YOUR_VERIFICATION_CODE_HERE"
+          />
+          <meta name="google-adsense-account" content="ca-pub-7160715578591513" />
+          <script
+            async
+            src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7160715578591513"
+            crossOrigin="anonymous"
+          />
+          <meta property="og:title" content="Splikz - Short Video Platform" />
+          <meta
+            property="og:description"
+            content="Watch and share short vertical videos on Splikz"
+          />
+          <meta property="og:type" content="website" />
+          <meta property="og:url" content="https://splikz.com" />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:title" content="Splikz - Short Video Platform" />
+          <meta
+            name="twitter:description"
+            content="Watch and share short vertical videos on Splikz"
+          />
+        </Helmet>
 
-      {/* Refresh controls (top of feed) */}
-      <div className="w-full pt-2 pb-2">
-        <div className="flex justify-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={refreshContent}
-            disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
-          >
-            <RefreshCw
-              className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
-            />
-            {refreshing ? "Updating..." : "Update"}
-          </Button>
-          <div className="h-4 w-px bg-border" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={refreshFeed}
-            disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
-          >
-            <RefreshCw
-              className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
-            />
-            {refreshing ? "Shuffling..." : "Shuffle"}
-          </Button>
-        </div>
-      </div>
-
-      {/* Feed */}
-      <section className="w-full py-2 md:py-4 flex justify-center">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-muted-foreground">
-              Loading your personalized feed...
-            </p>
+        {/* Refresh controls (top of feed) */}
+        <div className="w-full pt-2 pb-2">
+          <div className="flex justify-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={refreshContent}
+              disabled={refreshing || loading}
+              className="text-xs text-muted-foreground hover:text-primary transition-colors"
+            >
+              <RefreshCw
+                className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
+              />
+              {refreshing ? "Updating..." : "Update"}
+            </Button>
+            <div className="h-4 w-px bg-border" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={refreshFeed}
+              disabled={refreshing || loading}
+              className="text-xs text-muted-foreground hover:text-primary transition-colors"
+            >
+              <RefreshCw
+                className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
+              />
+              {refreshing ? "Shuffling..." : "Shuffle"}
+            </Button>
           </div>
-        ) : spliks.length === 0 ? (
-          <Card className="max-w-md mx-auto mx-4">
-            <CardContent className="p-8 text-center">
-              <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
-              <p className="text-muted-foreground mb-4">
-                Be the first to post a splik!
-              </p>
-              <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                <Button onClick={refreshContent} variant="outline" disabled={refreshing}>
-                  {refreshing ? "Loading..." : "Get Latest"}
-                </Button>
-                <Button onClick={refreshFeed} disabled={refreshing}>
-                  {refreshing ? "Shuffling..." : "Shuffle Feed"}
-                </Button>
-                <Button onClick={handleUploadClick} variant="default">
-                  Upload
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="w-full px-2 sm:px-4">
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
-              <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • New shuffle on each refresh
+        </div>
+
+        {/* Feed */}
+        <section className="w-full py-2 md:py-4 flex justify-center">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+              <p className="text-sm text-muted-foreground">
+                Loading your personalized feed...
               </p>
             </div>
-
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {spliks.map((splik: any, index: number) => (
-                <div key={`${splik.id}-${index}`} className="relative">
-                  {splik.isFresh && (
-                    <div className="absolute top-2 left-2 z-10 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                      Fresh
-                    </div>
-                  )}
-                  {splik.isBoosted && (
-                    <div className="absolute top-2 right-2 z-10 bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-medium">
-                      Sponsored
-                    </div>
-                  )}
-                  <SplikCard
-                    splik={splik}
-                    onSplik={() => handleSplik(splik.id)}
-                    onReact={() => handleReact(splik.id)}
-                    onShare={() => handleShare(splik.id)}
-                  />
-                </div>
-              ))}
-
-              <div className="text-center py-6 border-t border-border/40">
-                <p className="text-sm text-muted-foreground mb-3">
-                  Want to see more?
+          ) : spliks.length === 0 ? (
+            <Card className="max-w-md mx-auto mx-4">
+              <CardContent className="p-8 text-center">
+                <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
+                <p className="text-muted-foreground mb-4">
+                  Be the first to post a splik!
                 </p>
                 <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                  <Button
-                    onClick={refreshContent}
-                    variant="outline"
-                    disabled={refreshing}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw
-                      className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-                    />
+                  <Button onClick={refreshContent} variant="outline" disabled={refreshing}>
                     {refreshing ? "Loading..." : "Get Latest"}
                   </Button>
-                  <Button
-                    onClick={refreshFeed}
-                    disabled={refreshing}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw
-                      className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-                    />
+                  <Button onClick={refreshFeed} disabled={refreshing}>
                     {refreshing ? "Shuffling..." : "Shuffle Feed"}
                   </Button>
-                  <Button onClick={handleUploadClick}>Upload</Button>
+                  <Button onClick={handleUploadClick} variant="default">
+                    Upload
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="w-full px-2 sm:px-4">
+              <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
+                <p className="text-xs text-center text-muted-foreground">
+                  Showing {spliks.length} videos • New shuffle on each refresh
+                </p>
+              </div>
+
+              <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
+                {spliks.map((splik: any, index: number) => {
+                  const isOwner = user?.id && splik?.user_id === user.id;
+
+                  return (
+                    <div key={`${splik.id}-${index}`} className="relative">
+                      {/* Top-left “Fresh” pill */}
+                      {splik.isFresh && (
+                        <div className="absolute top-2 left-2 z-10 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-medium">
+                          Fresh
+                        </div>
+                      )}
+
+                      {/* Top-right stack: Sponsored pill + Promote button (owner only) */}
+                      <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-2">
+                        {splik.isBoosted && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex items-center rounded-full bg-amber-500 text-white text-[11px] px-2 py-1 font-medium shadow">
+                                Sponsored
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" className="text-xs max-w-[220px]">
+                              Promoted Video — creators or brands may boost visibility. Ads are mixed
+                              into the feed and clearly labeled.
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+
+                        {isOwner && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-7 px-2 text-xs rounded-full shadow-sm"
+                            onClick={() => handlePromote(splik.id)}
+                            aria-label="Promote Video"
+                            title="Promote Video"
+                          >
+                            <Rocket className="h-3.5 w-3.5 mr-1" />
+                            Promote Video
+                          </Button>
+                        )}
+                      </div>
+
+                      <SplikCard
+                        splik={splik}
+                        onSplik={() => handleSplik(splik.id)}
+                        onReact={() => handleReact(splik.id)}
+                        onShare={() => handleShare(splik.id)}
+                      />
+                    </div>
+                  );
+                })}
+
+                <div className="text-center py-6 border-t border-border/40">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Want to see more?
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                    <Button
+                      onClick={refreshContent}
+                      variant="outline"
+                      disabled={refreshing}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw
+                        className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                      />
+                      {refreshing ? "Loading..." : "Get Latest"}
+                    </Button>
+                    <Button
+                      onClick={refreshFeed}
+                      disabled={refreshing}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw
+                        className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                      />
+                      {refreshing ? "Shuffling..." : "Shuffle Feed"}
+                    </Button>
+                    <Button onClick={handleUploadClick}>Upload</Button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
-      </section>
+          )}
+        </section>
 
-      {/* Upload Modal */}
-      {user && (
-        <VideoUploadModal
-          open={uploadModalOpen}
-          onClose={() => setUploadModalOpen(false)}
-          onUploadComplete={() => {
-            setUploadModalOpen(false);
-            refreshContent();
-            toast({
-              title: "Upload successful!",
-              description: "Your video is now live and appears at the top of feeds",
-            });
-          }}
-        />
-      )}
-    </div>
+        {/* Upload Modal */}
+        {user && (
+          <VideoUploadModal
+            open={uploadModalOpen}
+            onClose={() => setUploadModalOpen(false)}
+            onUploadComplete={() => {
+              setUploadModalOpen(false);
+              refreshContent();
+              toast({
+                title: "Upload successful!",
+                description:
+                  "Your video is now live and appears at the top of feeds",
+              });
+            }}
+          />
+        )}
+      </div>
+    </TooltipProvider>
   );
 };
 
