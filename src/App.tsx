@@ -40,6 +40,7 @@ import Favorites from "./pages/Dashboard/Favorites";
 import Profile from "./pages/Profile";
 import CreatorProfile from "./pages/CreatorProfile";
 import VideoPage from "./pages/VideoPage";
+import Search from "./pages/Search";
 
 // Messaging
 import MessagesInbox from "./pages/MessagesInbox";
@@ -89,6 +90,7 @@ const App = () => (
             {/* Back-compat if anything still links to :username */}
             <Route path="/creator/:username" element={<CreatorProfile />} />
             <Route path="/video/:id" element={<VideoPage />} />
+            <Route path="/search" element={<Search />} />
 
             {/* Messaging */}
             <Route path="/messages" element={<MessagesInbox />} />
