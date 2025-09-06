@@ -66,23 +66,16 @@ type NearbyRestaurant = {
   cuisine?: string;
 };
 
-type DistanceKey =
-  | "1km"
-  | "2km"
-  | "5km"
-  | "1mi"
-  | "3mi"
-  | "5mi";
+type DistanceKey = "1km" | "2km" | "5km" | "1mi" | "3mi" | "5mi";
 
-const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number; unit: "km" | "mi" }[] =
-  [
-    { key: "1km", label: "1 km", meters: 1000, unit: "km" },
-    { key: "2km", label: "2 km", meters: 2000, unit: "km" },
-    { key: "5km", label: "5 km", meters: 5000, unit: "km" },
-    { key: "1mi", label: "1 mile", meters: 1609.34, unit: "mi" },
-    { key: "3mi", label: "3 miles", meters: 4828.03, unit: "mi" },
-    { key: "5mi", label: "5 miles", meters: 8046.72, unit: "mi" },
-  ];
+const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number; unit: "km" | "mi" }[] = [
+  { key: "1km", label: "1 km", meters: 1000, unit: "km" },
+  { key: "2km", label: "2 km", meters: 2000, unit: "km" },
+  { key: "5km", label: "5 km", meters: 5000, unit: "km" },
+  { key: "1mi", label: "1 mile", meters: 1609.34, unit: "mi" },
+  { key: "3mi", label: "3 miles", meters: 4828.03, unit: "mi" },
+  { key: "5mi", label: "5 miles", meters: 8046.72, unit: "mi" },
+];
 
 const CATEGORY_PRESETS: { key: string; label: string; regex: string }[] = [
   { key: "any", label: "Any", regex: "" },
@@ -100,7 +93,7 @@ const CATEGORY_PRESETS: { key: string; label: string; regex: string }[] = [
   { key: "chinese", label: "Chinese", regex: "chinese|szechuan|cantonese|dim_sum|dimsum" },
   { key: "thai", label: "Thai", regex: "thai" },
   { key: "indian", label: "Indian", regex: "indian|curry|tandoor" },
-  { key: "custom", label: "— Custom (type below)", regex: "" }, // Changed from "sea" to "custom"
+  { key: "custom", label: "— Custom (type below)", regex: "" },
 ];
 
 export default function Food() {
@@ -130,9 +123,9 @@ export default function Food() {
   // auth
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) =>
-      setUser(s?.user ?? null)
-    );
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, s) => setUser(s?.user ?? null));
     return () => subscription.unsubscribe();
   }, []);
 
@@ -237,7 +230,6 @@ export default function Food() {
   // ===== Nearby Restaurants =====
   const openNearby = () => {
     setNearbyOpen(true);
-    // Reset all state when opening modal
     resetSearchState();
   };
 
@@ -253,6 +245,27 @@ export default function Food() {
     setCustomCategory("");
   };
 
+  const reverseGeocode = async (lat: number, lon: number): Promise<string | null> => {
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/reverse");
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("lat", String(lat));
+      url.searchParams.set("lon", String(lon));
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+      });
+      if (!res.ok) return null;
+      const j = (await res.json()) as any;
+      const city = j.address?.city || j.address?.town || j.address?.village || j.address?.hamlet;
+      const state = j.address?.state || j.address?.region;
+      const country = j.address?.country_code?.toUpperCase();
+      if (!city && !state) return j.display_name || null;
+      return [city, state, country].filter(Boolean).join(", ");
+    } catch {
+      return null;
+    }
+  };
+
   const requestLocation = () => {
     setLocStage("asking");
     setNearbyError(null);
@@ -262,13 +275,15 @@ export default function Food() {
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         const { latitude, longitude } = pos.coords;
         const c = { lat: Number(latitude), lon: Number(longitude) };
         setCoords(c);
         setLocStage("have");
-        // Clear location query when using device location
-        setLocationQuery("");
+
+        // Update the input to the user's place (best effort)
+        const place = await reverseGeocode(c.lat, c.lon);
+        setLocationQuery(place ?? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}`);
       },
       (err) => {
         console.error("Geolocation error:", err);
@@ -300,8 +315,7 @@ export default function Food() {
 
   const overpassFetch = async (query: string) => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-    
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     try {
       const res = await fetch("https://overpass-api.de/api/interpreter", {
         method: "POST",
@@ -310,12 +324,11 @@ export default function Food() {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      
       if (!res.ok) throw new Error(`Overpass API error ${res.status}: ${res.statusText}`);
       return await res.json();
-    } catch (error) {
+    } catch (error: any) {
       clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error.name === "AbortError") {
         throw new Error("Search timed out. Please try again.");
       }
       throw error;
@@ -324,45 +337,33 @@ export default function Food() {
 
   const geocodeToCoords = async (q: string): Promise<{ lat: number; lon: number } | null> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-    
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
       const url = new URL("https://nominatim.openstreetmap.org/search");
       url.searchParams.set("q", q);
       url.searchParams.set("format", "jsonv2");
       url.searchParams.set("limit", "1");
-      url.searchParams.set("countrycodes", "us,ca"); // Limit to North America for better results
-      
-      const res = await fetch(url.toString(), { 
-        headers: { 
-          "Accept-Language": "en",
-          "User-Agent": "SplikzApp/1.0"
-        },
-        signal: controller.signal
+      url.searchParams.set("countrycodes", "us,ca");
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+        signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      
       if (!res.ok) throw new Error(`Geocoding failed: ${res.status}`);
-      const arr = await res.json() as Array<{ lat: string; lon: string; display_name: string }>;
+      const arr = (await res.json()) as Array<{ lat: string; lon: string; display_name: string }>;
       if (!arr.length) return null;
-      
-      console.log("Geocoded location:", arr[0].display_name);
       return { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
-    } catch (error) {
+    } catch (error: any) {
       clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        throw new Error("Location search timed out. Please try again.");
-      }
+      if (error.name === "AbortError") throw new Error("Location search timed out. Please try again.");
       throw error;
     }
   };
 
   const buildCategoryRegex = () => {
-    // If a preset (not "any" and not custom), use it
     const preset = CATEGORY_PRESETS.find((c) => c.key === categoryKey);
     if (preset && preset.key !== "any" && preset.key !== "custom") return preset.regex;
 
-    // If custom entered, convert "steak house" -> "steak|house|steakhouse|steak_house"
     const raw = customCategory.trim();
     if (!raw) return "";
     const tokens = raw
@@ -372,7 +373,6 @@ export default function Food() {
       .filter(Boolean);
     if (tokens.length === 0) return "";
 
-    // Build a generous regex
     const joined = tokens.join("|");
     const compound = tokens.join("");
     const underscored = tokens.join("_");
@@ -406,7 +406,6 @@ export default function Food() {
       `;
     }
 
-    // No category: grab all nearby restaurants, cafes, fast food, bars
     return `
       [out:json][timeout:30];
       (
@@ -436,7 +435,6 @@ export default function Food() {
       setFetchingNearby(true);
       setNearby([]);
 
-      // Determine center coords: prefer device coords if present; otherwise geocode locationQuery
       let center = coords;
       if (!center) {
         if (!locationQuery.trim()) {
@@ -444,7 +442,6 @@ export default function Food() {
           setFetchingNearby(false);
           return;
         }
-        
         try {
           const gc = await geocodeToCoords(locationQuery.trim());
           if (!gc) {
@@ -455,7 +452,7 @@ export default function Food() {
           center = gc;
           setCoords(gc);
           setLocStage("have");
-        } catch (geoError) {
+        } catch (geoError: any) {
           setNearbyError("Error finding location: " + geoError.message);
           setFetchingNearby(false);
           return;
@@ -463,36 +460,31 @@ export default function Food() {
       }
 
       const categoryRegex =
-        categoryKey === "custom" ? buildCategoryRegex() : buildCategoryRegex() || CATEGORY_PRESETS.find((c) => c.key === categoryKey)?.regex || "";
+        categoryKey === "custom"
+          ? buildCategoryRegex()
+          : buildCategoryRegex() || CATEGORY_PRESETS.find((c) => c.key === categoryKey)?.regex || "";
 
       const query = buildOverpassAroundQuery(center!, metersForDistanceKey, categoryRegex || "");
-      console.log("Running Overpass query for:", { center, radius: metersForDistanceKey, category: categoryRegex });
-      
       const json = await overpassFetch(query);
       const elements: any[] = json.elements || [];
-
-      console.log(`Found ${elements.length} raw elements from Overpass`);
 
       const mapped: NearbyRestaurant[] = elements
         .map((el) => {
           const name = el.tags?.name || el.tags?.brand || "Unnamed Restaurant";
           const rLat = el.lat ?? el.center?.lat;
           const rLon = el.lon ?? el.center?.lon;
-          
           if (typeof rLat !== "number" || typeof rLon !== "number") return null;
-          
           const distanceKm = haversineKm(center!, { lat: rLat, lon: rLon });
-          
-          // Skip if outside our distance (with small buffer for rounding)
+
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
-          
+
           const addressParts = [
             el.tags?.["addr:housenumber"],
             el.tags?.["addr:street"],
             el.tags?.["addr:city"],
           ].filter(Boolean);
-          
+
           return {
             id: `${el.type}/${el.id}`,
             name,
@@ -505,29 +497,24 @@ export default function Food() {
         })
         .filter(Boolean) as NearbyRestaurant[];
 
-      // Remove duplicates based on name and approximate location
       const uniqueRestaurants = mapped.reduce((acc, restaurant) => {
-        const existing = acc.find(r => 
-          r.name === restaurant.name && 
-          Math.abs(r.lat - restaurant.lat) < 0.0001 && 
-          Math.abs(r.lon - restaurant.lon) < 0.0001
+        const existing = acc.find(
+          (r) =>
+            r.name === restaurant.name &&
+            Math.abs(r.lat - restaurant.lat) < 0.0001 &&
+            Math.abs(r.lon - restaurant.lon) < 0.0001
         );
-        if (!existing) {
-          acc.push(restaurant);
-        }
+        if (!existing) acc.push(restaurant);
         return acc;
       }, [] as NearbyRestaurant[]);
 
-      // Sort by distance and limit results
-      const byDistance = uniqueRestaurants
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-        .slice(0, 100);
-        
-      console.log(`Processed to ${byDistance.length} unique restaurants`);
+      const byDistance = uniqueRestaurants.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
-      
+
       if (byDistance.length === 0) {
-        setNearbyError("No restaurants found in this area. Try increasing the distance or changing the category.");
+        setNearbyError(
+          "No restaurants found in this area. Try increasing the distance or changing the category."
+        );
       }
     } catch (err: any) {
       console.error("Restaurant search error:", err);
@@ -550,7 +537,7 @@ export default function Food() {
       const setupVideoForMobile = (video: HTMLVideoElement) => {
         video.muted = true;
         video.playsInline = true;
-        video.setAttribute("webkit-playsinline", "true");
+        (video as any).setAttribute?.("webkit-playsinline", "true");
         video.preload = "metadata";
         video.load();
         video.addEventListener(
@@ -673,12 +660,13 @@ export default function Food() {
 
   useAutoplayIn(foodFeedRef, [spliks]);
 
-  // UI helpers
   const coordsPretty = useMemo(() => {
     if (!coords) return "";
     return `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
   }, [coords]);
 
+  return (
+    <div className="min-h-screen">
       {/* Page header */}
       <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
@@ -706,11 +694,22 @@ export default function Food() {
                 Nearby restaurants
               </Button>
 
-              <Button variant="outline" size="sm" onClick={() => fetchFood(true, false)} disabled={refreshing} className="gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchFood(true, false)}
+                disabled={refreshing}
+                className="gap-2"
+              >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Update
               </Button>
-              <Button size="sm" onClick={() => fetchFood(true, true)} disabled={refreshing} className="gap-2">
+              <Button
+                size="sm"
+                onClick={() => fetchFood(true, true)}
+                disabled={refreshing}
+                className="gap-2"
+              >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Shuffle
               </Button>
@@ -768,11 +767,20 @@ export default function Food() {
               </div>
               <div className="text-center py-6 border-t border-border/40 mt-8">
                 <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                  <Button onClick={() => fetchFood(true, false)} variant="outline" disabled={refreshing} className="gap-2">
+                  <Button
+                    onClick={() => fetchFood(true, false)}
+                    variant="outline"
+                    disabled={refreshing}
+                    className="gap-2"
+                  >
                     <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                     {refreshing ? "Updating..." : "Get Latest"}
                   </Button>
-                  <Button onClick={() => fetchFood(true, true)} disabled={refreshing} className="gap-2">
+                  <Button
+                    onClick={() => fetchFood(true, true)}
+                    disabled={refreshing}
+                    className="gap-2"
+                  >
                     <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                     {refreshing ? "Shuffling..." : "Shuffle Food"}
                   </Button>
@@ -784,13 +792,13 @@ export default function Food() {
       </main>
 
       {/* Nearby Restaurants Modal */}
-      <Dialog open={nearbyOpen} onOpenChange={(open) => {
-        setNearbyOpen(open);
-        if (!open) {
-          // Reset everything when modal is closed
-          resetSearchState();
-        }
-      }}>
+      <Dialog
+        open={nearbyOpen}
+        onOpenChange={(open) => {
+          setNearbyOpen(open);
+          if (!open) resetSearchState();
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -807,7 +815,7 @@ export default function Food() {
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Info className="h-3.5 w-3.5" />
-              We will only use your location if you tap "Use my location".
+              We will only use your location if you tap “Use my location”.
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2">
@@ -816,7 +824,6 @@ export default function Food() {
                 value={locationQuery}
                 onChange={(e) => {
                   setLocationQuery(e.target.value);
-                  // Clear device coords when typing a manual location
                   if (e.target.value.trim() && coords) {
                     setCoords(null);
                     setLocStage("idle");
@@ -825,9 +832,9 @@ export default function Food() {
                 className="flex-1"
                 disabled={fetchingNearby}
               />
-              <Button 
-                variant="outline" 
-                onClick={requestLocation} 
+              <Button
+                variant="outline"
+                onClick={requestLocation}
                 className="gap-2"
                 disabled={fetchingNearby || locStage === "asking"}
               >
@@ -839,7 +846,11 @@ export default function Food() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Distance</label>
-                <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
+                <Select
+                  value={distanceKey}
+                  onValueChange={(v) => setDistanceKey(v as DistanceKey)}
+                  disabled={fetchingNearby}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Choose distance" />
                   </SelectTrigger>
@@ -890,15 +901,17 @@ export default function Food() {
               <div className="text-xs text-muted-foreground bg-muted/30 rounded p-2">
                 Using coordinates: <span className="font-mono">{coordsPretty}</span>
                 {locationQuery && (
-                  <span className="ml-2">• Clear the text field above to use a different location</span>
+                  <span className="ml-2">
+                    • You can replace the text above to search a different place
+                  </span>
                 )}
               </div>
             )}
 
             <div className="flex justify-end">
-              <Button 
-                onClick={runNearbySearch} 
-                className="gap-2" 
+              <Button
+                onClick={runNearbySearch}
+                className="gap-2"
                 disabled={fetchingNearby || (!coords && !locationQuery.trim())}
               >
                 <SearchIcon className="h-4 w-4" />
@@ -921,7 +934,7 @@ export default function Food() {
             ) : nearby.length > 0 ? (
               <div className="space-y-3">
                 <div className="text-sm font-medium">
-                  Found {nearby.length} restaurant{nearby.length !== 1 ? 's' : ''}
+                  Found {nearby.length} restaurant{nearby.length !== 1 ? "s" : ""}
                 </div>
                 <div className="max-h-[40vh] overflow-y-auto rounded-md border">
                   {nearby.map((r) => (
@@ -940,7 +953,9 @@ export default function Food() {
                         </div>
                       </div>
                       <a
-                        href={`https://www.google.com/maps?q=${encodeURIComponent(r.name + " " + r.address)}&ll=${r.lat},${r.lon}`}
+                        href={`https://www.google.com/maps?q=${encodeURIComponent(
+                          r.name + " " + r.address
+                        )}&ll=${r.lat},${r.lon}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent flex-shrink-0 ml-2"
@@ -961,13 +976,12 @@ export default function Food() {
             )}
 
             <p className="text-xs text-muted-foreground border-t pt-3">
-              Tip: When you upload a food video, mention the restaurant name in your title or description 
-              so others can find it too!
+              Tip: When you upload a food video, mention the restaurant name in your title or
+              description so others can find it too!
             </p>
           </div>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }
