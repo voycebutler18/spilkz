@@ -32,7 +32,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 
-// NEW: shadcn Select for Mood
+// Optional mood picker (UI only; stored as tag in description)
 import {
   Select,
   SelectTrigger,
@@ -61,17 +61,15 @@ interface VideoUploadModalProps {
 
 const MAX_VIDEO_DURATION = 3; // hard cap at save time (server rule)
 const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
-const MOBILE_MAX_SIZE  = 1024 * 1024 * 1024; // 1GB
+const MOBILE_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
 
-// NEW: Mood options (extend any time)
+// Optional mood choices (not a DB column)
 const MOOD_OPTIONS = [
-  // Core moods used in the left sidebar today:
   { value: "happy", label: "Happy" },
   { value: "chill", label: "Chill" },
   { value: "hype", label: "Hype" },
   { value: "romance", label: "Romance" },
   { value: "aww", label: "Aww" },
-  // Common extras so creators can be specific:
   { value: "funny", label: "Funny" },
   { value: "excited", label: "Excited" },
   { value: "relaxed", label: "Relaxed" },
@@ -82,7 +80,6 @@ const MOOD_OPTIONS = [
   { value: "sad", label: "Sad" },
   { value: "angry", label: "Angry" },
   { value: "cozy", label: "Cozy" },
-  // Requested: a “natural/neutral” vibe
   { value: "neutral", label: "Neutral / Natural" },
 ] as const;
 
@@ -103,7 +100,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   // Category toggle (lights up)
   const [isFood, setIsFood] = useState(false);
 
-  // NEW: Mood (required)
+  // Optional mood (UI only; stored in description as a tag)
   const [mood, setMood] = useState<string>("");
 
   const [uploading, setUploading] = useState(false);
@@ -512,14 +509,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       });
       return;
     }
-    if (!mood) {
-      toast({
-        title: "Pick a mood",
-        description: "Please choose the mood for this Splik so people can find it.",
-        variant: "destructive",
-      });
-      return;
-    }
     if (!currentUser) {
       toast({
         title: "Not authenticated",
@@ -543,14 +532,21 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const selectedStart = Math.max(0, Math.min(trimRange[0], originalDuration));
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
 
-      const { error: dbError } = await supabase.from("spliks").insert({
+      // Build base description (existing behavior)
+      const baseDesc =
+        (description || "").trim() ||
+        (showTrimmer
+          ? `Trimmed: ${selectedStart.toFixed(1)}s - ${enforcedEnd.toFixed(1)}s`
+          : "");
+
+      // 👇 mood tag appended to description if chosen (no DB column needed)
+      const moodTag = mood ? ` #mood=${mood}` : "";
+      const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
+
+      const payload: any = {
         user_id: currentUser.id,
         title,
-        description:
-          description ||
-          (showTrimmer
-            ? `Trimmed: ${selectedStart.toFixed(1)}s - ${enforcedEnd.toFixed(1)}s`
-            : ""),
+        description: finalDescription.trim(),
         video_url: publicUrl,
         duration: MAX_VIDEO_DURATION,
         file_size: file.size,
@@ -559,20 +555,21 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         trim_start: selectedStart,
         trim_end: enforcedEnd,
         is_food: isFood,
-        // NEW: Persist mood (text). Ensure a `mood` column exists in `spliks`.
-        mood,
-      });
+        // no mood column
+      };
+
+      const { error: dbError } = await supabase.from("spliks").insert(payload);
       if (dbError) throw dbError;
 
       setUploadProgress(100);
       toast({ title: "Upload successful!", description: "Your 3-second Splik is live." });
 
-      // Reset
+      // Reset UI
       setFile(null);
       setTitle("");
       setDescription("");
       setIsFood(false);
-      setMood(""); // NEW: reset mood
+      setMood("");
       if (videoPreview) URL.revokeObjectURL(videoPreview);
       setVideoPreview(null);
       setCurrentTime(0);
@@ -752,8 +749,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                               <div className="flex justify-between text-white text-xs font-medium">
                                 <span>{formatTime(currentTime - trimRange[0])}</span>
                                 <span>
-                                  Duration: {(trimRange[1] - trimRange[0]).toFixed(1)}s
-                                  {" "}
+                                  Duration: {(trimRange[1] - trimRange[0]).toFixed(1)}s{" "}
                                   <span className="opacity-80">(saved as exactly 3.0s)</span>
                                 </span>
                               </div>
@@ -826,7 +822,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                           size="sm"
                           variant="outline"
                           onClick={() => {
-                            const midStart = Math.max(0, (originalDuration / 2) - 1.5);
+                            const midStart = Math.max(0, originalDuration / 2 - 1.5);
                             setTrimRange([midStart, Math.min(midStart + 3, originalDuration)]);
                             if (videoRef.current) {
                               videoRef.current.currentTime = midStart;
@@ -882,12 +878,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   />
                 </div>
 
-                {/* NEW: Mood (required) */}
+                {/* Mood (optional) */}
                 <div>
-                  <Label htmlFor="mood">Mood (required)</Label>
+                  <Label htmlFor="mood">Mood (optional)</Label>
                   <Select value={mood} onValueChange={setMood} disabled={uploading}>
                     <SelectTrigger id="mood" className="w-full">
-                      <SelectValue placeholder="Choose the mood for this video" />
+                      <SelectValue placeholder="Choose the mood for this video (optional)" />
                     </SelectTrigger>
                     <SelectContent>
                       {MOOD_OPTIONS.map((m) => (
@@ -898,7 +894,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     </SelectContent>
                   </Select>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Viewers can browse by mood. Pick the one that fits best.
+                    If chosen, we’ll tag the description with <code>#mood=&lt;value&gt;</code> so viewers can see it.
                   </p>
                 </div>
 
@@ -941,7 +937,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
                     </div>
                   </div>
-                  <Progress value={uploadProgress} className="w-full" />
+                  <Progress value={uploading ? uploadProgress : 0} className="w-full" />
                 </div>
               )}
 
@@ -956,7 +952,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     setTitle("");
                     setDescription("");
                     setIsFood(false);
-                    setMood(""); // NEW: reset
+                    setMood("");
                     setIsPlaying(false);
                     setVideoReady(false);
                     setVideoError(null);
