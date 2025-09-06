@@ -34,6 +34,7 @@ import Contact from "./pages/support/Contact";
 import ForBrands from "./pages/business/ForBrands";
 import ForCreators from "./pages/business/ForCreators";
 import Press from "./pages/business/Press";
+import MoodsIndex from "@/pages/moods/MoodsIndex";
 import MoodPage from "@/pages/moods/MoodPage";
 
 // NEW: Food page
@@ -92,7 +93,7 @@ const App = () => (
           <Route path="/brands" element={<ForBrands />} />
           <Route path="/creators" element={<ForCreators />} />
           <Route path="/press" element={<Press />} />
-          <Route path="/mood/:mood" element={<MoodPage />} />
+          <Route path="/moods/:mood" element={<MoodPage />} />
 
           {/* Messaging */}
           <Route path="/messages" element={<MessagesInbox />} />
