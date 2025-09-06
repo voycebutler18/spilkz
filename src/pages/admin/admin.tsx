@@ -1,10 +1,18 @@
 // src/pages/Admin.tsx
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { RefreshCw, Users as UsersIcon, Film, Utensils, Activity } from "lucide-react";
+import {
+  RefreshCw,
+  Users as UsersIcon,
+  Film,
+  Utensils,
+  Activity,
+  LayoutDashboard,
+} from "lucide-react";
 
 type Stats = {
   total_users: number;
@@ -33,6 +41,8 @@ type AdminSplikRow = {
 const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString() : "—");
 
 export default function Admin() {
+  const navigate = useNavigate();
+
   const [uid, setUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -72,7 +82,7 @@ export default function Admin() {
       const { data, error } = await supabase.rpc("admin_stats", { p_uid: uid });
       if (error) throw error;
 
-      // RETURNS TABLE(...) comes back as an array. Support JSON return too.
+      // RETURNS TABLE(...) often comes back as array
       const row = Array.isArray(data) ? data[0] : data;
       if (row) {
         setStats(row as Stats);
@@ -131,13 +141,23 @@ export default function Admin() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold">Admin</h1>
-          <Button
-            variant="outline"
-            onClick={() => Promise.all([loadStats(), loadUsers(), loadSpliks()])}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => navigate("/dashboard")}
+              title="Back to Creator Dashboard"
+            >
+              <LayoutDashboard className="h-4 w-4 mr-2" />
+              Creator Dashboard
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => Promise.all([loadStats(), loadUsers(), loadSpliks()])}
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* KPI cards */}
