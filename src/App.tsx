@@ -34,7 +34,8 @@ import Contact from "./pages/support/Contact";
 import ForBrands from "./pages/business/ForBrands";
 import ForCreators from "./pages/business/ForCreators";
 import Press from "./pages/business/Press";
-import MoodsIndex from "@/pages/moods/MoodsIndex";
+
+// Vibe feed
 import MoodPage from "@/pages/moods/MoodPage";
 
 // NEW: Food page
@@ -72,14 +73,18 @@ const App = () => (
 
           {/* Profiles & videos */}
           <Route path="/profile/:id" element={<Profile />} />
-          {/* ✅ Primary, resilient route (username or UUID handled inside the page) */}
+          {/* Primary route (works with username or UUID handled in page) */}
           <Route path="/creator/:slug" element={<CreatorProfile />} />
-          {/* ✅ Back-compat for any links that still use :username */}
+          {/* Back-compat route (pattern is identical; optional) */}
           <Route path="/creator/:username" element={<CreatorProfile />} />
           <Route path="/video/:id" element={<VideoPage />} />
 
           {/* NEW: Food route */}
           <Route path="/food" element={<Food />} />
+
+          {/* Vibe Feed (moods) */}
+          <Route path="/moods" element={<MoodPage />} />
+          <Route path="/moods/:mood" element={<MoodPage />} />
 
           {/* Legal / community / business / support */}
           <Route path="/terms" element={<Terms />} />
@@ -93,7 +98,6 @@ const App = () => (
           <Route path="/brands" element={<ForBrands />} />
           <Route path="/creators" element={<ForCreators />} />
           <Route path="/press" element={<Press />} />
-          <Route path="/moods/:mood" element={<MoodPage />} />
 
           {/* Messaging */}
           <Route path="/messages" element={<MessagesInbox />} />
