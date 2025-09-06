@@ -32,8 +32,9 @@ import Login from "./pages/Auth/Login";
 import Signup from "./pages/Auth/Signup";
 import AuthCallback from "./pages/Auth/AuthCallback";
 import ResetPassword from "./pages/Auth/ResetPassword";
-import AdminDashboard from "@/pages/admin/AdminDashboard";
 
+// ✅ ADMIN: match your actual file name & casing
+import Admin from "./pages/admin/admin";
 
 // Dashboard
 import CreatorDashboard from "./pages/Dashboard/CreatorDashboard";
@@ -57,22 +58,17 @@ import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalConte
 
 const queryClient = new QueryClient();
 
-/**
- * Back-compat route: visiting /upload just opens the global upload modal.
- * When the modal closes, we navigate home.
- */
+/** Back-compat: /upload opens the global upload modal and then routes home */
 function UploadRoute() {
   const { openUpload, isOpen } = useUploadModal();
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Open the modal and, after success, route to dashboard (matches your header button)
     openUpload({ onCompleteNavigateTo: "/dashboard" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    // If the user closes the modal while on /upload, send them home
     if (!isOpen) {
       const t = setTimeout(() => navigate("/", { replace: true }), 150);
       return () => clearTimeout(t);
@@ -88,7 +84,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        {/* IMPORTANT: Provider must be INSIDE BrowserRouter because it uses useNavigate/useLocation */}
+        {/* Provider must be INSIDE BrowserRouter (it uses navigation hooks) */}
         <UploadModalProvider>
           <Routes>
             {/* Auth screens (no layout) */}
@@ -96,12 +92,14 @@ const App = () => (
             <Route path="/signup" element={<Signup />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/admin" element={<AdminDashboard />} />
+
+            {/* Admin (no public layout; you can move inside AppLayout if you want header/footer) */}
+            <Route path="/admin" element={<Admin />} />
 
             {/* Back-compat upload route (opens modal) */}
             <Route path="/upload" element={<UploadRoute />} />
 
-            {/* Site wrapped with global layout (Header + LeftSidebar + Footer) */}
+            {/* Site with global layout */}
             <Route element={<AppLayout />}>
               {/* Core */}
               <Route path="/" element={<Index />} />
@@ -124,7 +122,6 @@ const App = () => (
               {/* Profiles & videos */}
               <Route path="/profile/:id" element={<Profile />} />
               <Route path="/creator/:slug" element={<CreatorProfile />} />
-              {/* (You had a duplicate /creator/:username; it's redundant so removed) */}
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/search" element={<Search />} />
 
