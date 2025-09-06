@@ -325,7 +325,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsMuted(!isMuted);
   };
 
-  /* ----- Promotion management helpers (safe even if your RPC/table isn’t set yet) ---- */
+  /* ----- Promotion management helpers (safe even if your RPC/table isn't set yet) ---- */
 
   const handleStopPromotion = async () => {
     try {
@@ -420,71 +420,13 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         </div>
 
-        {/* Promote CTA - Show for owner with different states (requested change) */}
-        {isOwner && (
-          <div className="absolute top-2 right-3 z-[60]">
-            {isBoosted ? (
-              <div className="flex items-center gap-2">
-                <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
-                  <Rocket className="h-3 w-3 mr-1" />
-                  Promoted
-                </Badge>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setShowBoostModal(true);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onTouchStart={(e) => e.stopPropagation()}
-                      className="
-                        pointer-events-auto flex items-center gap-1
-                        rounded-full px-2 py-1 text-xs font-medium
-                        bg-black/80 text-white hover:bg-black/90
-                        transition-colors
-                      "
-                      aria-label="Manage promotion"
-                    >
-                      Edit
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" sideOffset={6}>
-                    <DropdownMenuItem onClick={handleMakePrimaryPromotion} className="cursor-pointer">
-                      Make Primary
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleStopPromotion} className="cursor-pointer text-red-600">
-                      Stop Promotion
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ) : (
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setShowBoostModal(true);
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                onTouchStart={(e) => e.stopPropagation()}
-                className="
-                  pointer-events-auto
-                  flex items-center gap-2 rounded-full
-                  px-3 py-1.5 text-sm font-semibold
-                  bg-gradient-to-r from-cyan-400 to-emerald-400
-                  text-black shadow-lg ring-1 ring-black/10
-                  hover:from-cyan-300 hover:to-emerald-300
-                  transition-colors
-                "
-                aria-label="Promote this video"
-              >
-                <Rocket className="h-4 w-4" />
-                Promote Video
-              </button>
-            )}
+        {/* Promoted badge - only show if boosted, positioned to not block logo */}
+        {isBoosted && (
+          <div className="absolute top-2 right-3 z-30 pointer-events-none">
+            <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
+              <Rocket className="h-3 w-3 mr-1" />
+              Promoted
+            </Badge>
           </div>
         )}
 
@@ -556,8 +498,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         )}
       </div>
 
-      {/* NOTE: removed the separate boosted badge block on purpose */}
-
       {/* CREATOR + MENU */}
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
@@ -607,14 +547,18 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={5}>
-              {isOwner && !isBoosted && (
-                <DropdownMenuItem
-                  onClick={() => setShowBoostModal(true)}
-                  className="cursor-pointer text-primary"
-                >
-                  <Rocket className="h-4 w-4 mr-2" />
-                  Promote Video
-                </DropdownMenuItem>
+              {/* Show promotion management options only for owner of boosted videos */}
+              {isOwner && isBoosted && (
+                <>
+                  <DropdownMenuItem onClick={handleMakePrimaryPromotion} className="cursor-pointer">
+                    <Rocket className="h-4 w-4 mr-2" />
+                    Make Primary
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleStopPromotion} className="cursor-pointer text-red-600">
+                    <Rocket className="h-4 w-4 mr-2" />
+                    Stop Promotion
+                  </DropdownMenuItem>
+                </>
               )}
               <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
                 <Copy className="h-4 w-4 mr-2" />
