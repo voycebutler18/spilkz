@@ -2,6 +2,7 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { Badge } from "@/components/ui/badge";
 
 const LeftSidebar: React.FC = () => {
   const [user, setUser] = React.useState<any>(null);
@@ -52,12 +53,24 @@ const LeftSidebar: React.FC = () => {
           >
             Discover
           </Link>
+
           <Link
             to="/food"
             className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
           >
             Food
           </Link>
+
+          {/* Splikz Dating (coming soon) */}
+          <div
+            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 hover:bg-white/5 cursor-not-allowed select-none"
+            aria-disabled="true"
+            title="Splikz Dating is coming soon"
+          >
+            <span>Splikz Dating</span>
+            <Badge variant="secondary" className="text-[10px]">Coming soon</Badge>
+          </div>
+
           <Link
             to="/brands"
             className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
