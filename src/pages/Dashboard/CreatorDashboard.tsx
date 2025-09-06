@@ -363,34 +363,6 @@ const CreatorDashboard = () => {
           {/* ACTION BUTTONS (now includes Messages with unread badge) */}
           <div className="flex gap-2 items-center">
             <Button
-              variant="outline"
-              onClick={() => navigate("/messages")}
-              className="relative"
-              title="Messages"
-            >
-              <MessageSquare className="mr-2 h-4 w-4" />
-              Messages
-              {unreadCount > 0 && (
-                <span className="ml-2 inline-flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-[10px] leading-none h-4 px-1.5">
-                  {unreadCount}
-                </span>
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => navigate("/dashboard/favorites")}
-            >
-              <Bookmark className="mr-2 h-4 w-4" />
-              My Favorites
-            </Button>
-
-            <Button onClick={() => setUploadModalOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Upload Video
-            </Button>
-          </div>
-        </div>
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
