@@ -33,7 +33,7 @@ import Signup from "./pages/Auth/Signup";
 import AuthCallback from "./pages/Auth/AuthCallback";
 import ResetPassword from "./pages/Auth/ResetPassword";
 
-// ✅ ADMIN: match your actual file name & casing
+// ✅ ADMIN (matches actual file path & casing)
 import Admin from "./pages/admin/admin";
 
 // Dashboard
@@ -93,7 +93,7 @@ const App = () => (
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 
-            {/* Admin (no public layout; you can move inside AppLayout if you want header/footer) */}
+            {/* Admin (no public layout) */}
             <Route path="/admin" element={<Admin />} />
 
             {/* Back-compat upload route (opens modal) */}
