@@ -1,8 +1,6 @@
 // src/components/layout/LeftSidebar.tsx
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
 const LeftSidebar: React.FC = () => {
@@ -42,25 +40,12 @@ const LeftSidebar: React.FC = () => {
       aria-label="Left navigation"
     >
       <div className="w-full px-3 py-3">
-        {/* Create a Splik */}
-        <Card className="border-white/10 bg-gradient-to-b from-white/5 to-transparent">
-          <CardContent className="p-4">
-            <div className="mb-2 text-sm font-semibold">Create a Splik</div>
-            <p className="text-xs text-muted-foreground">
-              Share a 3-second mood. Keep it crisp.
-            </p>
-            <Button asChild size="sm" className="mt-3">
-              <Link to="/upload">Upload</Link>
-            </Button>
-          </CardContent>
-        </Card>
-
         {/* Browse */}
-        <div className="mt-4 border-t border-border/60 pt-3 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <div className="border-b border-border/60 pb-3 text-[11px] uppercase tracking-wide text-muted-foreground">
           Browse
         </div>
 
-        <nav className="mt-1 space-y-1">
+        <nav className="mt-3 space-y-1">
           <Link
             to="/explore"
             className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
