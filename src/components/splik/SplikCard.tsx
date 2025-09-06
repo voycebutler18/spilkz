@@ -1,4 +1,3 @@
-
 // src/components/SplikCard.tsx
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
@@ -416,15 +415,13 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
-              className="
-                relative
-                flex items-center gap-2 rounded-full
-                px-3 py-1.5 text-sm font-semibold
-                bg-gradient-to-r from-cyan-400 to-emerald-400
-                text-black shadow-lg ring-1 ring-black/10
-                hover:from-cyan-300 hover:to-emerald-300
-                transition-colors
-              "
+              className="relative flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold bg-gradient-to-r from-cyan-400 to-emerald-400 text-black shadow-lg ring-1 ring-black/10 hover:from-cyan-300 hover:to-emerald-300 transition-colors"
+            >
+              <Rocket className="h-4 w-4" />
+              Promote
+            </button>
+          </div>
+        )}
 
         {/* Promoted badge (if already boosted) – does NOT block the promote pill */}
         {isBoosted && (
