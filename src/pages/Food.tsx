@@ -704,9 +704,10 @@ export default function Food() {
                 <Button
                   onClick={openNearby}
                   size="sm"
-                  className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+                  className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 gap-1 px-3"
                 >
-                  <MapPin className="h-4 w-4" />
+                  <MapPin className="h-3 w-3" />
+                  <span className="text-xs font-medium">Find local restaurants</span>
                 </Button>
               </div>
 
