@@ -27,17 +27,36 @@ import AvatarUploader from "@/components/profile/AvatarUploader";
 import { Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield } from "lucide-react";
 import { toast } from "sonner";
 
+/* ----------------------------- Types ----------------------------- */
 interface Profile {
   id: string;
-  username: string;
-  display_name: string;
-  bio: string;
-  avatar_url: string;
+  username: string | null;
+  display_name: string | null;
+  bio: string | null;
+  avatar_url: string | null;
   followers_count: number;
   following_count: number;
   spliks_count: number;
   followers_private?: boolean;
   following_private?: boolean;
+}
+
+interface SplikRow {
+  id: string;
+  user_id: string;
+  title: string | null;
+  description: string | null;
+  video_url: string | null;
+  thumbnail_url: string | null;
+  created_at: string;
+  likes_count?: number | null;
+  comments_count?: number | null;
+  views_count?: number | null; // <-- important
+  profile?: {
+    username?: string | null;
+    display_name?: string | null;
+    avatar_url?: string | null;
+  } | null;
 }
 
 interface DashboardStats {
@@ -47,18 +66,23 @@ interface DashboardStats {
   avgReactionsPerVideo: number;
 }
 
+/* ----------------------------- Component ----------------------------- */
 const CreatorDashboard = () => {
   const navigate = useNavigate();
-
   const [loading, setLoading] = useState(true);
+
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [spliks, setSpliks] = useState<any[]>([]);
+  const [spliks, setSpliks] = useState<SplikRow[]>([]);
   const [stats, setStats] = useState<DashboardStats>({
     totalSpliks: 0,
     followers: 0,
     totalReactions: 0,
     avgReactionsPerVideo: 0,
   });
+
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState(false);
   const [formData, setFormData] = useState({
@@ -68,16 +92,37 @@ const CreatorDashboard = () => {
     avatar_url: "",
   });
 
-  // NEW: admin flag
-  const [isAdmin, setIsAdmin] = useState(false);
-
   const channelCleanup = useRef<null | (() => void)>(null);
 
+  /* ------------------------ Auth + initial load ------------------------ */
   useEffect(() => {
-    checkAuth();
-    const cleanup = setupRealtimeUpdates();
+    (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id || null;
+      if (!uid) {
+        navigate("/login");
+        return;
+      }
+      setCurrentUserId(uid);
+
+      // admin check
+      try {
+        const { data: adminRow } = await supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", uid)
+          .maybeSingle();
+        setIsAdmin(!!adminRow?.user_id);
+      } catch {
+        setIsAdmin(false);
+      }
+
+      await Promise.all([fetchProfile(uid), fetchSpliks(uid)]);
+      setupRealtime(uid);
+      setLoading(false);
+    })();
+
     return () => {
-      if (typeof cleanup === "function") cleanup();
       if (channelCleanup.current) {
         try {
           channelCleanup.current();
@@ -88,170 +133,144 @@ const CreatorDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const setupRealtimeUpdates = () => {
-    const interval = setInterval(() => {
-      if (profile) {
-        fetchStats();
-      }
-    }, 5000);
+  /* ---------------------------- Realtime ---------------------------- */
+  const setupRealtime = (uid: string) => {
+    // Clean any previous
+    if (channelCleanup.current) {
+      try {
+        channelCleanup.current();
+      } catch {}
+      channelCleanup.current = null;
+    }
 
-    const channel = supabase
-      .channel("dashboard-updates")
+    const ch = supabase
+      .channel("creator-dashboard")
+      // only your spliks
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "spliks" },
-        () => {
-          fetchSpliks();
-          fetchStats();
+        { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        (payload) => {
+          const row = payload.new as SplikRow;
+          setSpliks((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
+          recomputeStatsFromList((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
         }
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "profiles" },
+        { event: "UPDATE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
         (payload) => {
-          const newProfile = payload.new as Profile;
-          if (newProfile && newProfile.id === profile?.id) {
-            setProfile(newProfile);
-            updateStatsFromProfile(newProfile);
-          }
+          const row = payload.new as SplikRow;
+          setSpliks((prev) =>
+            prev.map((s) => (s.id === row.id ? { ...s, ...row } : s))
+          );
+          recomputeStatsFromList((prev) =>
+            prev.map((s) => (s.id === row.id ? { ...s, ...row } : s))
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        (payload) => {
+          const deletedId = (payload.old as any)?.id as string;
+          setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
+          recomputeStatsFromList((prev) => prev.filter((s) => s.id !== deletedId));
+        }
+      )
+      // profile changes (followers_count / spliks_count, etc.)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${uid}` },
+        (payload) => {
+          const p = payload.new as Profile;
+          setProfile(p);
+          updateStatsFromProfile(p);
         }
       )
       .subscribe();
 
-    channelCleanup.current = () => supabase.removeChannel(channel);
-
-    return () => {
-      clearInterval(interval);
-      supabase.removeChannel(channel);
-    };
+    channelCleanup.current = () => supabase.removeChannel(ch);
   };
 
-  const checkAuth = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      navigate("/login");
-      return;
-    }
-
-    // admin check (admin_users has user_id uuid)
-    try {
-      const { data: adminRow, error: adminErr } = await supabase
-        .from("admin_users")
-        .select("user_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (!adminErr && adminRow?.user_id) setIsAdmin(true);
-      else setIsAdmin(false);
-    } catch {
-      setIsAdmin(false);
-    }
-
-    await Promise.all([fetchProfile(user.id), fetchSpliks()]);
-  };
-
+  /* ----------------------------- Fetchers ----------------------------- */
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
       if (error) throw error;
 
-      if (data) {
-        setProfile(data);
-        setFormData({
-          username: data.username || "",
-          display_name: data.display_name || "",
-          bio: data.bio || "",
-          avatar_url: data.avatar_url || "",
-        });
-        updateStatsFromProfile(data);
-      }
-    } catch (error) {
-      console.error("Error fetching profile:", error);
-    } finally {
-      setLoading(false);
+      setProfile(data as Profile);
+      setFormData({
+        username: data.username || "",
+        display_name: data.display_name || "",
+        bio: data.bio || "",
+        avatar_url: data.avatar_url || "",
+      });
+      updateStatsFromProfile(data as Profile);
+    } catch (e) {
+      console.error("Error fetching profile:", e);
     }
   };
 
-  const updateStatsFromProfile = (profileData: Profile) => {
+  const fetchSpliks = async (userId: string) => {
+    try {
+      const { data: rows, error } = await supabase
+        .from("spliks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      // attach lightweight profile once for convenience (UI badges/avatars)
+      let prof: Profile | null = null;
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("username, display_name, avatar_url")
+          .eq("id", userId)
+          .single();
+        prof = (data as any) || null;
+      } catch {}
+
+      const merged: SplikRow[] =
+        rows?.map((r) => ({ ...(r as SplikRow), profile: prof })) ?? [];
+
+      setSpliks(merged);
+      recomputeStatsFromList(merged);
+    } catch (e) {
+      console.error("Error fetching videos:", e);
+    }
+  };
+
+  /* ------------------------- Stats helpers ------------------------- */
+  const updateStatsFromProfile = (p: Profile) => {
     setStats((prev) => ({
       ...prev,
-      followers: profileData.followers_count,
-      totalSpliks: profileData.spliks_count,
+      followers: p.followers_count ?? 0,
+      totalSpliks: p.spliks_count ?? 0,
     }));
   };
 
-  const fetchSpliks = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    try {
-      const { data: spliksData, error: spliksError } = await supabase
-        .from("spliks")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (spliksError) throw spliksError;
-
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("username, display_name, avatar_url")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError && profileError.code !== "PGRST116") {
-        console.error("Error fetching profile for spliks:", profileError);
-      }
-
-      const data =
-        spliksData?.map((splik) => ({
-          ...splik,
-          profile: profileData || null,
-        })) || [];
-
-      setSpliks(data || []);
-
+  const recomputeStatsFromList = (listOrUpdater: SplikRow[] | ((prev: SplikRow[]) => SplikRow[])) => {
+    setSpliks((prev) => {
+      const list = typeof listOrUpdater === "function" ? (listOrUpdater as any)(prev) : listOrUpdater;
       const totalReactions =
-        data?.reduce(
-          (acc: number, s: any) =>
-            acc + (s.likes_count || 0) + (s.comments_count || 0),
-          0
-        ) || 0;
+        list.reduce((acc, s) => acc + (s.likes_count || 0) + (s.comments_count || 0), 0) || 0;
+      const totalSpliks = list.length;
+      const avgReactionsPerVideo = totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
 
-      const totalSpliks = data?.length || 0;
-      const avgReactionsPerVideo =
-        totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
-
-      setStats((prev) => ({
-        ...prev,
+      setStats((st) => ({
+        ...st,
         totalSpliks,
         totalReactions,
         avgReactionsPerVideo,
       }));
-    } catch (error) {
-      console.error("Error fetching videos:", error);
-    }
+      return list;
+    });
   };
 
-  const fetchStats = async () => {
-    await fetchSpliks();
-  };
-
+  /* ------------------------- Profile update ------------------------- */
   const handleProfileUpdate = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
+    if (!currentUserId) return;
     try {
       const { error } = await supabase
         .from("profiles")
@@ -261,13 +280,12 @@ const CreatorDashboard = () => {
           bio: formData.bio,
           avatar_url: formData.avatar_url,
         })
-        .eq("id", user.id);
-
+        .eq("id", currentUserId);
       if (error) throw error;
 
       toast.success("Profile updated successfully");
       setEditingProfile(false);
-      fetchProfile(user.id);
+      fetchProfile(currentUserId);
     } catch (error: any) {
       if (error.message?.includes("duplicate key")) {
         toast.error("Username already taken");
@@ -278,29 +296,21 @@ const CreatorDashboard = () => {
   };
 
   const togglePrivacy = async (field: "followers_private" | "following_private") => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user || !profile) return;
-
+    if (!currentUserId || !profile) return;
     const newValue = !profile[field];
-
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ [field]: newValue })
-        .eq("id", user.id);
-
+      const { error } = await supabase.from("profiles").update({ [field]: newValue }).eq("id", currentUserId);
       if (error) throw error;
 
       setProfile({ ...profile, [field]: newValue });
       toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
-    } catch (error) {
-      console.error("Error updating privacy:", error);
+    } catch (e) {
+      console.error("Error updating privacy:", e);
       toast.error("Failed to update privacy settings");
     }
   };
 
+  /* ------------------------------ UI ------------------------------ */
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
@@ -339,9 +349,7 @@ const CreatorDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Videos
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total Videos</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
@@ -354,9 +362,7 @@ const CreatorDashboard = () => {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Reactions
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total Reactions</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
@@ -366,17 +372,13 @@ const CreatorDashboard = () => {
                   <MessageCircle className="h-5 w-5" />
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Likes + comments across all videos
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Likes + comments across all videos</p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Followers
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Followers</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
@@ -389,18 +391,14 @@ const CreatorDashboard = () => {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Avg Reactions / Video
-              </CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Avg Reactions / Video</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
                 <div className="text-2xl font-bold">{stats.avgReactionsPerVideo}</div>
                 <TrendingUp className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Average engagement per post
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Average engagement per post</p>
             </CardContent>
           </Card>
         </div>
@@ -416,6 +414,7 @@ const CreatorDashboard = () => {
           {/* My Videos */}
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
+              // Your VideoGrid should render a small badge with views_count for each item.
               <VideoGrid spliks={spliks} />
             ) : (
               <Card className="p-12 text-center">
@@ -487,9 +486,7 @@ const CreatorDashboard = () => {
                       <Input
                         id="display_name"
                         value={formData.display_name}
-                        onChange={(e) =>
-                          setFormData({ ...formData, display_name: e.target.value })
-                        }
+                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
                         placeholder="Your display name"
                       />
                     </div>
@@ -608,7 +605,7 @@ const CreatorDashboard = () => {
         open={uploadModalOpen}
         onClose={() => setUploadModalOpen(false)}
         onUploadComplete={() => {
-          fetchSpliks();
+          if (currentUserId) fetchSpliks(currentUserId);
           setUploadModalOpen(false);
         }}
       />
