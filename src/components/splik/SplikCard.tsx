@@ -424,6 +424,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
                 hover:from-cyan-300 hover:to-emerald-300
                 transition-colors
               "
+            >
+              <Rocket className="h-4 w-4" />
+              Promote
+            </button>
+          </div>
+        )}
 
         {/* Promoted badge (if already boosted) – does NOT block the promote pill */}
         {isBoosted && (
