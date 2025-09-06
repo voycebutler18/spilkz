@@ -19,14 +19,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
 import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
-import { Video, Users, TrendingUp, Settings, Heart, MessageCircle } from "lucide-react";
+import { Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -69,6 +67,9 @@ const CreatorDashboard = () => {
     bio: "",
     avatar_url: "",
   });
+
+  // NEW: admin flag
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const channelCleanup = useRef<null | (() => void)>(null);
 
@@ -133,6 +134,21 @@ const CreatorDashboard = () => {
       navigate("/login");
       return;
     }
+
+    // admin check (admin_users has user_id uuid)
+    try {
+      const { data: adminRow, error: adminErr } = await supabase
+        .from("admin_users")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (!adminErr && adminRow?.user_id) setIsAdmin(true);
+      else setIsAdmin(false);
+    } catch {
+      setIsAdmin(false);
+    }
+
     await Promise.all([fetchProfile(user.id), fetchSpliks()]);
   };
 
@@ -144,7 +160,7 @@ const CreatorDashboard = () => {
         .eq("id", userId)
         .single();
 
-    if (error) throw error;
+      if (error) throw error;
 
       if (data) {
         setProfile(data);
@@ -288,25 +304,35 @@ const CreatorDashboard = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <Header />
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-        <Footer />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background">
-      <Header />
-
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Title row — action bar removed */}
+        {/* Title row */}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Creator Dashboard
           </h1>
+
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => navigate("/admin")}
+                title="Open Admin Console"
+              >
+                <Shield className="h-4 w-4" />
+                Admin
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* KPIs */}
@@ -451,7 +477,9 @@ const CreatorDashboard = () => {
                         onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                         placeholder="@username"
                       />
-                      <p className="text-xs text-muted-foreground mt-1">This will be your unique identifier</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        This will be your unique identifier
+                      </p>
                     </div>
 
                     <div>
@@ -459,7 +487,9 @@ const CreatorDashboard = () => {
                       <Input
                         id="display_name"
                         value={formData.display_name}
-                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, display_name: e.target.value })
+                        }
                         placeholder="Your display name"
                       />
                     </div>
@@ -573,6 +603,7 @@ const CreatorDashboard = () => {
         </Tabs>
       </div>
 
+      {/* Upload modal mounted here */}
       <VideoUploadModal
         open={uploadModalOpen}
         onClose={() => setUploadModalOpen(false)}
@@ -581,8 +612,6 @@ const CreatorDashboard = () => {
           setUploadModalOpen(false);
         }}
       />
-
-      <Footer />
     </div>
   );
 };
