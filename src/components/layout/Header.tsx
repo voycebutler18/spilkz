@@ -106,7 +106,7 @@ const Header: React.FC = () => {
     <header className="sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-3 sm:px-4">
         {/* Left: Logo */}
-        <Link to="/" className="flex items-center gap-2">
+        <Link to="/" className="flex items-center gap-2" aria-label="Splikz Home">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
             <Sparkles className="h-4 w-4 text-white" />
           </span>
@@ -131,9 +131,9 @@ const Header: React.FC = () => {
           />
         </div>
 
-        {/* Desktop: Primary nav per spec */}
-        <nav className="ml-auto hidden items-center gap-1 md:flex">
-          <Button variant="ghost" size="sm" className="gap-2" onClick={() => navigate("/")}>
+        {/* Desktop: primary nav */}
+        <nav className="ml-auto hidden items-center gap-2 md:flex">
+          <Button variant="ghost" size="sm" className="gap-2" onClick={() => navigate("/")} aria-label="Home">
             <Home className="h-4 w-4" /> Home
           </Button>
 
@@ -143,9 +143,9 @@ const Header: React.FC = () => {
               size="sm"
               className="gap-2"
               onClick={() => navigate("/dashboard")}
+              aria-label="Creator Dashboard"
             >
-              {/* If you have a specific icon for creator analytics, swap it in */}
-              <span className="inline-flex items-center">Creator Dashboard</span>
+              Creator Dashboard
             </Button>
           )}
 
@@ -154,6 +154,7 @@ const Header: React.FC = () => {
             size="sm"
             className="gap-2"
             onClick={() => navigate("/messages")}
+            aria-label="Messages"
           >
             <MessageSquare className="h-4 w-4" /> Messages
           </Button>
@@ -161,60 +162,72 @@ const Header: React.FC = () => {
           <Button
             size="sm"
             className="gap-2"
-            onClick={() => navigate("/upload")}
+            onClick={() => (user ? navigate("/upload") : navigate("/login"))}
             aria-label="Upload"
+            title={user ? "Upload a 3-second Splik" : "Log in to upload"}
           >
             <Upload className="h-4 w-4" /> Upload
           </Button>
 
-          {/* Avatar menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="p-0 h-9 w-9 rounded-full" aria-label="Account">
-                <Avatar className="h-9 w-9">
-                  {profile?.avatar_url ? (
-                    <AvatarImage src={profile.avatar_url} alt="Avatar" />
-                  ) : null}
-                  <AvatarFallback>{avatarInitial}</AvatarFallback>
-                </Avatar>
+          {/* Account area */}
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="p-0 h-9 w-9 rounded-full"
+                  aria-label="Account"
+                  title="Account"
+                >
+                  <Avatar className="h-9 w-9">
+                    {profile?.avatar_url ? (
+                      <AvatarImage src={profile.avatar_url} alt="Avatar" />
+                    ) : null}
+                    <AvatarFallback>{avatarInitial}</AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem asChild>
+                  <Link to={`/profile/${user.id}`}>Profile</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard/favorites">Favorites</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard">Creator Dashboard</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleSignOut}>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            // <<< Clear CTAs when logged out
+            <div className="flex items-center gap-2">
+              <Link
+                to="/login"
+                className="text-sm font-medium text-foreground/80 hover:text-foreground"
+                aria-label="Log in"
+              >
+                Log in
+              </Link>
+              <Button
+                asChild
+                className="bg-gradient-to-r from-purple-600 to-cyan-500 text-white"
+              >
+                <Link to="/signup" aria-label="Sign up">Sign up</Link>
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              {user ? (
-                <>
-                  <DropdownMenuItem asChild>
-                    <Link to={`/profile/${user.id}`}>Profile</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/dashboard/favorites">Favorites</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/dashboard">Creator Dashboard</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleSignOut}>
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Sign out
-                  </DropdownMenuItem>
-                </>
-              ) : (
-                <>
-                  <DropdownMenuItem asChild>
-                    <Link to="/login">Log in</Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link to="/signup">Sign up</Link>
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+            </div>
+          )}
         </nav>
 
-        {/* Mobile: Sheet Menu — keeps quick access; search handled via /search page */}
+        {/* Mobile: Drawer menu */}
         <div className="md:hidden ml-auto">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Open menu" className="relative">
+              <Button variant="ghost" size="icon" aria-label="Open menu">
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
@@ -251,7 +264,7 @@ const Header: React.FC = () => {
                   className="justify-start gap-2"
                   onClick={() => {
                     setOpen(false);
-                    navigate("/upload");
+                    user ? navigate("/upload") : navigate("/login");
                   }}
                 >
                   <Upload className="h-4 w-4" /> Upload
