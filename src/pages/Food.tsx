@@ -1,41 +1,30 @@
 // src/pages/Food.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
-
+import SplikCard from "@/components/splik/SplikCard";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-import SplikCard from "@/components/splik/SplikCard";
-
-import { useToast } from "@/components/ui/use-toast";
-import { Button } from "@/components/ui/button";
+import { Loader2, Utensils, RefreshCw, MapPin, LocateFixed, Search as SearchIcon, ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { applySessionRotation, forceNewRotation, type SplikWithScore } from "@/lib/feed";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
-
-import { Loader2, Utensils, RefreshCw, MapPin, Flame, Shield } from "lucide-react";
-import {
-  applySessionRotation,
-  forceNewRotation,
-  type SplikWithScore,
-} from "@/lib/feed";
+import { Input } from "@/components/ui/input";
 
 type Profile = {
   id: string;
   username?: string | null;
+  handle?: string | null;
+  first_name?: string | null;
   display_name?: string | null;
   avatar_url?: string | null;
-  prefer_food?: boolean | null; // optional column
 };
 
 type SplikRow = {
@@ -50,133 +39,134 @@ type SplikRow = {
   created_at: string;
   is_food: boolean;
   boost_score?: number | null;
-  // optional geo fields
-  geo_lat?: number | null;
-  geo_lng?: number | null;
-  location_name?: string | null;
   profile?: Profile;
 };
 
+type NearbyRestaurant = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  distanceKm: number;
+  address?: string;
+  cuisine?: string;
+};
+
 export default function Food() {
-  const { toast } = useToast();
-  const navigate = useNavigate();
-
-  // user/auth
-  const [user, setUser] = useState<any>(null);
-
-  // feed state
   const [spliks, setSpliks] = useState<SplikRow[]>([]);
-  const [rawFood, setRawFood] = useState<SplikRow[]>([]); // for nearby/top creator calcs
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const { toast } = useToast();
 
-  // autoplay container
-  const feedRef = useRef<HTMLDivElement | null>(null);
+  // Autoplay ref
+  const foodFeedRef = useRef<HTMLDivElement | null>(null);
 
-  // prefer food toggle (persist)
-  const [preferFood, setPreferFood] = useState<boolean>(() => {
-    const ls = localStorage.getItem("prefer_food");
-    return ls === "1";
-  });
+  // Nearby restaurants modal state
+  const [nearbyOpen, setNearbyOpen] = useState(false);
+  const [locStage, setLocStage] = useState<"idle" | "asking" | "have" | "error">("idle");
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [fetchingNearby, setFetchingNearby] = useState(false);
+  const [nearby, setNearby] = useState<NearbyRestaurant[]>([]);
+  const [nearbyError, setNearbyError] = useState<string | null>(null);
+  const [manualQuery, setManualQuery] = useState("");
 
-  // nearby (requires explicit consent)
-  const [showLocationDialog, setShowLocationDialog] = useState(false);
-  const [geoConsent, setGeoConsent] = useState<boolean>(() => localStorage.getItem("food_geo_consent") === "1");
-  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
-  const [nearby, setNearby] = useState<SplikRow[]>([]);
-  const [nearbyRadiusKm] = useState(35); // fixed for simplicity
-
-  // top creators this week
-  const [topCreators, setTopCreators] = useState<
-    { user_id: string; score: number; uploads: number; likes: number; comments: number; profile?: Profile | null }[]
-  >([]);
-
-  // ---------- auth boot ----------
+  // Get current user
   useEffect(() => {
-    const boot = async () => {
-      const { data } = await supabase.auth.getUser();
-      const u = data.user ?? null;
-      setUser(u);
-
-      // try to hydrate prefer_food from profile if present
-      if (u) {
-        const { data: p } = await supabase
-          .from("profiles")
-          .select("id, prefer_food")
-          .eq("id", u.id)
-          .maybeSingle();
-        if (p && typeof p.prefer_food === "boolean") {
-          setPreferFood(!!p.prefer_food);
-          localStorage.setItem("prefer_food", p.prefer_food ? "1" : "0");
-        }
-      }
-
-      void fetchFood();
-    };
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    boot();
-    return () => sub?.subscription?.unsubscribe();
+    supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) =>
+      setUser(s?.user ?? null)
+    );
+    return () => subscription.unsubscribe();
   }, []);
 
-  // ---------- feed fetch ----------
-  const fetchFood = async (notify = false, newShuffle = false) => {
+  useEffect(() => {
+    fetchFood();
+
+    // Realtime updates for food likes/comments
+    const channel = supabase
+      .channel("food-feed")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "spliks", filter: "is_food=eq.true" },
+        (payload) => {
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === (payload.new as any).id
+                ? {
+                    ...s,
+                    likes_count: (payload.new as any).likes_count ?? 0,
+                    comments_count: (payload.new as any).comments_count ?? 0,
+                  }
+                : s
+            )
+          );
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [user]);
+
+  const fetchFood = async (showRefreshToast: boolean = false, forceNewShuffle: boolean = false) => {
     try {
-      if (notify) setRefreshing(true);
+      if (showRefreshToast) setRefreshing(true);
       else setLoading(true);
 
-      if (newShuffle) forceNewRotation();
+      if (forceNewShuffle) forceNewRotation();
 
       const { data, error } = await supabase
         .from("spliks")
         .select("*")
         .eq("is_food", true)
         .order("created_at", { ascending: false })
-        .limit(150);
+        .limit(100);
 
       if (error) throw error;
 
-      const sane = (data || []).map((r) => ({
-        ...r,
-        likes_count: r.likes_count || 0,
-        comments_count: r.comments_count || 0,
-        boost_score: r.boost_score || 0,
-      })) as SplikRow[];
+      if (data?.length) {
+        const rotated = applySessionRotation(
+          data.map((item) => ({
+            ...item,
+            likes_count: item.likes_count || 0,
+            comments_count: item.comments_count || 0,
+            boost_score: item.boost_score || 0,
+            tag: "food",
+          })) as SplikWithScore[],
+          {
+            userId: user?.id,
+            category: "food",
+            feedType: "discovery" as const,
+            maxResults: 50,
+          }
+        );
 
-      // Rotation for variety
-      const rotated = applySessionRotation(
-        sane.map((row) => ({ ...row, tag: "food" })) as unknown as SplikWithScore[],
-        { userId: user?.id, category: "food", feedType: "discovery", maxResults: 60 }
-      );
+        const withProfiles = await Promise.all(
+          rotated.map(async (row: any) => {
+            const { data: profile } = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("id", row.user_id)
+              .maybeSingle();
+            return { ...row, profile: profile || undefined } as SplikRow;
+          })
+        );
 
-      // attach profiles (simple batched loop)
-      const withProfiles = await Promise.all(
-        rotated.map(async (row: any) => {
-          const { data: p } = await supabase
-            .from("profiles")
-            .select("id, username, display_name, avatar_url")
-            .eq("id", row.user_id)
-            .maybeSingle();
-          return { ...row, profile: p || undefined } as SplikRow;
-        })
-      );
+        setSpliks(withProfiles);
+      } else {
+        setSpliks([]);
+      }
 
-      setSpliks(withProfiles);
-      setRawFood(sane);
-
-      if (notify) {
+      if (showRefreshToast) {
         toast({
-          title: newShuffle ? "Shuffled Food feed!" : "Updated Food feed!",
-          description: newShuffle
-            ? "Enjoy a brand-new mix of 3-second bites."
-            : "Fresh food clips just arrived.",
+          title: forceNewShuffle ? "Food feed reshuffled!" : "Food feed refreshed!",
+          description: forceNewShuffle
+            ? "Showing you a completely new mix of food videos"
+            : "Updated with latest food content",
         });
       }
-    } catch (err) {
-      console.error(err);
+    } catch (e) {
+      console.error("Failed to load food videos:", e);
       toast({
         title: "Error",
         description: "Failed to load food videos",
@@ -188,471 +178,583 @@ export default function Food() {
     }
   };
 
-  // ---------- prefer food toggle ----------
-  const handlePreferFood = async (checked: boolean) => {
-    setPreferFood(checked);
-    localStorage.setItem("prefer_food", checked ? "1" : "0");
-    // your home feed can read this and weight food higher
-    localStorage.setItem("feed_pref_food", checked ? "boost" : "off");
+  // ===== Nearby Restaurants =====
 
-    if (user) {
-      // try to save on profile (safe if column doesn't exist)
-      const { error } = await supabase.from("profiles").update({ prefer_food: checked }).eq("id", user.id);
-      if (error) {
-        // ignore if column missing
-        console.debug("profiles.prefer_food update skipped:", error.message);
-      }
-    }
-
-    toast({
-      title: checked ? "You'll see more Food in Home" : "Food preference turned off",
-      description: checked ? "You can change this anytime." : "Back to a balanced Home feed.",
-    });
+  const openNearby = () => {
+    setNearbyOpen(true);
+    setLocStage("idle");
+    setNearby([]);
+    setNearbyError(null);
   };
 
-  // ---------- location / nearby ----------
-  const askForLocation = () => setShowLocationDialog(true);
-
-  const enableLocation = () => {
-    // user explicitly confirmed in dialog
-    localStorage.setItem("food_geo_consent", "1");
-    setGeoConsent(true);
-
+  const requestLocation = () => {
+    setLocStage("asking");
     if (!("geolocation" in navigator)) {
-      toast({ title: "Location unavailable", description: "Your browser does not support geolocation." });
-      setShowLocationDialog(false);
+      setLocStage("error");
+      setNearbyError("Geolocation is not available on this device.");
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        toast({ title: "Location enabled", description: "Showing nearby food spliks." });
+        const { latitude, longitude } = pos.coords;
+        const c = { lat: Number(latitude), lon: Number(longitude) };
+        setCoords(c);
+        setLocStage("have");
+        void fetchNearbyByCoords(c);
       },
       (err) => {
-        console.warn("geo denied", err);
-        toast({ title: "Location denied", description: "We won’t show nearby items without your location." });
+        console.error("Geolocation error:", err);
+        setLocStage("error");
+        setNearbyError(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission denied. You can search by city instead."
+            : "Unable to get your location. Try again or search by city."
+        );
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
-
-    setShowLocationDialog(false);
   };
 
-  const haversineKm = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
-    const toRad = (x: number) => (x * Math.PI) / 180;
+  const haversineKm = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
     const R = 6371;
-    const dLat = toRad(b.lat - a.lat);
-    const dLon = toRad(b.lng - a.lng);
-    const lat1 = toRad(a.lat);
-    const lat2 = toRad(b.lat);
-    const h = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLon = ((b.lon - a.lon) * Math.PI) / 180;
+    const la1 = (a.lat * Math.PI) / 180;
+    const la2 = (b.lat * Math.PI) / 180;
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLon = Math.sin(dLon / 2);
+    const h = sinDLat * sinDLat + Math.cos(la1) * Math.cos(la2) * sinDLon * sinDLon;
     return 2 * R * Math.asin(Math.sqrt(h));
   };
 
-  useEffect(() => {
-    // build nearby list whenever we have rawFood + geo
-    if (!geo) {
-      setNearby([]);
+  // Overpass helper
+  const overpassFetch = async (query: string) => {
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: query,
+    });
+    if (!res.ok) throw new Error(`Overpass error ${res.status}`);
+    return (await res.json()) as any;
+  };
+
+  const fetchNearbyByCoords = async ({ lat, lon }: { lat: number; lon: number }) => {
+    setFetchingNearby(true);
+    setNearbyError(null);
+    try {
+      // 2km radius for tight, relevant results (tweakable)
+      const radius = 2000;
+      const q = `
+        [out:json][timeout:25];
+        node["amenity"="restaurant"](around:${radius},${lat},${lon});
+        out tags center;
+      `;
+      const json = await overpassFetch(q);
+      const elements: any[] = json.elements || [];
+      const mapped: NearbyRestaurant[] = elements
+        .map((el) => {
+          const name = el.tags?.name || "Unnamed Restaurant";
+          const rLat = el.lat ?? el.center?.lat;
+          const rLon = el.lon ?? el.center?.lon;
+          if (typeof rLat !== "number" || typeof rLon !== "number") return null;
+          const distanceKm = haversineKm({ lat, lon }, { lat: rLat, lon: rLon });
+          const addressParts = [
+            el.tags?.["addr:housenumber"],
+            el.tags?.["addr:street"],
+            el.tags?.["addr:city"],
+          ].filter(Boolean);
+          return {
+            id: `${el.type}/${el.id}`,
+            name,
+            lat: rLat,
+            lon: rLon,
+            distanceKm,
+            address: addressParts.join(" "),
+            cuisine: el.tags?.cuisine,
+          } as NearbyRestaurant;
+        })
+        .filter(Boolean) as NearbyRestaurant[];
+
+      const byDistance = mapped.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 25);
+      setNearby(byDistance);
+    } catch (err: any) {
+      console.error(err);
+      setNearbyError("Couldn’t load restaurants nearby. Please try again.");
+    } finally {
+      setFetchingNearby(false);
+    }
+  };
+
+  // Fallback: simple city/address -> coords via Nominatim, then reuse Overpass
+  const searchByCity = async () => {
+    if (!manualQuery.trim()) return;
+    setFetchingNearby(true);
+    setNearbyError(null);
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("q", manualQuery);
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("limit", "1");
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en" },
+      });
+      const arr = (await res.json()) as Array<{ lat: string; lon: string }>;
+      if (!arr.length) {
+        setNearbyError("Couldn’t find that place. Try a city name or address.");
+        setFetchingNearby(false);
+        return;
+      }
+      const c = { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
+      setCoords(c);
+      setLocStage("have");
+      await fetchNearbyByCoords(c);
+    } catch (err) {
+      console.error(err);
+      setNearbyError("Search failed. Please try a different city.");
+    } finally {
+      setFetchingNearby(false);
+    }
+  };
+
+  const handleRefresh = () => fetchFood(true, true);
+  const handleUpdate = () => fetchFood(true, false);
+
+  const handleSplik = (splikId: string) => {
+    console.log("Splik:", splikId);
+  };
+
+  const handleReact = async (splikId: string) => {
+    if (!user) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to react to videos",
+        variant: "default",
+      });
       return;
     }
-    const candidates = rawFood.filter(
-      (r) => typeof r.geo_lat === "number" && typeof r.geo_lng === "number"
+    setSpliks((prev) =>
+      prev.map((s) =>
+        s.id === splikId
+          ? { ...s, likes_count: (s.likes_count || 0) + 1, user_has_liked: true as any }
+          : s
+      )
     );
-    const top = candidates
-      .map((r) => ({
-        row: r,
-        dist: haversineKm(geo, { lat: r.geo_lat as number, lng: r.geo_lng as number }),
-      }))
-      .filter((x) => x.dist <= nearbyRadiusKm)
-      .sort((a, b) => a.dist - b.dist)
-      .slice(0, 10)
-      .map((x) => x.row);
-    setNearby(top);
-  }, [geo, rawFood, nearbyRadiusKm]);
-
-  const nearbyWithDistance = useMemo(() => {
-    if (!geo) return [];
-    return nearby.map((r) => ({
-      row: r,
-      km: Math.round(haversineKm(geo, { lat: r.geo_lat!, lng: r.geo_lng! }) * 10) / 10,
-    }));
-  }, [nearby, geo]);
-
-  // ---------- top creators this week ----------
-  useEffect(() => {
-    const run = async () => {
-      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const recent = rawFood.filter((r) => r.created_at >= since);
-      const map = new Map<string, { uploads: number; likes: number; comments: number }>();
-
-      for (const r of recent) {
-        const rec = map.get(r.user_id) || { uploads: 0, likes: 0, comments: 0 };
-        rec.uploads += 1;
-        rec.likes += r.likes_count || 0;
-        rec.comments += r.comments_count || 0;
-        map.set(r.user_id, rec);
-      }
-
-      const list = Array.from(map.entries())
-        .map(([user_id, m]) => ({
-          user_id,
-          uploads: m.uploads,
-          likes: m.likes,
-          comments: m.comments,
-          score: m.likes + m.comments + m.uploads * 2,
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
-
-      const withProfiles = await Promise.all(
-        list.map(async (row) => {
-          const { data: p } = await supabase
-            .from("profiles")
-            .select("id, username, display_name, avatar_url")
-            .eq("id", row.user_id)
-            .maybeSingle();
-          return { ...row, profile: p || null };
-        })
+    try {
+      await supabase.rpc("handle_like", { splik_id: splikId });
+    } catch (error) {
+      console.error("Error liking splik:", error);
+      setSpliks((prev) =>
+        prev.map((s) =>
+          s.id === splikId
+            ? { ...s, likes_count: Math.max(0, (s.likes_count || 0) - 1), user_has_liked: false as any }
+            : s
+        )
       );
+    }
+  };
 
-      setTopCreators(withProfiles);
-    };
+  const handleShare = async (splikId: string) => {
+    const url = `${window.location.origin}/video/${splikId}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Check out this delicious food video!", url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast({ title: "Link copied!", description: "The video link has been copied" });
+      }
+    } catch {
+      toast({ title: "Failed to share", description: "Please try again", variant: "destructive" });
+    }
+  };
 
-    void run();
-  }, [rawFood]);
-
-  // ---------- autoplay (same pattern you use elsewhere) ----------
+  // ===== Autoplay manager (unchanged) =====
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
       if (!host) return;
 
-      const vis = new Map<HTMLVideoElement, number>();
-      let current: HTMLVideoElement | null = null;
-      let busy = false;
+      const videoVisibility = new Map<HTMLVideoElement, number>();
+      let currentPlayingVideo: HTMLVideoElement | null = null;
+      let isProcessing = false;
 
-      const getVids = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
-      const pauseAll = (except?: HTMLVideoElement) =>
-        getVids().forEach((v) => (v !== except && !v.paused ? v.pause() : null));
-
-      const best = () => {
-        const sorted = Array.from(vis.entries()).sort((a, b) => b[1] - a[1]);
-        const top = sorted[0];
-        return top && top[1] >= 0.6 ? top[0] : null;
+      const setupVideoForMobile = (video: HTMLVideoElement) => {
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute("webkit-playsinline", "true");
+        video.preload = "metadata";
+        video.load();
+        video.addEventListener(
+          "loadeddata",
+          () => {
+            if (video.currentTime === 0) video.currentTime = 0.1;
+          },
+          { once: true }
+        );
       };
 
-      const drive = async () => {
-        if (busy) return;
-        busy = true;
+      const getAllVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
+
+      const pauseAllVideos = (exceptVideo?: HTMLVideoElement) => {
+        getAllVideos().forEach((video) => {
+          if (video !== exceptVideo && !video.paused) video.pause();
+        });
+      };
+
+      const findMostVisibleVideo = (): HTMLVideoElement | null => {
+        const entries = Array.from(videoVisibility.entries());
+        if (!entries.length) return null;
+        const [top] = entries.sort((a, b) => b[1] - a[1]);
+        return top && top[1] >= 0.6 ? top[0] : null;
+        ;
+      };
+
+      const handleVideoPlayback = async () => {
+        if (isProcessing) return;
+        isProcessing = true;
+
         try {
-          const target = best();
-          if (current && (vis.get(current) || 0) < 0.45) {
-            current.pause();
-            current = null;
+          const targetVideo = findMostVisibleVideo();
+
+          if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
+            currentPlayingVideo.pause();
+            currentPlayingVideo = null;
           }
-          if (target && target !== current) {
-            pauseAll(target);
-            target.muted = true;
-            target.playsInline = true;
-            target.setAttribute("webkit-playsinline", "true");
-            try {
-              await target.play();
-              current = target;
-            } catch {
-              /* ignore */
+
+          if (targetVideo && targetVideo !== currentPlayingVideo) {
+            pauseAllVideos(targetVideo);
+            setupVideoForMobile(targetVideo);
+
+            if (targetVideo.readyState < 2) {
+              targetVideo.load();
+              await new Promise((r) => setTimeout(r, 100));
             }
-          } else if (!target && current) {
-            current.pause();
-            current = null;
+            if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
+              targetVideo.currentTime = 0.1;
+            }
+
+            try {
+              await targetVideo.play();
+              currentPlayingVideo = targetVideo;
+            } catch (err) {
+              if (!targetVideo.muted) {
+                targetVideo.muted = true;
+                try {
+                  await targetVideo.play();
+                  currentPlayingVideo = targetVideo;
+                } catch {}
+              } else if (targetVideo.currentTime === 0) {
+                targetVideo.currentTime = 0.1;
+              }
+            }
+          } else if (!targetVideo && currentPlayingVideo) {
+            currentPlayingVideo.pause();
+            currentPlayingVideo = null;
           }
         } finally {
-          busy = false;
+          isProcessing = false;
         }
       };
 
-      const io = new IntersectionObserver(
+      const intersectionObserver = new IntersectionObserver(
         (entries) => {
-          for (const e of entries) {
-            vis.set(e.target as HTMLVideoElement, e.intersectionRatio);
+          for (const entry of entries) {
+            const video = entry.target as HTMLVideoElement;
+            videoVisibility.set(video, entry.intersectionRatio);
           }
-          void drive();
+          handleVideoPlayback();
         },
-        { threshold: [0, 0.25, 0.45, 0.6, 0.75, 1] }
+        { root: null, threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0], rootMargin: "10px" }
       );
 
-      const init = () =>
-        getVids().forEach((v) => {
-          if (!v.hasAttribute("data-mobile-init")) {
-            v.muted = true;
-            v.preload = "metadata";
-            v.setAttribute("data-mobile-init", "1");
+      const initializeVideos = () => {
+        const vids = getAllVideos();
+        vids.forEach((video) => {
+          if (!video.hasAttribute("data-mobile-initialized")) {
+            setupVideoForMobile(video);
+            video.setAttribute("data-mobile-initialized", "true");
           }
-          io.observe(v);
+          if (!videoVisibility.has(video)) {
+            videoVisibility.set(video, 0);
+            intersectionObserver.observe(video);
+          }
         });
+      };
 
-      const mo = new MutationObserver(() => setTimeout(init, 80));
-      setTimeout(init, 80);
-      mo.observe(host, { childList: true, subtree: true });
+      const mutationObserver = new MutationObserver((mutations) => {
+        let changed = false;
+        mutations.forEach((m) =>
+          m.addedNodes.forEach((n) => {
+            if (n.nodeType === 1 && (n as Element).querySelectorAll?.("video").length) changed = true;
+          })
+        );
+        if (changed) setTimeout(initializeVideos, 100);
+      });
+
+      setTimeout(initializeVideos, 100);
+      mutationObserver.observe(host, { childList: true, subtree: true });
 
       return () => {
-        io.disconnect();
-        mo.disconnect();
-        pauseAll();
-        vis.clear();
+        intersectionObserver.disconnect();
+        mutationObserver.disconnect();
+        videoVisibility.clear();
+        currentPlayingVideo = null;
       };
     }, deps);
   };
 
-  useAutoplayIn(feedRef, [spliks]);
+  useAutoplayIn(foodFeedRef, [spliks]);
 
-  // ---------- UI helpers ----------
-  const handleUpdate = () => fetchFood(true, false);
-  const handleShuffle = () => fetchFood(true, true);
-
-  const avatarInitial = (p?: Profile) =>
-    p?.display_name?.[0] || p?.username?.[0] || "U";
-
-  const nearbyEmpty = geoConsent && geo && nearbyWithDistance.length === 0;
+  // UI helpers
+  const coordsPretty = useMemo(() => {
+    if (!coords) return "";
+    return `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
+  }, [coords]);
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
-      {/* HERO */}
-      <section className="bg-gradient-to-b from-secondary/15 to-transparent border-b">
-        <div className="mx-auto max-w-7xl px-4 py-8 md:py-10">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 to-cyan-500">
-                <Utensils className="h-5 w-5 text-white" />
-              </span>
+      {/* Page header */}
+      <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
+        <div className="container">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Utensils className="h-6 w-6 text-primary" />
               <div>
-                <h1 className="text-2xl md:text-3xl font-bold">
-                  Food — 3-second bites that make you hungry
-                </h1>
-                <p className="text-sm text-muted-foreground">
-                  Auto-looping, fast-discovering food moments. Post yours and get featured.
+                <h1 className="text-2xl md:text-3xl font-bold">Food</h1>
+                <p className="text-muted-foreground">
+                  Delicious 3-second clips • New shuffle each refresh
                 </p>
               </div>
             </div>
 
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleUpdate} disabled={refreshing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              {/* NEW: Nearby restaurants CTA */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openNearby}
+                className="gap-2"
+                title="Find restaurants near you"
+              >
+                <MapPin className="h-4 w-4" />
+                Nearby restaurants
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleUpdate}
+                disabled={refreshing}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Update
               </Button>
-              <Button size="sm" onClick={handleShuffle} disabled={refreshing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              <Button
+                size="sm"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Shuffle
-              </Button>
-              <Button onClick={() => navigate(user ? "/upload" : "/login")} size="sm">
-                Post a Food Splik
               </Button>
             </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      <main className="mx-auto max-w-7xl px-3 sm:px-4 py-6 md:py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* CENTER FEED */}
-          <div className="lg:col-span-8">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-                <p className="text-sm text-muted-foreground">Loading delicious content…</p>
-              </div>
-            ) : spliks.length === 0 ? (
-              <Card className="max-w-md mx-auto">
-                <CardContent className="p-8 text-center">
-                  <Utensils className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No food videos yet</h3>
-                  <p className="text-muted-foreground mb-4">
-                    Be the first to upload a tasty 3-second bite.
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                    <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
-                      {refreshing ? "Updating…" : "Get Latest"}
-                    </Button>
-                    <Button onClick={handleShuffle} disabled={refreshing}>
-                      {refreshing ? "Shuffling…" : "Shuffle Food"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <>
-                <div className="text-center text-sm text-muted-foreground mb-4">
-                  Showing {spliks.length} food spliks
+      {/* Main feed */}
+      <main className="w-full py-6 md:py-8">
+        <div className="mx-auto max-w-7xl px-3 sm:px-4">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+              <p className="text-sm text-muted-foreground">Loading delicious content...</p>
+            </div>
+          ) : spliks.length === 0 ? (
+            <Card className="max-w-md mx-auto">
+              <CardContent className="p-8 text-center">
+                <Utensils className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">No food videos yet</h3>
+                <p className="text-muted-foreground mb-4">
+                  Be the first to upload a delicious clip.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                  <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
+                    {refreshing ? "Updating..." : "Get Latest"}
+                  </Button>
+                  <Button onClick={handleRefresh} disabled={refreshing}>
+                    {refreshing ? "Shuffling..." : "Shuffle Food"}
+                  </Button>
                 </div>
-
-                <div ref={feedRef} className="max-w-[500px] mx-auto space-y-4 md:space-y-6">
-                  {spliks.map((s) => (
-                    <SplikCard key={s.id} splik={s as any} />
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <div className="text-center text-sm text-muted-foreground mb-4">
+                Showing {spliks.length} food videos • New shuffle each refresh
+              </div>
+              <div className="w-full">
+                <div
+                  ref={foodFeedRef}
+                  className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6"
+                >
+                  {spliks.map((splik) => (
+                    <SplikCard
+                      key={splik.id}
+                      splik={splik as any}
+                      onSplik={() => handleSplik(splik.id)}
+                      onReact={() => handleReact(splik.id)}
+                      onShare={() => handleShare(splik.id)}
+                    />
                   ))}
                 </div>
-              </>
-            )}
-          </div>
-
-          {/* RIGHT RAIL */}
-          <aside className="lg:col-span-4 space-y-6">
-            {/* Prefer Food */}
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold">Prefer Food content</h3>
-                    <p className="text-xs text-muted-foreground">
-                      We’ll show you <strong>more Food</strong> on the Home feed. This is saved to your
-                      browser and, if you’re signed in, to your profile. You can turn it off anytime.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="prefer-food" className="text-xs">{preferFood ? "On" : "Off"}</Label>
-                    <Switch id="prefer-food" checked={preferFood} onCheckedChange={handlePreferFood} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Nearby Food Spliks */}
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-primary" />
-                  <h3 className="font-semibold">Nearby Food Spliks</h3>
-                </div>
-
-                {!geoConsent ? (
-                  <div className="text-sm text-muted-foreground">
-                    See food posted around you. We’ll ask for permission first and only use your
-                    location to find nearby content — it’s not stored.
-                  </div>
-                ) : !geo ? (
-                  <div className="text-sm text-muted-foreground">
-                    Location enabled — looking for tasty clips near you…
-                  </div>
-                ) : null}
-
-                {!geoConsent ? (
-                  <Button onClick={askForLocation} size="sm" className="w-full">
-                    Enable location
+              </div>
+              <div className="text-center py-6 border-t border-border/40 mt-8">
+                <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                  <Button onClick={handleUpdate} variant="outline" disabled={refreshing} className="gap-2">
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                    {refreshing ? "Updating..." : "Get Latest"}
                   </Button>
-                ) : nearbyWithDistance.length > 0 ? (
-                  <div className="space-y-2">
-                    {nearbyWithDistance.map(({ row, km }) => (
-                      <Link
-                        key={row.id}
-                        to={`/video/${row.id}`}
-                        className="flex items-center gap-3 rounded-lg p-2 hover:bg-accent transition-colors"
-                      >
-                        <div className="h-12 w-10 rounded-md overflow-hidden bg-black/10 flex items-center justify-center">
-                          {row.thumbnail_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={row.thumbnail_url} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <Utensils className="h-5 w-5 text-muted-foreground" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{row.title || "Untitled"}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {row.location_name ? `${row.location_name} • ` : ""}{km} km away
-                          </p>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                ) : geoConsent && geo && nearbyEmpty ? (
-                  <div className="text-sm text-muted-foreground">
-                    No nearby food spliks within {nearbyRadiusKm} km yet — check back soon!
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            {/* Top Food Creators this week */}
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Flame className="h-4 w-4 text-primary" />
-                  <h3 className="font-semibold">Top Food Creators (7d)</h3>
+                  <Button onClick={handleRefresh} disabled={refreshing} className="gap-2">
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                    {refreshing ? "Shuffling..." : "Shuffle Food"}
+                  </Button>
                 </div>
-
-                {topCreators.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">Nobody’s topped the charts (yet).</div>
-                ) : (
-                  <div className="space-y-2">
-                    {topCreators.map((c, idx) => (
-                      <Link
-                        key={c.user_id}
-                        to={`/creator/${c.profile?.username || c.user_id}`}
-                        className="flex items-center gap-3 rounded-lg p-2 hover:bg-accent transition-colors"
-                      >
-                        <Badge variant="secondary" className="w-6 justify-center">{idx + 1}</Badge>
-                        <Avatar className="h-8 w-8">
-                          <AvatarImage src={c.profile?.avatar_url || undefined} />
-                          <AvatarFallback>{avatarInitial(c.profile || undefined)}</AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">
-                            {c.profile?.display_name || c.profile?.username || "Creator"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Score {c.score} · {c.uploads} uploads · {c.likes} ❤️ · {c.comments} 💬
-                          </p>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Creator callout: why post here */}
-            <Card>
-              <CardContent className="p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-primary" />
-                  <h3 className="font-semibold">Why food creators love Splikz</h3>
-                </div>
-                <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
-                  <li>3-second loop — your dish gets instant attention.</li>
-                  <li>Dedicated Food page + “Nearby” spotlight.</li>
-                  <li>Weekly Top Food Creators board.</li>
-                  <li>Optional Promote to jump the line when launching.</li>
-                </ul>
-                <Button onClick={() => navigate(user ? "/upload" : "/login")} className="w-full">
-                  Post your 3-sec bite
-                </Button>
-              </CardContent>
-            </Card>
-          </aside>
+              </div>
+            </>
+          )}
         </div>
       </main>
 
-      <Footer />
-
-      {/* LOCATION CONSENT DIALOG */}
-      <Dialog open={showLocationDialog} onOpenChange={setShowLocationDialog}>
-        <DialogContent>
+      {/* Nearby Restaurants Modal */}
+      <Dialog open={nearbyOpen} onOpenChange={setNearbyOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Show nearby food videos?</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-primary" />
+              Search nearby restaurants
+            </DialogTitle>
             <DialogDescription>
-              We’ll use your current location <strong>one time</strong> to find food spliks posted near you.
-              We don’t store your location. You can change this choice anytime.
+              Find a spot, go try it, then post your 3-second food clip. Tip: include the restaurant
+              name in your description or comments so others can find it.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setShowLocationDialog(false)}>
-              Not now
-            </Button>
-            <Button onClick={enableLocation}>Allow location</Button>
-          </DialogFooter>
+
+          {/* Ask permission first */}
+          {locStage === "idle" && (
+            <div className="flex flex-col items-center gap-3 py-4">
+              <LocateFixed className="h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground text-center">
+                We’ll use your current location to show nearby restaurants.
+              </p>
+              <Button onClick={requestLocation} className="gap-2">
+                <LocateFixed className="h-4 w-4" />
+                Use my location
+              </Button>
+              <div className="text-xs text-muted-foreground">or search by city</div>
+              <div className="flex w-full items-center gap-2">
+                <Input
+                  placeholder="City or address"
+                  value={manualQuery}
+                  onChange={(e) => setManualQuery(e.target.value)}
+                />
+                <Button variant="outline" onClick={searchByCity} className="gap-2">
+                  <SearchIcon className="h-4 w-4" />
+                  Search
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {locStage === "asking" && (
+            <div className="flex items-center gap-3 py-6">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Requesting location…</p>
+            </div>
+          )}
+
+          {(locStage === "have" || locStage === "error") && (
+            <div className="space-y-4">
+              {/* If we have coords, show them lightly */}
+              {coords && (
+                <p className="text-xs text-muted-foreground">
+                  Using location: <span className="font-mono">{coordsPretty}</span>
+                </p>
+              )}
+
+              {/* Manual search row (always available at this stage) */}
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Search a city instead (optional)"
+                  value={manualQuery}
+                  onChange={(e) => setManualQuery(e.target.value)}
+                />
+                <Button variant="outline" onClick={searchByCity} className="gap-2">
+                  <SearchIcon className="h-4 w-4" />
+                  Search
+                </Button>
+              </div>
+
+              {nearbyError && (
+                <div className="text-sm text-red-500">{nearbyError}</div>
+              )}
+
+              {fetchingNearby ? (
+                <div className="flex items-center gap-3 py-4">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">Finding restaurants near you…</p>
+                </div>
+              ) : nearby.length === 0 ? (
+                <div className="text-sm text-muted-foreground">
+                  {locStage === "error"
+                    ? "Location blocked. Try searching by city."
+                    : "No nearby results yet. Hit “Use my location” or search a city."}
+                </div>
+              ) : (
+                <div className="max-h-[50vh] overflow-y-auto rounded-md border">
+                  {nearby.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between px-3 py-2 border-b last:border-b-0 hover:bg-accent/40"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate">{r.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {r.address || "Address unavailable"}
+                          {r.cuisine ? ` • ${r.cuisine}` : ""}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{r.distanceKm.toFixed(1)} km away</div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <a
+                          href={`https://www.google.com/maps?q=${r.lat},${r.lon}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent"
+                          title="Open in Google Maps"
+                        >
+                          Maps <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Reminder: When you upload, feel free to mention the restaurant name in your description
+                or drop it in the comments.
+              </p>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
+
+      <Footer />
     </div>
   );
 }
