@@ -42,7 +42,7 @@ import Favorites from "./pages/Dashboard/Favorites";
 // Profiles & videos
 import Profile from "./pages/Profile";
 import CreatorProfile from "./pages/CreatorProfile";
-import VideoPage from "./pages/VideoPage";
+import VideoPage from "./pages/VideoUploadModal";
 import Search from "./pages/Search";
 
 // Messaging
