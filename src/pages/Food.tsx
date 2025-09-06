@@ -1212,3 +1212,4 @@ export default function Food() {
       </Dialog>
     </div>
   );
+}
