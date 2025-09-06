@@ -34,7 +34,7 @@ import Contact from "./pages/support/Contact";
 import ForBrands from "./pages/business/ForBrands";
 import ForCreators from "./pages/business/ForCreators";
 import Press from "./pages/business/Press";
-import MoodPage from "@/pages/mood/MoodPage";
+import MoodPage from "@/pages/moods/MoodPage";
 
 // NEW: Food page
 import Food from "./pages/Food";
