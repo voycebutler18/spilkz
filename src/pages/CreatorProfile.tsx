@@ -1,4 +1,4 @@
-
+// src/pages/CreatorProfile.tsx
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -32,7 +32,9 @@ interface Profile {
 }
 
 const isUuid = (v: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
 
 export function CreatorProfile() {
   const { slug = "" } = useParams();
@@ -40,6 +42,8 @@ export function CreatorProfile() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
+  const [likedSpliks, setLikedSpliks] = useState<any[]>([]);
+  const [likedLoading, setLikedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showFollowersList, setShowFollowersList] = useState(false);
@@ -59,17 +63,18 @@ export function CreatorProfile() {
     let cancelled = false;
 
     const run = async () => {
-      // If the router hasn't provided the param yet, don't do anything.
       if (!slug || !slug.trim()) {
         setLoading(false);
         setProfile(null);
         setSpliks([]);
+        setLikedSpliks([]);
         return;
       }
 
       setLoading(true);
       setProfile(null);
       setSpliks([]);
+      setLikedSpliks([]);
 
       try {
         // 1) try username
@@ -96,9 +101,7 @@ export function CreatorProfile() {
         }
 
         if (!data || error) {
-          if (!cancelled) {
-            setProfile(null);
-          }
+          if (!cancelled) setProfile(null);
           return;
         }
 
@@ -106,6 +109,7 @@ export function CreatorProfile() {
 
         setProfile(data);
         await fetchSpliks(data.id, cancelled);
+        await fetchLikedSpliks(data.id, cancelled);
       } catch (e) {
         console.error("Error resolving profile:", e);
         if (!cancelled) toast.error("Failed to load profile");
@@ -115,7 +119,6 @@ export function CreatorProfile() {
     };
 
     run();
-
     return () => {
       cancelled = true;
     };
@@ -135,20 +138,29 @@ export function CreatorProfile() {
 
     const channel = supabase
       .channel(`creator-${profile.id}`)
+      // profile updates
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "profiles", filter: `id=eq.${profile.id}` },
         (payload) => setProfile(payload.new as Profile)
       )
+      // their uploaded spliks change
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "spliks", filter: `user_id=eq.${profile.id}` },
         () => fetchSpliks(profile.id)
       )
+      // followers/following counters change
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
+      )
+      // likes they create/remove (for Liked tab)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "likes", filter: `user_id=eq.${profile.id}` },
+        () => fetchLikedSpliks(profile.id)
       )
       .subscribe();
 
@@ -207,8 +219,68 @@ export function CreatorProfile() {
     }
   };
 
+  // ---- Liked videos loader (with order by like time + profiles) ----
+  const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
+    try {
+      setLikedLoading(true);
+
+      // 1) get the liked splik ids for this user (most recent first)
+      const { data: likesRows, error: likesErr } = await supabase
+        .from("likes")
+        .select("splik_id, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (likesErr) throw likesErr;
+
+      if (!likesRows?.length) {
+        if (!cancelled) setLikedSpliks([]);
+        return;
+      }
+
+      const ids = likesRows.map((r) => r.splik_id);
+
+      // 2) fetch the spliks in those ids
+      const { data: splikRows, error: spliksErr } = await supabase
+        .from("spliks")
+        .select("*")
+        .in("id", ids);
+
+      if (spliksErr) throw spliksErr;
+
+      // 3) attach each splik's uploader profile (username/avatar)
+      const withProfiles = await Promise.all(
+        (splikRows || []).map(async (s) => {
+          const { data: p } = await supabase
+            .from("profiles")
+            .select("username, display_name, avatar_url")
+            .eq("id", s.user_id)
+            .maybeSingle();
+          return { ...s, profiles: p || undefined };
+        })
+      );
+
+      // 4) keep the order by like time
+      const orderIndex: Record<string, number> = {};
+      likesRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
+      withProfiles.sort(
+        (a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0)
+      );
+
+      if (!cancelled) setLikedSpliks(withProfiles);
+    } catch (e) {
+      console.error("Error fetching liked videos:", e);
+      if (!cancelled) toast.error("Failed to load liked videos");
+    } finally {
+      if (!cancelled) setLikedLoading(false);
+    }
+  };
+
   const formatDate = (date: string) =>
-    new Date(date).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    new Date(date).toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
 
   if (loading) {
     return (
@@ -245,7 +317,9 @@ export function CreatorProfile() {
             <Avatar className="h-32 w-32">
               <AvatarImage src={profile.avatar_url || ""} />
               <AvatarFallback className="text-3xl">
-                {profile.display_name?.charAt(0) || profile.username?.charAt(0) || "?"}
+                {profile.display_name?.charAt(0) ||
+                  profile.username?.charAt(0) ||
+                  "?"}
               </AvatarFallback>
             </Avatar>
 
@@ -297,7 +371,9 @@ export function CreatorProfile() {
 
               <div className="flex gap-8">
                 <div className="text-center min-w-[80px]">
-                  <p className="text-2xl font-bold">{profile.spliks_count || 0}</p>
+                  <p className="text-2xl font-bold">
+                    {profile.spliks_count || 0}
+                  </p>
                   <p className="text-sm text-muted-foreground">Videos</p>
                 </div>
                 <button
@@ -342,7 +418,10 @@ export function CreatorProfile() {
                 onDeleteComment={
                   currentUserId === profile.id
                     ? async (commentId) => {
-                        const { error } = await supabase.from("comments").delete().eq("id", commentId);
+                        const { error } = await supabase
+                          .from("comments")
+                          .delete()
+                          .eq("id", commentId);
                         if (!error) toast.success("Comment deleted");
                       }
                     : undefined
@@ -382,7 +461,9 @@ export function CreatorProfile() {
                   </div>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Member Since</p>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Member Since
+                  </p>
                   <p>{formatDate(profile.created_at)}</p>
                 </div>
               </div>
@@ -390,10 +471,35 @@ export function CreatorProfile() {
           </TabsContent>
 
           <TabsContent value="liked" className="mt-6">
-            <Card className="p-12 text-center">
-              <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">Liked videos coming soon</p>
-            </Card>
+            {likedLoading ? (
+              <Card className="p-12 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+                <p className="text-muted-foreground mt-3">
+                  Loading liked videos…
+                </p>
+              </Card>
+            ) : likedSpliks.length > 0 ? (
+              <VideoGrid
+                spliks={likedSpliks}
+                showCreatorInfo={true}
+                onDeleteComment={
+                  currentUserId === profile.id
+                    ? async (commentId) => {
+                        const { error } = await supabase
+                          .from("comments")
+                          .delete()
+                          .eq("id", commentId);
+                        if (!error) toast.success("Comment deleted");
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <Card className="p-12 text-center">
+                <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No liked videos yet</p>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>
