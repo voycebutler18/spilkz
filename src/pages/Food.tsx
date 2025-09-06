@@ -11,6 +11,8 @@ import {
   Search as SearchIcon,
   ExternalLink,
   Info,
+  Sparkles,
+  TrendingUp,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -666,132 +668,305 @@ export default function Food() {
   }, [coords]);
 
   return (
-    <div className="min-h-screen">
-      {/* Page header */}
-      <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
-        <div className="container">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Utensils className="h-6 w-6 text-primary" />
-              <div>
-                <h1 className="text-2xl md:text-3xl font-bold">Food</h1>
-                <p className="text-muted-foreground">
-                  Delicious 3-second clips • New shuffle each refresh
-                </p>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 relative overflow-hidden">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/3 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute top-3/4 right-1/4 w-80 h-80 bg-orange-500/3 rounded-full blur-3xl animate-pulse delay-1000" />
+        <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-yellow-500/2 rounded-full blur-3xl animate-pulse delay-2000" />
+      </div>
+
+      {/* Modern Mobile-First Header */}
+      <div className="relative z-10">
+        {/* Mobile Header */}
+        <div className="lg:hidden">
+          <div className="bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 p-1 rounded-b-3xl mx-4 mt-2 shadow-2xl">
+            <div className="bg-background/95 backdrop-blur-xl rounded-b-2xl p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-2xl blur opacity-75 animate-pulse" />
+                    <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-3 rounded-2xl shadow-lg">
+                      <Utensils className="h-6 w-6 text-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-black bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+                      Food
+                    </h1>
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Sparkles className="h-3 w-3" />
+                      <span>Fresh • Viral • Tasty</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <Button
+                  onClick={openNearby}
+                  size="sm"
+                  className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+                >
+                  <MapPin className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Mobile Action Buttons */}
+              <div className="flex gap-2 mt-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fetchFood(true, false)}
+                  disabled={refreshing}
+                  className="flex-1 bg-background/50 backdrop-blur border border-border/50 hover:bg-accent/50 hover:scale-[1.02] transition-all duration-300"
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                  Update
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => fetchFood(true, true)}
+                  disabled={refreshing}
+                  className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-300"
+                >
+                  <TrendingUp className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                  Shuffle
+                </Button>
               </div>
             </div>
+          </div>
+        </div>
 
-            <div className="flex gap-2">
-              {/* Nearby restaurants CTA */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={openNearby}
-                className="gap-2"
-                title="Find restaurants near a place or by your location"
-              >
-                <MapPin className="h-4 w-4" />
-                Nearby restaurants
-              </Button>
+        {/* Desktop Header */}
+        <div className="hidden lg:block">
+          <div className="bg-gradient-to-r from-background via-background/80 to-background backdrop-blur-xl border-b border-border/20 shadow-lg">
+            <div className="container mx-auto py-8 px-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-6">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 rounded-3xl blur-lg opacity-75 animate-pulse" />
+                    <div className="relative bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 p-4 rounded-3xl shadow-2xl">
+                      <Utensils className="h-8 w-8 text-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <h1 className="text-4xl font-black bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 bg-clip-text text-transparent mb-2">
+                      Food Paradise
+                    </h1>
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <Sparkles className="h-4 w-4 text-yellow-500" />
+                        <span>3-second viral clips</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <TrendingUp className="h-4 w-4 text-green-500" />
+                        <span>Fresh shuffle every time</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fetchFood(true, false)}
-                disabled={refreshing}
-                className="gap-2"
-              >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                Update
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => fetchFood(true, true)}
-                disabled={refreshing}
-                className="gap-2"
-              >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                Shuffle
-              </Button>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={openNearby}
+                    className="gap-2 bg-background/50 backdrop-blur border-2 border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all duration-300 hover:scale-105"
+                  >
+                    <MapPin className="h-4 w-4" />
+                    Find Nearby Restaurants
+                  </Button>
+                  
+                  <Button
+                    variant="outline"
+                    onClick={() => fetchFood(true, false)}
+                    disabled={refreshing}
+                    className="gap-2 bg-background/50 backdrop-blur border-2 border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all duration-300 hover:scale-105"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                    Update Feed
+                  </Button>
+                  
+                  <Button
+                    onClick={() => fetchFood(true, true)}
+                    disabled={refreshing}
+                    className="gap-2 bg-gradient-to-r from-purple-500 via-pink-500 to-red-500 hover:from-purple-600 hover:via-pink-600 hover:to-red-600 text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105"
+                  >
+                    <TrendingUp className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                    Shuffle & Discover
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main feed */}
-      <main className="w-full py-6 md:py-8">
-        <div className="mx-auto max-w-7xl px-3 sm:px-4">
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-              <p className="text-sm text-muted-foreground">Loading delicious content...</p>
+      {/* Main Content */}
+      <main className="relative z-10 pb-20 lg:pb-8">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 px-4">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-full blur-lg opacity-75 animate-pulse" />
+              <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-6 rounded-full shadow-2xl">
+                <Loader2 className="h-8 w-8 text-white animate-spin" />
+              </div>
             </div>
-          ) : spliks.length === 0 ? (
-            <Card className="max-w-md mx-auto">
+            <div className="text-center mt-6">
+              <h3 className="text-xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent mb-2">
+                Loading deliciousness...
+              </h3>
+              <p className="text-sm text-muted-foreground">Preparing your personalized food feed</p>
+            </div>
+          </div>
+        ) : spliks.length === 0 ? (
+          <div className="px-4 py-12 lg:py-20">
+            <Card className="max-w-md mx-auto bg-gradient-to-br from-background via-background/90 to-primary/5 backdrop-blur-xl border-2 border-primary/10 shadow-2xl">
               <CardContent className="p-8 text-center">
-                <Utensils className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No food videos yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Be the first to upload a delicious clip.
+                <div className="relative mb-6">
+                  <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-full blur-lg opacity-50 animate-pulse" />
+                  <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-4 rounded-full shadow-xl mx-auto w-fit">
+                    <Utensils className="h-12 w-12 text-white" />
+                  </div>
+                </div>
+                <h3 className="text-2xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent mb-3">
+                  No food videos yet
+                </h3>
+                <p className="text-muted-foreground mb-6 leading-relaxed">
+                  Be the first to upload a mouth-watering 3-second clip and start the food revolution!
                 </p>
-                <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                  <Button onClick={() => fetchFood(true, false)} variant="outline" disabled={refreshing}>
+                <div className="flex flex-col gap-3">
+                  <Button 
+                    onClick={() => fetchFood(true, false)} 
+                    variant="outline" 
+                    disabled={refreshing}
+                    className="bg-background/50 backdrop-blur border-2 border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all duration-300 hover:scale-105"
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
                     {refreshing ? "Updating..." : "Get Latest"}
                   </Button>
-                  <Button onClick={() => fetchFood(true, true)} disabled={refreshing}>
-                    {refreshing ? "Shuffling..." : "Shuffle Food"}
+                  <Button 
+                    onClick={() => fetchFood(true, true)} 
+                    disabled={refreshing}
+                    className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+                  >
+                    <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                    {refreshing ? "Shuffling..." : "Shuffle & Discover"}
                   </Button>
                 </div>
               </CardContent>
             </Card>
-          ) : (
-            <>
-              <div className="text-center text-sm text-muted-foreground mb-4">
-                Showing {spliks.length} food videos • New shuffle each refresh
+          </div>
+        ) : (
+          <div className="px-2 lg:px-6 py-6">
+            {/* Mobile Feed Counter */}
+            <div className="lg:hidden text-center mb-4">
+              <div className="inline-flex items-center gap-2 bg-background/80 backdrop-blur-xl border border-border/50 rounded-full px-4 py-2 shadow-lg">
+                <div className="w-2 h-2 bg-gradient-to-r from-green-400 to-green-500 rounded-full animate-pulse" />
+                <span className="text-sm font-medium">
+                  {spliks.length} delicious videos
+                </span>
+                <Sparkles className="h-3 w-3 text-yellow-500" />
               </div>
-              <div className="w-full">
-                <div
-                  ref={foodFeedRef}
-                  className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6"
-                >
-                  {spliks.map((splik) => (
-                    <SplikCard
-                      key={splik.id}
-                      splik={splik as any}
-                      onSplik={() => console.log("Splik:", splik.id)}
-                      onReact={() => {}}
-                      onShare={() => {}}
-                    />
-                  ))}
+            </div>
+
+            {/* Desktop Feed Counter */}
+            <div className="hidden lg:block text-center mb-8">
+              <div className="inline-flex items-center gap-3 bg-gradient-to-r from-background/80 via-background/60 to-background/80 backdrop-blur-xl border border-border/30 rounded-2xl px-6 py-3 shadow-xl">
+                <div className="w-3 h-3 bg-gradient-to-r from-green-400 to-green-500 rounded-full animate-pulse" />
+                <span className="text-lg font-semibold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+                  {spliks.length} viral food videos loaded
+                </span>
+                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <TrendingUp className="h-4 w-4" />
+                  <span>Fresh shuffle every refresh</span>
                 </div>
               </div>
-              <div className="text-center py-6 border-t border-border/40 mt-8">
-                <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            </div>
+
+            {/* Video Feed Container */}
+            <div className="max-w-md lg:max-w-2xl mx-auto">
+              <div
+                ref={foodFeedRef}
+                className="space-y-3 lg:space-y-6"
+              >
+                {spliks.map((splik, index) => (
+                  <div
+                    key={splik.id}
+                    className="relative group"
+                    style={{
+                      animationDelay: `${index * 100}ms`
+                    }}
+                  >
+                    {/* Mobile Card Enhancement */}
+                    <div className="lg:hidden relative">
+                      <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-red-500/10 to-pink-500/10 rounded-3xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                      <div className="relative bg-background/95 backdrop-blur-xl border border-border/20 rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden">
+                        <SplikCard
+                          splik={splik as any}
+                          onSplik={() => console.log("Splik:", splik.id)}
+                          onReact={() => {}}
+                          onShare={() => {}}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Desktop Card Enhancement */}
+                    <div className="hidden lg:block relative">
+                      <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 via-red-500/20 to-pink-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-500 scale-110" />
+                      <div className="relative bg-gradient-to-br from-background/95 via-background/90 to-background/95 backdrop-blur-xl border-2 border-border/20 hover:border-primary/30 rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-500 hover:scale-[1.02] overflow-hidden">
+                        <SplikCard
+                          splik={splik as any}
+                          onSplik={() => console.log("Splik:", splik.id)}
+                          onReact={() => {}}
+                          onShare={() => {}}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Bottom Action Section */}
+            <div className="text-center mt-12 lg:mt-16">
+              <div className="bg-gradient-to-r from-background/80 via-background/60 to-background/80 backdrop-blur-xl border-2 border-border/20 rounded-3xl p-6 lg:p-8 max-w-lg mx-auto shadow-2xl">
+                <div className="flex items-center justify-center gap-2 mb-4">
+                  <Sparkles className="h-5 w-5 text-yellow-500 animate-pulse" />
+                  <h3 className="text-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+                    Want more deliciousness?
+                  </h3>
+                  <Sparkles className="h-5 w-5 text-yellow-500 animate-pulse" />
+                </div>
+                
+                <div className="flex flex-col lg:flex-row gap-3 lg:gap-4">
                   <Button
                     onClick={() => fetchFood(true, false)}
                     variant="outline"
                     disabled={refreshing}
-                    className="gap-2"
+                    className="flex-1 bg-background/50 backdrop-blur border-2 border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all duration-300 hover:scale-105"
                   >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                    <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
                     {refreshing ? "Updating..." : "Get Latest"}
                   </Button>
                   <Button
                     onClick={() => fetchFood(true, true)}
                     disabled={refreshing}
-                    className="gap-2"
+                    className="flex-1 bg-gradient-to-r from-purple-500 via-pink-500 to-red-500 hover:from-purple-600 hover:via-pink-600 hover:to-red-600 text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105"
                   >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Shuffling..." : "Shuffle Food"}
+                    <TrendingUp className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                    {refreshing ? "Shuffling..." : "Shuffle & Discover"}
                   </Button>
                 </div>
+                
+                <p className="text-xs text-muted-foreground mt-4 opacity-75">
+                  Every shuffle brings you a completely new mix of viral food content
+                </p>
               </div>
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        )}
       </main>
 
-      {/* Nearby Restaurants Modal */}
+      {/* Nearby Restaurants Modal - Enhanced */}
       <Dialog
         open={nearbyOpen}
         onOpenChange={(open) => {
@@ -799,64 +974,78 @@ export default function Food() {
           if (!open) resetSearchState();
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MapPin className="h-5 w-5 text-primary" />
-              Search nearby restaurants
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto bg-gradient-to-br from-background via-background/95 to-primary/5 backdrop-blur-xl border-2 border-border/20 shadow-2xl">
+          <DialogHeader className="space-y-4">
+            <DialogTitle className="flex items-center gap-3">
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-2xl blur opacity-75" />
+                <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-2 rounded-2xl">
+                  <MapPin className="h-5 w-5 text-white" />
+                </div>
+              </div>
+              <span className="text-xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
+                Discover Amazing Restaurants
+              </span>
             </DialogTitle>
-            <DialogDescription>
-              Pick a place (city or ZIP) and distance, optionally choose a category (e.g. Steakhouse).
-              Find a spot, try it, then post your 3-second food clip!
+            <DialogDescription className="text-base leading-relaxed">
+              Find incredible restaurants near you, try them out, and share your 3-second food masterpiece with the world! 
+              Let's create the ultimate food community together.
             </DialogDescription>
           </DialogHeader>
 
-          {/* Controls */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Info className="h-3.5 w-3.5" />
-              We will only use your location if you tap “Use my location”.
+          <div className="space-y-6 mt-6">
+            {/* Privacy Notice - Enhanced */}
+            <div className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-2xl border border-blue-200 dark:border-blue-800/30">
+              <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+              <p className="text-sm text-blue-800 dark:text-blue-200">
+                <strong>Privacy first:</strong> We only access your location when you explicitly tap "Use my location"
+              </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Input
-                placeholder="City or ZIP (e.g., Austin, TX or 78701)"
-                value={locationQuery}
-                onChange={(e) => {
-                  setLocationQuery(e.target.value);
-                  if (e.target.value.trim() && coords) {
-                    setCoords(null);
-                    setLocStage("idle");
-                  }
-                }}
-                className="flex-1"
-                disabled={fetchingNearby}
-              />
-              <Button
-                variant="outline"
-                onClick={requestLocation}
-                className="gap-2"
-                disabled={fetchingNearby || locStage === "asking"}
-              >
-                <LocateFixed className="h-4 w-4" />
-                {locStage === "asking" ? "Getting location..." : "Use my location"}
-              </Button>
+            {/* Location Input - Enhanced */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground">Where are you looking?</label>
+              <div className="flex gap-3">
+                <Input
+                  placeholder="City, neighborhood, or ZIP (e.g., Austin TX, 78701)"
+                  value={locationQuery}
+                  onChange={(e) => {
+                    setLocationQuery(e.target.value);
+                    if (e.target.value.trim() && coords) {
+                      setCoords(null);
+                      setLocStage("idle");
+                    }
+                  }}
+                  className="flex-1 bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 focus:border-primary/50 rounded-2xl transition-all duration-300"
+                  disabled={fetchingNearby}
+                />
+                <Button
+                  variant="outline"
+                  onClick={requestLocation}
+                  className="gap-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+                  disabled={fetchingNearby || locStage === "asking"}
+                >
+                  <LocateFixed className="h-4 w-4" />
+                  {locStage === "asking" ? "Locating..." : "Use location"}
+                </Button>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Distance</label>
+            {/* Search Options - Enhanced */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Search radius</label>
                 <Select
                   value={distanceKey}
                   onValueChange={(v) => setDistanceKey(v as DistanceKey)}
                   disabled={fetchingNearby}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 rounded-2xl transition-all duration-300">
                     <SelectValue placeholder="Choose distance" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="bg-background/95 backdrop-blur-xl border-2 border-border/20 rounded-2xl shadow-2xl">
                     {DISTANCE_OPTIONS.map((d) => (
-                      <SelectItem key={d.key} value={d.key}>
+                      <SelectItem key={d.key} value={d.key} className="rounded-xl">
                         {d.label}
                       </SelectItem>
                     ))}
@@ -864,124 +1053,162 @@ export default function Food() {
                 </Select>
               </div>
 
-              <div className="sm:col-span-2">
-                <label className="text-xs text-muted-foreground mb-1 block">Category (optional)</label>
-                <div className="flex gap-2">
-                  <Select value={categoryKey} onValueChange={setCategoryKey} disabled={fetchingNearby}>
-                    <SelectTrigger className="w-[14rem]">
-                      <SelectValue placeholder="Any" />
+              <div className="lg:col-span-2 space-y-2">
+                <label className="text-sm font-medium text-foreground">Food category (optional)</label>
+                <div className="flex gap-3">
+                  <Select 
+                    value={categoryKey} 
+                    onValueChange={setCategoryKey} 
+                    disabled={fetchingNearby}
+                  >
+                    <SelectTrigger className="w-48 bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 rounded-2xl transition-all duration-300">
+                      <SelectValue placeholder="Any cuisine" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="bg-background/95 backdrop-blur-xl border-2 border-border/20 rounded-2xl shadow-2xl">
                       {CATEGORY_PRESETS.map((c) => (
-                        <SelectItem key={c.key} value={c.key}>
+                        <SelectItem key={c.key} value={c.key} className="rounded-xl">
                           {c.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <Input
-                    placeholder="Custom (e.g., ramen, steak house)"
+                    placeholder="Custom cuisine (e.g., ramen, steakhouse)"
                     value={customCategory}
                     onChange={(e) => setCustomCategory(e.target.value)}
                     disabled={categoryKey !== "custom" || fetchingNearby}
-                    className="flex-1"
+                    className="flex-1 bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 focus:border-primary/50 rounded-2xl transition-all duration-300"
                   />
                 </div>
               </div>
             </div>
 
+            {/* Location Status */}
             {locStage === "asking" && (
-              <div className="flex items-center gap-3 py-2">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Requesting location permission...</p>
+              <div className="flex items-center gap-3 p-4 bg-orange-50 dark:bg-orange-950/20 rounded-2xl border border-orange-200 dark:border-orange-800/30">
+                <Loader2 className="h-5 w-5 animate-spin text-orange-600 dark:text-orange-400" />
+                <p className="text-sm text-orange-800 dark:text-orange-200">
+                  Requesting location permission... Please allow location access in your browser.
+                </p>
               </div>
             )}
 
             {coords && (
-              <div className="text-xs text-muted-foreground bg-muted/30 rounded p-2">
-                Using coordinates: <span className="font-mono">{coordsPretty}</span>
-                {locationQuery && (
-                  <span className="ml-2">
-                    • You can replace the text above to search a different place
-                  </span>
-                )}
+              <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-2xl border border-green-200 dark:border-green-800/30">
+                <p className="text-sm text-green-800 dark:text-green-200">
+                  <span className="font-medium">📍 Location confirmed:</span>{" "}
+                  <span className="font-mono text-xs">{coordsPretty}</span>
+                  {locationQuery && (
+                    <span className="block mt-1 opacity-75">
+                      You can edit the location above to search a different area
+                    </span>
+                  )}
+                </p>
               </div>
             )}
 
+            {/* Search Button */}
             <div className="flex justify-end">
               <Button
                 onClick={runNearbySearch}
-                className="gap-2"
+                className="gap-2 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 px-8"
                 disabled={fetchingNearby || (!coords && !locationQuery.trim())}
               >
                 <SearchIcon className="h-4 w-4" />
-                {fetchingNearby ? "Searching..." : "Search"}
+                {fetchingNearby ? "Searching..." : "Discover Restaurants"}
               </Button>
             </div>
 
-            {/* Results */}
+            {/* Results Section */}
             {nearbyError && (
-              <div className="text-sm text-red-500 bg-red-50 dark:bg-red-950 p-3 rounded">
-                {nearbyError}
+              <div className="p-4 bg-red-50 dark:bg-red-950/20 rounded-2xl border border-red-200 dark:border-red-800/30">
+                <p className="text-sm text-red-800 dark:text-red-200 font-medium">
+                  {nearbyError}
+                </p>
               </div>
             )}
 
-            {fetchingNearby ? (
-              <div className="flex items-center gap-3 py-4">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Finding restaurants...</p>
-              </div>
-            ) : nearby.length > 0 ? (
-              <div className="space-y-3">
-                <div className="text-sm font-medium">
-                  Found {nearby.length} restaurant{nearby.length !== 1 ? "s" : ""}
+            {fetchingNearby && (
+              <div className="flex items-center gap-4 p-6 bg-gradient-to-r from-primary/5 to-primary/10 rounded-2xl">
+                <div className="relative">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
                 </div>
-                <div className="max-h-[40vh] overflow-y-auto rounded-md border">
-                  {nearby.map((r) => (
+                <div>
+                  <p className="font-medium">Searching for amazing restaurants...</p>
+                  <p className="text-sm text-muted-foreground">This might take a moment</p>
+                </div>
+              </div>
+            )}
+
+            {!fetchingNearby && nearby.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-gradient-to-r from-green-400 to-green-500 rounded-full animate-pulse" />
+                  <h3 className="text-lg font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                    Found {nearby.length} amazing restaurant{nearby.length !== 1 ? "s" : ""}!
+                  </h3>
+                </div>
+                <div className="max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-border/20 bg-background/50 backdrop-blur">
+                  {nearby.map((restaurant, index) => (
                     <div
-                      key={r.id}
-                      className="flex items-center justify-between px-3 py-3 border-b last:border-b-0 hover:bg-accent/40"
+                      key={restaurant.id}
+                      className="flex items-center justify-between p-4 border-b border-border/20 last:border-b-0 hover:bg-accent/40 transition-all duration-300 group"
+                      style={{ animationDelay: `${index * 50}ms` }}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">{r.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {r.address}
-                          {r.cuisine ? ` • ${r.cuisine}` : ""}
+                        <div className="text-base font-semibold text-foreground truncate group-hover:text-primary transition-colors">
+                          {restaurant.name}
                         </div>
-                        <div className="text-xs text-muted-foreground">
-                          {prettyDistance(r.distanceKm)} away
+                        <div className="text-sm text-muted-foreground truncate mt-1">
+                          {restaurant.address}
+                          {restaurant.cuisine && (
+                            <span className="text-primary"> • {restaurant.cuisine}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 mt-1">
+                          <MapPin className="h-3 w-3 text-green-500" />
+                          <span className="text-xs text-green-600 font-medium">
+                            {prettyDistance(restaurant.distanceKm)} away
+                          </span>
                         </div>
                       </div>
                       <a
                         href={`https://www.google.com/maps?q=${encodeURIComponent(
-                          r.name + " " + r.address
-                        )}&ll=${r.lat},${r.lon}`}
+                          restaurant.name + " " + restaurant.address
+                        )}&ll=${restaurant.lat},${restaurant.lon}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent flex-shrink-0 ml-2"
+                        className="inline-flex items-center gap-1 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white text-xs px-3 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 ml-3 flex-shrink-0"
                         title="Open in Google Maps"
                       >
-                        Maps <ExternalLink className="h-3.5 w-3.5" />
+                        View <ExternalLink className="h-3 w-3" />
                       </a>
                     </div>
                   ))}
                 </div>
               </div>
-            ) : (
-              <div className="text-sm text-muted-foreground py-2">
-                {coords || locationQuery.trim()
-                  ? "No results yet. Try a different distance or category."
-                  : "Enter a city/ZIP or use your location to start searching."}
+            )}
+
+            {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
+              <div className="text-center p-6 bg-muted/20 rounded-2xl">
+                <p className="text-muted-foreground">
+                  No restaurants found in this area. Try expanding your search radius or exploring different categories.
+                </p>
               </div>
             )}
 
-            <p className="text-xs text-muted-foreground border-t pt-3">
-              Tip: When you upload a food video, mention the restaurant name in your title or
-              description so others can find it too!
-            </p>
+            {/* Pro Tip */}
+            <div className="p-4 bg-gradient-to-r from-yellow-50 via-orange-50 to-red-50 dark:from-yellow-950/20 dark:via-orange-950/20 dark:to-red-950/20 rounded-2xl border border-yellow-200 dark:border-yellow-800/30">
+              <div className="flex items-start gap-2">
+                <Sparkles className="h-4 w-4 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                  <span className="font-semibold">Pro tip:</span> When you upload your food video, mention the restaurant name 
+                  in your title or description so others can discover these amazing spots too!
+                </p>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
     </div>
   );
-}
