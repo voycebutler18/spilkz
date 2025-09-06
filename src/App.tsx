@@ -96,6 +96,7 @@ const App = () => (
               <Route path="/creator/:username" element={<CreatorProfile />} />
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/search" element={<Search />} />
+              <Route path="/video/:id" element={<VideoUploadModal />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesInbox />} />
