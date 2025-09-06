@@ -110,9 +110,6 @@ const Header: React.FC = () => {
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
             <Sparkles className="h-4 w-4 text-white" />
           </span>
-          <span className="bg-clip-text text-lg font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
-            Splikz
-          </span>
         </Link>
 
         {/* Universal Search (omnibox) */}
@@ -149,15 +146,18 @@ const Header: React.FC = () => {
             </Button>
           )}
 
-          <Button
-            variant="ghost"
-            size="sm"
-            className="gap-2"
-            onClick={() => navigate("/messages")}
-            aria-label="Messages"
-          >
-            <MessageSquare className="h-4 w-4" /> Messages
-          </Button>
+          {/* Messages visible ONLY when logged in */}
+          {user && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2"
+              onClick={() => navigate("/messages")}
+              aria-label="Messages"
+            >
+              <MessageSquare className="h-4 w-4" /> Messages
+            </Button>
+          )}
 
           <Button
             size="sm"
@@ -204,7 +204,6 @@ const Header: React.FC = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            // <<< Clear CTAs when logged out
             <div className="flex items-center gap-2">
               <Link
                 to="/login"
@@ -223,7 +222,7 @@ const Header: React.FC = () => {
           )}
         </nav>
 
-        {/* Mobile: Drawer menu */}
+        {/* Mobile: Drawer menu — mirrors left sidebar */}
         <div className="md:hidden ml-auto">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
@@ -246,20 +245,15 @@ const Header: React.FC = () => {
               </div>
 
               <nav className="flex flex-col gap-3 p-4">
+                {/* Primary */}
                 <NavLink to="/" exact onClick={() => setOpen(false)}>
                   Home
                 </NavLink>
-
                 {user && (
                   <NavLink to="/dashboard" onClick={() => setOpen(false)}>
                     Creator Dashboard
                   </NavLink>
                 )}
-
-                <NavLink to="/messages" onClick={() => setOpen(false)}>
-                  Messages
-                </NavLink>
-
                 <Button
                   className="justify-start gap-2"
                   onClick={() => {
@@ -272,26 +266,49 @@ const Header: React.FC = () => {
 
                 <div className="mt-2 h-px bg-border" />
 
-                {user ? (
+                {/* ==== Mirrors Left Sidebar ==== */}
+                <div className="text-[11px] tracking-wide text-muted-foreground">Browse</div>
+                <NavLink to="/explore" onClick={() => setOpen(false)}>Discover</NavLink>
+                <NavLink to="/trending" onClick={() => setOpen(false)}>Trending</NavLink>
+                <NavLink to="/moods" onClick={() => setOpen(false)}>Moods</NavLink>
+                <NavLink to="/nearby" onClick={() => setOpen(false)}>Nearby</NavLink>
+                <NavLink to="/food" onClick={() => setOpen(false)}>Food</NavLink>
+
+                <div className="h-px bg-border" />
+
+                <div className="text-[11px] tracking-wide text-muted-foreground">Community</div>
+                <NavLink to="/creators" onClick={() => setOpen(false)}>Creators</NavLink>
+                <NavLink to="/challenges" onClick={() => setOpen(false)}>Challenges</NavLink>
+                <NavLink to="/events" onClick={() => setOpen(false)}>Events</NavLink>
+                <NavLink to="/brands" onClick={() => setOpen(false)}>For Brands</NavLink>
+
+                <div className="h-px bg-border" />
+
+                <div className="text-[11px] tracking-wide text-muted-foreground">You</div>
+                {user && (
                   <>
-                    <NavLink to="/dashboard/favorites" onClick={() => setOpen(false)}>
-                      Favorites
-                    </NavLink>
-                    <NavLink to={`/profile/${user.id}`} onClick={() => setOpen(false)}>
-                      Profile
-                    </NavLink>
-                    <Button
-                      variant="outline"
-                      onClick={async () => {
-                        await handleSignOut();
-                        setOpen(false);
-                      }}
-                      className="mt-1 justify-start"
-                    >
-                      <LogOut className="mr-2 h-4 w-4" />
-                      Sign out
-                    </Button>
+                    <NavLink to="/favorites" onClick={() => setOpen(false)}>My Favorites</NavLink>
+                    <NavLink to="/messages" onClick={() => setOpen(false)}>Messages</NavLink>
+                    <NavLink to="/settings" onClick={() => setOpen(false)}>Settings</NavLink>
                   </>
+                )}
+                <NavLink to="/help" onClick={() => setOpen(false)}>Help</NavLink>
+                <NavLink to="/about" onClick={() => setOpen(false)}>About</NavLink>
+
+                <div className="mt-2 h-px bg-border" />
+
+                {user ? (
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      await handleSignOut();
+                      setOpen(false);
+                    }}
+                    className="mt-1 justify-start"
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                  </Button>
                 ) : (
                   <>
                     <NavLink to="/login" onClick={() => setOpen(false)}>
