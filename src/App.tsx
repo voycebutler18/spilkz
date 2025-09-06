@@ -1,14 +1,12 @@
-// src/App.tsx
-import * as React from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { TooltipProvider } from "@/components/ui/tooltip";
+// src/App.tsx
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import AppLayout from "@/components/layout/AppLayout";
-import { UploadModalProvider } from "@/contexts/UploadModalContext";
 
 // Pages (site)
 import Index from "./pages/Index";
@@ -42,7 +40,7 @@ import Favorites from "./pages/Dashboard/Favorites";
 // Profiles & videos
 import Profile from "./pages/Profile";
 import CreatorProfile from "./pages/CreatorProfile";
-import VideoUploadModal from "./components/dashboard/VideoUploadModal";
+import VideoPage from "./pages/VideoPage";
 import Search from "./pages/Search";
 
 // Messaging
@@ -60,61 +58,57 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        {/* Mount the global Upload Modal so "Upload" opens a modal instead of routing */}
-        <UploadModalProvider>
-          <Routes>
-            {/* Auth screens (no layout) */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
+        <Routes>
+          {/* Auth screens (no layout) */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
-            {/* Site wrapped with global layout (Header + LeftSidebar + Footer) */}
-            <Route element={<AppLayout />}>
-              {/* Core */}
-              <Route path="/" element={<Index />} />
-              <Route path="/about" element={<About />} />
-              <Route path="/explore" element={<Explore />} />
-              <Route path="/food" element={<Food />} />
-              <Route path="/brands" element={<ForBrands />} />
-              <Route path="/creators" element={<ForCreators />} />
-              <Route path="/press" element={<Press />} />
-              <Route path="/help" element={<HelpCenter />} />
-              <Route path="/contact" element={<Contact />} />
+          {/* Site wrapped with global layout (Header + LeftSidebar + Footer) */}
+          <Route element={<AppLayout />}>
+            {/* Core */}
+            <Route path="/" element={<Index />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/explore" element={<Explore />} />
+            <Route path="/food" element={<Food />} />
+            <Route path="/brands" element={<ForBrands />} />
+            <Route path="/creators" element={<ForCreators />} />
+            <Route path="/press" element={<Press />} />
+            <Route path="/help" element={<HelpCenter />} />
+            <Route path="/contact" element={<Contact />} />
 
-              {/* Redirects */}
-              <Route path="/prompts" element={<Navigate to="/food" replace />} />
+            {/* Redirects */}
+            <Route path="/prompts" element={<Navigate to="/food" replace />} />
 
-              {/* Dashboard */}
-              <Route path="/dashboard" element={<CreatorDashboard />} />
-              <Route path="/dashboard/favorites" element={<Favorites />} />
+            {/* Dashboard */}
+            <Route path="/dashboard" element={<CreatorDashboard />} />
+            <Route path="/dashboard/favorites" element={<Favorites />} />
 
-              {/* Profiles & videos */}
-              <Route path="/profile/:id" element={<Profile />} />
-              <Route path="/creator/:slug" element={<CreatorProfile />} />
-              {/* Back-compat if anything still links to :username */}
-              <Route path="/creator/:username" element={<CreatorProfile />} />
-              <Route path="/video/:id" element={<VideoPage />} />
-              <Route path="/search" element={<Search />} />
-              <Route path="/video/:id" element={<VideoUploadModal />} />
+            {/* Profiles & videos */}
+            <Route path="/profile/:id" element={<Profile />} />
+            <Route path="/creator/:slug" element={<CreatorProfile />} />
+            {/* Back-compat if anything still links to :username */}
+            <Route path="/creator/:username" element={<CreatorProfile />} />
+            <Route path="/video/:id" element={<VideoPage />} />
+            <Route path="/search" element={<Search />} />
 
-              {/* Messaging */}
-              <Route path="/messages" element={<MessagesInbox />} />
-              <Route path="/messages/:otherId" element={<MessageThread />} />
+            {/* Messaging */}
+            <Route path="/messages" element={<MessagesInbox />} />
+            <Route path="/messages/:otherId" element={<MessageThread />} />
 
-              {/* Legal / community */}
-              <Route path="/terms" element={<Terms />} />
-              <Route path="/privacy" element={<Privacy />} />
-              <Route path="/dmca" element={<DMCA />} />
-              <Route path="/guidelines" element={<Guidelines />} />
-              <Route path="/safety" element={<Safety />} />
-              <Route path="/accessibility" element={<Accessibility />} />
+            {/* Legal / community */}
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/dmca" element={<DMCA />} />
+            <Route path="/guidelines" element={<Guidelines />} />
+            <Route path="/safety" element={<Safety />} />
+            <Route path="/accessibility" element={<Accessibility />} />
 
-              {/* 404 (with layout) */}
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
-        </UploadModalProvider>
+            {/* 404 (with layout) */}
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
