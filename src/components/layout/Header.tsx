@@ -1,7 +1,7 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Menu, Search, Home, MessageSquare, Upload } from "lucide-react";
+import { Sparkles, LogOut, Menu, Home, MessageSquare, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet";
 import {
@@ -11,9 +11,11 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+
+// NEW: type-ahead search
+import SearchOmni from "@/components/search/SearchOmni";
 
 type Profile = {
   id: string;
@@ -112,25 +114,20 @@ const Header: React.FC = () => {
           </span>
         </Link>
 
-        {/* Universal Search (omnibox) */}
+        {/* Universal Search (with autocomplete) */}
         <div className="relative hidden w-full max-w-xl flex-1 md:block">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search people and videos"
-            className="pl-8"
-            aria-label="Search people and videos"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const q = (e.currentTarget as HTMLInputElement).value.trim();
-                if (q) navigate(`/search?q=${encodeURIComponent(q)}`);
-              }
-            }}
-          />
+          <SearchOmni />
         </div>
 
         {/* Desktop: primary nav */}
         <nav className="ml-auto hidden items-center gap-2 md:flex">
-          <Button variant="ghost" size="sm" className="gap-2" onClick={() => navigate("/")} aria-label="Home">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-2"
+            onClick={() => navigate("/")}
+            aria-label="Home"
+          >
             <Home className="h-4 w-4" /> Home
           </Button>
 
@@ -216,7 +213,9 @@ const Header: React.FC = () => {
                 asChild
                 className="bg-gradient-to-r from-purple-600 to-cyan-500 text-white"
               >
-                <Link to="/signup" aria-label="Sign up">Sign up</Link>
+                <Link to="/signup" aria-label="Sign up">
+                  Sign up
+                </Link>
               </Button>
             </div>
           )}
@@ -267,33 +266,43 @@ const Header: React.FC = () => {
                 <div className="mt-2 h-px bg-border" />
 
                 {/* ==== Mirrors Left Sidebar ==== */}
-                <div className="text-[11px] tracking-wide text-muted-foreground">Browse</div>
-                <NavLink to="/explore" onClick={() => setOpen(false)}>Discover</NavLink>
-                <NavLink to="/trending" onClick={() => setOpen(false)}>Trending</NavLink>
-                <NavLink to="/moods" onClick={() => setOpen(false)}>Moods</NavLink>
-                <NavLink to="/nearby" onClick={() => setOpen(false)}>Nearby</NavLink>
-                <NavLink to="/food" onClick={() => setOpen(false)}>Food</NavLink>
+                <div className="text-[11px] tracking-wide text-muted-foreground">
+                  Browse
+                </div>
+                <NavLink to="/explore" onClick={() => setOpen(false)}>
+                  Discover
+                </NavLink>
+                <NavLink to="/food" onClick={() => setOpen(false)}>
+                  Food
+                </NavLink>
+                <NavLink to="/brands" onClick={() => setOpen(false)}>
+                  For Brands
+                </NavLink>
+                <NavLink to="/help" onClick={() => setOpen(false)}>
+                  Help
+                </NavLink>
+                <NavLink to="/about" onClick={() => setOpen(false)}>
+                  About
+                </NavLink>
 
                 <div className="h-px bg-border" />
 
-                <div className="text-[11px] tracking-wide text-muted-foreground">Community</div>
-                <NavLink to="/creators" onClick={() => setOpen(false)}>Creators</NavLink>
-                <NavLink to="/challenges" onClick={() => setOpen(false)}>Challenges</NavLink>
-                <NavLink to="/events" onClick={() => setOpen(false)}>Events</NavLink>
-                <NavLink to="/brands" onClick={() => setOpen(false)}>For Brands</NavLink>
-
-                <div className="h-px bg-border" />
-
-                <div className="text-[11px] tracking-wide text-muted-foreground">You</div>
+                <div className="text-[11px] tracking-wide text-muted-foreground">
+                  Me
+                </div>
                 {user && (
                   <>
-                    <NavLink to="/favorites" onClick={() => setOpen(false)}>My Favorites</NavLink>
-                    <NavLink to="/messages" onClick={() => setOpen(false)}>Messages</NavLink>
-                    <NavLink to="/settings" onClick={() => setOpen(false)}>Settings</NavLink>
+                    <NavLink
+                      to="/dashboard/favorites"
+                      onClick={() => setOpen(false)}
+                    >
+                      My Favorites
+                    </NavLink>
+                    <NavLink to="/messages" onClick={() => setOpen(false)}>
+                      Messages
+                    </NavLink>
                   </>
                 )}
-                <NavLink to="/help" onClick={() => setOpen(false)}>Help</NavLink>
-                <NavLink to="/about" onClick={() => setOpen(false)}>About</NavLink>
 
                 <div className="mt-2 h-px bg-border" />
 
