@@ -1,146 +1,137 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
-import LeftSidebar from "@/components/layout/LeftSidebar";
+import { Helmet } from "react-helmet";
 import { supabase } from "@/integrations/supabase/client";
-import SplikCard from "@/components/splik/SplikCard";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import SplikCard from "@/components/splik/SplikCard";
 import { Loader2 } from "lucide-react";
 
 type Splik = {
   id: string;
+  user_id: string;
   title: string;
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
-  user_id: string;
   created_at: string;
+  likes_count?: number | null;
+  comments_count?: number | null;
+  trim_start?: number | null;
+  mood?: string | null;
+  profile?: any;
 };
 
-const MOODS: Record<
-  string,
-  { label: string; keywords: string[]; hue: number }
-> = {
-  happy:   { label: "Happy",   keywords: ["happy", "joy", "smile", "good vibes"], hue: 48 },
-  chill:   { label: "Chill",   keywords: ["chill", "calm", "lofi", "relax"],      hue: 190 },
-  hype:    { label: "Hype",    keywords: ["hype", "energy", "turn up", "wow"],    hue: 280 },
-  romance: { label: "Romance", keywords: ["romance", "love", "date", "kiss"],     hue: 340 },
-  aww:     { label: "Aww",     keywords: ["aww", "cute", "adorable", "wholesome"],hue: 20 },
-};
+const MOODS = ["happy", "chill", "hype", "romance", "aww", "funny", "excited", "relaxed", "inspired", "nostalgic", "motivated", "surprised", "sad", "angry", "cozy", "neutral"] as const;
 
 export default function MoodPage() {
-  const { slug = "happy" } = useParams();
-  const mood = MOODS[slug.toLowerCase()] ?? MOODS.happy;
+  const params = useParams<{ mood: string }>();
+  const moodParam = (params.mood || "").toLowerCase();
 
-  const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
+  const [spliks, setSpliks] = useState<Splik[]>([]);
 
-  const orFilter = useMemo(() => {
-    // Build a PostgREST OR filter across title/description for each keyword
-    // e.g. title.ilike.%happy%,description.ilike.%happy%,title.ilike.%joy%,...
-    return mood.keywords
-      .map((k) => `title.ilike.%${k}%,description.ilike.%${k}%`)
-      .join(",");
-  }, [mood]);
+  const pretty = useMemo(() => {
+    const found = MOODS.find((m) => m === moodParam);
+    if (!found) return moodParam.charAt(0).toUpperCase() + moodParam.slice(1);
+    // nice label for "neutral"
+    return found === "neutral" ? "Neutral / Natural" : found.charAt(0).toUpperCase() + found.slice(1);
+  }, [moodParam]);
 
   useEffect(() => {
     let mounted = true;
-
-    (async () => {
+    const run = async () => {
       setLoading(true);
       try {
-        // If your DB later has a dedicated "mood" column, swap to: .ilike('mood', mood.label)
-        const { data, error } = await supabase
+        // 1) fetch spliks by mood
+        const { data: base, error } = await supabase
           .from("spliks")
-          .select("id,title,description,video_url,thumbnail_url,user_id,created_at")
-          .or(orFilter)
+          .select("*")
+          .eq("status", "active")
+          .eq("mood", moodParam)
           .order("created_at", { ascending: false })
           .limit(60);
-
         if (error) throw error;
-        if (!mounted) return;
-        setSpliks(data || []);
+
+        const rows = base || [];
+        if (rows.length === 0) {
+          setSpliks([]);
+          return;
+        }
+
+        // 2) fetch profiles in one round trip
+        const ids = Array.from(new Set(rows.map((r) => r.user_id)));
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", ids);
+
+        const map = new Map((profiles || []).map((p) => [p.id, p]));
+        const withProfiles: Splik[] = rows.map((r) => ({ ...r, profile: map.get(r.user_id) }));
+        if (mounted) setSpliks(withProfiles);
       } catch (e) {
-        console.error("Mood feed error:", e);
-        if (!mounted) setSpliks([]);
+        console.error(e);
+        if (mounted) setSpliks([]);
       } finally {
         if (mounted) setLoading(false);
       }
-    })();
-
+    };
+    run();
     return () => {
       mounted = false;
     };
-  }, [orFilter]);
-
-  const MoodChip = ({ to, label, hue }: { to: string; label: string; hue: number }) => (
-    <Link
-      to={to}
-      className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/10 px-3 py-1 text-xs text-foreground/80 hover:bg-white/10 hover:text-foreground transition"
-    >
-      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: `hsl(${hue} 90% 55%)` }} />
-      <span>{label}</span>
-    </Link>
-  );
+  }, [moodParam]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="min-h-screen">
+      <Helmet>
+        <title>{pretty} — Mood • Splikz</title>
+        <meta name="description" content={`Watch 3-second ${pretty} videos on Splikz`} />
+      </Helmet>
 
-      <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[224px_1fr]">
-        <LeftSidebar />
-
-        <main className="w-full px-3 sm:px-4 py-4 md:py-6">
-          {/* Top strip: mood title + quick switcher */}
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span
-                className="inline-block h-3 w-3 rounded-full"
-                style={{ backgroundColor: `hsl(${mood.hue} 90% 55%)` }}
-              />
-              <h1 className="text-xl font-semibold tracking-tight">{mood.label} — 3-Second Moods</h1>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <MoodChip to="/moods/happy" label="Happy" hue={MOODS.happy.hue} />
-              <MoodChip to="/moods/chill" label="Chill" hue={MOODS.chill.hue} />
-              <MoodChip to="/moods/hype" label="Hype" hue={MOODS.hype.hue} />
-              <MoodChip to="/moods/romance" label="Romance" hue={MOODS.romance.hue} />
-              <MoodChip to="/moods/aww" label="Aww" hue={MOODS.aww.hue} />
-            </div>
-          </div>
-
-          {/* Feed */}
-          {loading ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-              <p className="text-sm text-muted-foreground">Loading {mood.label} videos…</p>
-            </div>
-          ) : spliks.length === 0 ? (
-            <div className="rounded-xl border border-white/10 bg-background/40 p-6 text-center">
-              <p className="text-sm text-muted-foreground mb-3">
-                Nothing tagged for <span className="font-semibold">{mood.label}</span> yet.
-              </p>
-              <div className="flex items-center justify-center gap-2">
-                <Button asChild>
-                  <Link to="/upload">Upload a {mood.label} Splik</Link>
-                </Button>
-                <Button asChild variant="outline">
-                  <Link to="/">Back to Home</Link>
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {spliks.map((s) => (
-                <SplikCard key={s.id} splik={s as any} />
-              ))}
-            </div>
-          )}
-        </main>
+      {/* Mood switcher quick links */}
+      <div className="sticky top-[56px] z-20 bg-background/80 backdrop-blur border-b">
+        <div className="mx-auto max-w-7xl px-3 py-2 flex gap-2 overflow-x-auto">
+          {MOODS.map((m) => {
+            const label = m === "neutral" ? "Neutral / Natural" : m.charAt(0).toUpperCase() + m.slice(1);
+            const active = m === moodParam;
+            return (
+              <Button
+                key={m}
+                asChild
+                size="sm"
+                variant={active ? "default" : "outline"}
+                className={active ? "" : "bg-background"}
+              >
+                <Link to={`/mood/${m}`}>{label}</Link>
+              </Button>
+            );
+          })}
+        </div>
       </div>
 
-      <Footer />
+      <div className="mx-auto max-w-7xl px-3 sm:px-4 py-6">
+        <h1 className="text-2xl font-semibold mb-2">{pretty} mood</h1>
+        <p className="text-sm text-muted-foreground mb-6">3-second clips tagged “{pretty}”.</p>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-7 w-7 animate-spin text-primary" />
+          </div>
+        ) : spliks.length === 0 ? (
+          <Card className="max-w-md">
+            <CardContent className="p-6">
+              <p className="text-sm text-muted-foreground">No videos yet for this mood.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="mx-auto max-w-[400px] sm:max-w-[500px] space-y-4 md:space-y-6">
+            {spliks.map((s) => (
+              <SplikCard key={s.id} splik={s} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
