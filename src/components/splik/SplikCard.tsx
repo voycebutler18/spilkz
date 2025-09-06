@@ -44,7 +44,6 @@ interface ExtendedSplik extends Splik {
   isBoosted?: boolean;
   is_currently_boosted?: boolean;
   boost_score?: number;
-  // mood?: string; // if your DB has this column it will flow through here
 }
 
 interface SplikCardProps {
@@ -86,7 +85,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   /* --------------------------- Autoplay/visibility --------------------------- */
 
-  // Mute all other videos
   const muteOtherVideos = () => {
     const allVideos = document.querySelectorAll("video");
     allVideos.forEach((video) => {
@@ -111,9 +109,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             videoRef.current
               .play()
               .then(() => setIsPlaying(true))
-              .catch(() => {
-                // Autoplay might fail until user interacts
-              });
+              .catch(() => {});
             if (!viewedRef.current) viewedRef.current = true;
           } else if (videoRef.current && isPlaying) {
             videoRef.current.pause();
@@ -274,7 +270,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const handleCopyLink = () => {
-    // Use the actual video route used by the app
     const url = `${window.location.origin}/video/${splik.id}`;
     navigator.clipboard.writeText(url);
     toast({ title: "Link copied!", description: "Video link copied to clipboard" });
@@ -346,7 +341,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     <div
       ref={cardRef}
       className={cn(
-        "relative bg-card rounded-xl overflow-hidden shadow-lg border border-border w-full max-w-[500px] mx-auto",
+        // FIX: `isolate` creates a new stacking context so z-indexes work predictably
+        "relative isolate bg-card rounded-xl overflow-hidden shadow-lg border border-border w-full max-w-[500px] mx-auto",
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
@@ -370,12 +366,16 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         {/* Promote CTA (owner only, hidden when already boosted) */}
         {isOwner && !isBoosted && (
           <button
+            // FIX: make the button the definitive click target
             onClick={(e) => {
+              e.preventDefault();
               e.stopPropagation();
               setShowBoostModal(true);
             }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
             className="
-              absolute top-2 right-3 z-30
+              absolute top-2 right-3 z-[60] pointer-events-auto
               flex items-center gap-2 rounded-full
               px-3 py-1.5 text-sm font-semibold
               bg-gradient-to-r from-cyan-400 to-emerald-400
@@ -384,6 +384,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               transition-colors
             "
             aria-label="Promote this video"
+            data-no-overlay="true"   /* helpful for debugging */
           >
             <Rocket className="h-4 w-4" />
             Promote Video
@@ -585,7 +586,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </Button>
         </div>
 
-        {/* Optional mood chip (shows if uploader set a mood) */}
         {splik.mood && (
           <div className="mt-3">
             <Badge variant="secondary" className="px-2 py-0.5 text-[10px] rounded-full">
