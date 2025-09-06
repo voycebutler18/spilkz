@@ -50,9 +50,59 @@ interface SplikCardProps {
   onShare?: () => void;
 }
 
+/** ---- Mood helpers (read from #mood=<value> tag in description) ---- */
+const MOOD_LABELS: Record<string, string> = {
+  happy: "Happy",
+  chill: "Chill",
+  hype: "Hype",
+  romance: "Romance",
+  aww: "Aww",
+  funny: "Funny",
+  excited: "Excited",
+  relaxed: "Relaxed",
+  inspired: "Inspired",
+  nostalgic: "Nostalgic",
+  motivated: "Motivated",
+  surprised: "Surprised",
+  sad: "Sad",
+  angry: "Angry",
+  cozy: "Cozy",
+  neutral: "Neutral / Natural",
+};
+
+const MOOD_COLORS: Record<string, string> = {
+  happy: "bg-yellow-400",
+  chill: "bg-sky-400",
+  hype: "bg-fuchsia-500",
+  romance: "bg-rose-400",
+  aww: "bg-orange-400",
+  funny: "bg-amber-400",
+  excited: "bg-indigo-400",
+  relaxed: "bg-teal-400",
+  inspired: "bg-emerald-400",
+  nostalgic: "bg-lime-400",
+  motivated: "bg-blue-400",
+  surprised: "bg-cyan-400",
+  sad: "bg-blue-300",
+  angry: "bg-red-500",
+  cozy: "bg-amber-500",
+  neutral: "bg-gray-400",
+};
+
+const extractMood = (desc?: string | null): string | null => {
+  if (!desc) return null;
+  const m = desc.match(/(?:^|\s)#mood=([a-z0-9_-]+)/i);
+  return m ? m[1].toLowerCase() : null;
+};
+
+const stripMoodTag = (desc?: string | null): string => {
+  if (!desc) return "";
+  return desc.replace(/(^|\s)#mood=[^\s]+/i, " ").replace(/\s+/g, " ").trim();
+};
+
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false); // Changed to false for auto-unmute
+  const [isMuted, setIsMuted] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -63,7 +113,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
   const [isInView, setIsInView] = useState(false);
-  const [showPauseButton, setShowPauseButton] = useState(true); // New state for pause button visibility
+  const [showPauseButton, setShowPauseButton] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -72,9 +122,17 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  // Function to mute all other videos
+  // Derived mood info from description
+  const moodValue = extractMood(splik.description);
+  const moodLabel =
+    (moodValue && MOOD_LABELS[moodValue]) ||
+    (moodValue ? moodValue.charAt(0).toUpperCase() + moodValue.slice(1) : "");
+  const moodDot = moodValue ? MOOD_COLORS[moodValue] || "bg-muted-foreground" : "";
+  const displayDescription = stripMoodTag(splik.description);
+
+  // Mute all other videos
   const muteOtherVideos = () => {
-    const allVideos = document.querySelectorAll('video');
+    const allVideos = document.querySelectorAll("video");
     allVideos.forEach((video) => {
       if (video !== videoRef.current) {
         video.muted = true;
@@ -90,46 +148,33 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         entries.forEach((entry) => {
           const isVisible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
           setIsInView(isVisible);
-          
+
           if (isVisible && videoRef.current) {
-            // Mute all other videos first
             muteOtherVideos();
-            
-            // Auto-play when 50% of video is visible
             videoRef.current.currentTime = 0;
             videoRef.current.muted = isMuted;
             videoRef.current.play().catch(() => {
-              console.log('Autoplay failed - user interaction may be required');
+              console.log("Autoplay failed - user interaction may be required");
             });
             setIsPlaying(true);
             if (!viewedRef.current) {
               viewedRef.current = true;
             }
           } else if (videoRef.current && isPlaying) {
-            // Pause and mute when video goes out of view
             videoRef.current.pause();
             videoRef.current.muted = true;
             setIsPlaying(false);
           }
         });
       },
-      {
-        threshold: [0.5],
-        rootMargin: '0px'
-      }
+      { threshold: [0.5], rootMargin: "0px" }
     );
 
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
-    }
+    if (cardRef.current) observer.observe(cardRef.current);
 
     return () => {
-      if (cardRef.current) {
-        observer.unobserve(cardRef.current);
-      }
-      if (pauseTimeoutRef.current) {
-        clearTimeout(pauseTimeoutRef.current);
-      }
+      if (cardRef.current) observer.unobserve(cardRef.current);
+      if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
     };
   }, [isPlaying, isMuted]);
 
@@ -226,7 +271,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setShowCommentsModal(true);
     onReact?.();
   };
-  
+
   const handleShare = () => {
     setShowShareModal(true);
     onShare?.();
@@ -297,7 +342,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const handleCopyLink = () => {
-    const url = `${window.location.origin}/splik/${splik.id}`;
+    // ✅ Fix 404: the app route is /video/:id
+    const url = `${window.location.origin}/video/${splik.id}`;
     navigator.clipboard.writeText(url);
     toast({
       title: "Link copied!",
@@ -306,7 +352,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const handleReport = () => setShowReportModal(true);
-  
+
   const handleBlock = () =>
     toast({
       title: "User blocked",
@@ -327,26 +373,19 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     if (isPlaying) {
       video.pause();
       setIsPlaying(false);
-      // Hide pause button immediately when clicked
       setShowPauseButton(false);
-      // Show it again after a short delay
-      if (pauseTimeoutRef.current) {
-        clearTimeout(pauseTimeoutRef.current);
-      }
+      if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
       pauseTimeoutRef.current = setTimeout(() => {
         setShowPauseButton(true);
       }, 2000);
     } else {
-      // Mute other videos when this one starts playing
       muteOtherVideos();
       video.currentTime = 0;
       video.muted = isMuted;
       void video.play();
       setIsPlaying(true);
       setShowPauseButton(true);
-      if (!viewedRef.current) {
-        viewedRef.current = true;
-      }
+      if (!viewedRef.current) viewedRef.current = true;
     }
   };
 
@@ -363,12 +402,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const toggleMute = () => {
     const video = videoRef.current;
     if (!video) return;
-    
-    if (!isMuted) {
-      // If unmuting this video, mute all others
-      muteOtherVideos();
-    }
-    
+
+    if (!isMuted) muteOtherVideos();
+
     video.muted = !isMuted;
     setIsMuted(!isMuted);
   };
@@ -396,10 +432,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         style={{ height: videoHeight, maxHeight: "80svh" }}
         onClick={handlePlayToggle}
       >
-        {/* Top black bar INSIDE the wrapper to hide any seam */}
         <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
 
-        {/* Splikz logo */}
         <div className="absolute top-2 left-3 z-20">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
             <Sparkles className="h-4 w-4 text-purple-400" />
@@ -453,9 +487,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             <h3 className="text-white font-semibold text-sm truncate">
               {splik.title || "Untitled"}
             </h3>
-            {splik.description ? (
+            {displayDescription ? (
               <p className="text-white/85 text-xs truncate">
-                {splik.description}
+                {displayDescription}
               </p>
             ) : null}
           </div>
@@ -549,30 +583,31 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
                   Boost Video
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem
-                onClick={handleCopyLink}
-                className="cursor-pointer"
-              >
+              <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Link
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={handleReport}
-                className="cursor-pointer"
-              >
+              <DropdownMenuItem onClick={handleReport} className="cursor-pointer">
                 <Flag className="h-4 w-4 mr-2" />
                 Report
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={handleBlock}
-                className="cursor-pointer"
-              >
+              <DropdownMenuItem onClick={handleBlock} className="cursor-pointer">
                 <UserX className="h-4 w-4 mr-2" />
                 Block User
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {/* Mood pill (shows only if a mood was chosen) */}
+        {moodValue && (
+          <div className="mb-2">
+            <Badge variant="secondary" className="gap-2 px-2.5 py-1">
+              <span className={`h-2 w-2 rounded-full ${moodDot}`} />
+              <span className="text-xs font-medium">{moodLabel}</span>
+            </Badge>
+          </div>
+        )}
 
         {/* ENGAGEMENT ACTIONS */}
         <div className="flex items-center justify-between gap-1">
