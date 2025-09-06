@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// src/pages/Auth/Signup.tsx
+import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,26 +9,59 @@ import { Sparkles, Mail, Lock, User, Calendar, MapPin, Loader2 } from "lucide-re
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
+function toDateInputValue(d: Date) {
+  // Normalize to local date (avoid TZ off-by-one)
+  const tzOff = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOff).toISOString().split("T")[0];
+}
+
+function calcAgeFromDob(dobStr: string): number | null {
+  if (!dobStr) return null;
+  const dob = new Date(dobStr + "T00:00:00");
+  if (Number.isNaN(dob.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+  return age >= 0 ? age : null;
+}
+
 const Signup = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [age, setAge] = useState("");
+  const [dob, setDob] = useState(""); // YYYY-MM-DD (from <input type="date">)
   const [city, setCity] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Check if user is already logged in and redirect
+  // Derived age from DOB
+  const computedAge = useMemo(() => calcAgeFromDob(dob), [dob]);
+
+  // Date limits for DOB picker (120 years ago to 13 years ago)
+  const maxDob = useMemo(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 13);
+    return toDateInputValue(d);
+  }, []);
+  const minDob = useMemo(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 120);
+    return toDateInputValue(d);
+  }, []);
+
+  // Check if user already logged in and redirect
   useEffect(() => {
     const checkAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {
-          // User is logged in, redirect to dashboard
           navigate("/dashboard");
+          return;
         }
       } catch (error) {
         console.error("Auth check error:", error);
@@ -38,42 +72,29 @@ const Signup = () => {
 
     checkAuth();
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        navigate("/dashboard");
-      }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) navigate("/dashboard");
     });
-
     return () => subscription.unsubscribe();
   }, [navigate]);
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!email || !password || !firstName || !lastName || !age || !city) {
-      toast({
-        title: "Error",
-        description: "Please fill in all fields",
-        variant: "destructive",
-      });
+
+    if (!email || !password || !firstName || !lastName || !dob || !city) {
+      toast({ title: "Error", description: "Please fill in all fields", variant: "destructive" });
       return;
     }
-
     if (password.length < 6) {
-      toast({
-        title: "Error",
-        description: "Password must be at least 6 characters",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
       return;
     }
 
-    const ageNum = parseInt(age);
-    if (isNaN(ageNum) || ageNum < 13 || ageNum > 120) {
+    const ageNum = computedAge ?? NaN;
+    if (Number.isNaN(ageNum) || ageNum < 13 || ageNum > 120) {
       toast({
-        title: "Error",
-        description: "Please enter a valid age (13-120)",
+        title: "Invalid age",
+        description: "Your date of birth must indicate an age between 13 and 120.",
         variant: "destructive",
       });
       return;
@@ -90,50 +111,40 @@ const Signup = () => {
           data: {
             first_name: firstName,
             last_name: lastName,
-            age: ageNum,
-            city: city,
+            dob,                 // store in auth metadata
+            age: ageNum,         // store in auth metadata
+            city,
           },
         },
       });
-
       if (error) throw error;
 
       if (data.user) {
-        // Create profile immediately after signup
+        // Create profile (store age; omit dob to avoid DB errors if column doesn't exist yet)
         const { error: profileError } = await supabase
-          .from('profiles')
+          .from("profiles")
           .insert({
             id: data.user.id,
             first_name: firstName,
             last_name: lastName,
             age: ageNum,
-            city: city,
-            username: email.split('@')[0], // Default username from email
+            city,
+            username: email.split("@")[0],
             display_name: `${firstName} ${lastName}`,
           });
+        if (profileError) console.error("Profile creation error:", profileError);
 
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-        }
-
-        // Send welcome email
+        // Optional: welcome email (ignore failure)
         try {
-          const { error: emailError } = await supabase.functions.invoke('send-welcome-email', {
-            body: {
-              email,
-              firstName,
-              lastName,
-            },
+          const { error: emailError } = await supabase.functions.invoke("send-welcome-email", {
+            body: { email, firstName, lastName },
           });
-
-          if (emailError) {
-            console.error('Failed to send welcome email:', emailError);
-          }
+          if (emailError) console.error("Failed to send welcome email:", emailError);
         } catch (emailError) {
-          console.error('Error calling email function:', emailError);
+          console.error("Error calling email function:", emailError);
         }
 
-        // Sign in immediately after signup for development
+        // Dev convenience: sign in immediately
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -153,10 +164,10 @@ const Signup = () => {
           navigate("/login");
         }
       }
-    } catch (error: any) {
+    } catch (err: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create account",
+        description: err.message || "Failed to create account",
         variant: "destructive",
       });
     } finally {
@@ -164,7 +175,6 @@ const Signup = () => {
     }
   };
 
-  // Show loading state while checking authentication
   if (checkingAuth) {
     return (
       <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center">
@@ -181,9 +191,7 @@ const Signup = () => {
             <Sparkles className="h-12 w-12 text-primary" />
           </div>
           <CardTitle className="text-2xl">Create your account</CardTitle>
-          <CardDescription>
-            Join Splikz and start sharing your gestures
-          </CardDescription>
+          <CardDescription>Join Splikz and start sharing your gestures</CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -204,7 +212,7 @@ const Signup = () => {
                   />
                 </div>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="lastName">Last Name</Label>
                 <div className="relative">
@@ -254,39 +262,55 @@ const Signup = () => {
               </div>
             </div>
 
+            {/* DOB + auto Age */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="age">Age</Label>
+                <Label htmlFor="dob">Date of Birth</Label>
                 <div className="relative">
                   <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    id="age"
-                    type="number"
-                    placeholder="18"
-                    min="13"
-                    max="120"
-                    value={age}
-                    onChange={(e) => setAge(e.target.value)}
+                    id="dob"
+                    type="date"
+                    value={dob}
+                    onChange={(e) => setDob(e.target.value)}
                     className="pl-10"
                     disabled={loading}
+                    min={minDob}
+                    max={maxDob}
+                    required
                   />
                 </div>
+                <p className="text-[11px] text-muted-foreground">
+                  For safety, your DOB helps us verify age and can’t be changed later.
+                </p>
               </div>
-              
+
               <div className="space-y-2">
-                <Label htmlFor="city">City</Label>
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="city"
-                    type="text"
-                    placeholder="New York"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="pl-10"
-                    disabled={loading}
-                  />
-                </div>
+                <Label htmlFor="age">Age</Label>
+                <Input
+                  id="age"
+                  type="text"
+                  value={computedAge ?? ""}
+                  placeholder="—"
+                  readOnly
+                  disabled
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="city">City</Label>
+              <div className="relative">
+                <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="city"
+                  type="text"
+                  placeholder="New York"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="pl-10"
+                  disabled={loading}
+                />
               </div>
             </div>
 
