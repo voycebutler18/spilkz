@@ -30,8 +30,7 @@ type AdminSplikRow = {
   status: string | null;
 };
 
-const fmt = (d?: string | null) =>
-  d ? new Date(d).toLocaleString() : "—";
+const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString() : "—");
 
 export default function Admin() {
   const [uid, setUid] = useState<string | null>(null);
@@ -72,7 +71,19 @@ export default function Admin() {
       if (!uid) return;
       const { data, error } = await supabase.rpc("admin_stats", { p_uid: uid });
       if (error) throw error;
-      setStats(data as Stats);
+
+      // RETURNS TABLE(...) comes back as an array. Support JSON return too.
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row) {
+        setStats(row as Stats);
+      } else {
+        setStats({
+          total_users: 0,
+          total_spliks: 0,
+          food_spliks: 0,
+          active_creators_24h: 0,
+        });
+      }
     } catch (e: any) {
       toast.error("Failed to load stats");
       console.error(e);
@@ -88,7 +99,7 @@ export default function Admin() {
         p_offset: offset,
       });
       if (error) throw error;
-      setUsers(data as AdminUserRow[]);
+      setUsers((data as AdminUserRow[]) || []);
       setUOffset(offset);
     } catch (e: any) {
       toast.error("Failed to load users");
@@ -105,7 +116,7 @@ export default function Admin() {
         p_offset: offset,
       });
       if (error) throw error;
-      setSpliks(data as AdminSplikRow[]);
+      setSpliks((data as AdminSplikRow[]) || []);
       setSOffset(offset);
     } catch (e: any) {
       toast.error("Failed to load content");
@@ -113,17 +124,17 @@ export default function Admin() {
     }
   };
 
-  const refreshing = useMemo(
-    () => loading || !stats,
-    [loading, stats]
-  );
+  const refreshing = useMemo(() => loading || !stats, [loading, stats]);
 
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold">Admin</h1>
-          <Button variant="outline" onClick={() => Promise.all([loadStats(), loadUsers(), loadSpliks()])}>
+          <Button
+            variant="outline"
+            onClick={() => Promise.all([loadStats(), loadUsers(), loadSpliks()])}
+          >
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
@@ -183,10 +194,18 @@ export default function Admin() {
               <UsersIcon className="h-4 w-4 text-primary" /> Users
             </h2>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => loadUsers(Math.max(0, uOffset - uLimit))}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadUsers(Math.max(0, uOffset - uLimit))}
+              >
                 Prev
               </Button>
-              <Button variant="outline" size="sm" onClick={() => loadUsers(uOffset + uLimit)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadUsers(uOffset + uLimit)}
+              >
                 Next
               </Button>
               <Button size="sm" onClick={() => loadUsers(uOffset)}>Load</Button>
@@ -205,7 +224,9 @@ export default function Admin() {
               <tbody>
                 {users.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="p-4 text-muted-foreground">No users</td>
+                    <td colSpan={3} className="p-4 text-muted-foreground">
+                      No users
+                    </td>
                   </tr>
                 ) : (
                   users.map((u) => (
@@ -226,10 +247,18 @@ export default function Admin() {
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-lg font-semibold">Recent titles</h2>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => loadSpliks(Math.max(0, sOffset - sLimit))}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadSpliks(Math.max(0, sOffset - sLimit))}
+              >
                 Prev
               </Button>
-              <Button variant="outline" size="sm" onClick={() => loadSpliks(sOffset + sLimit)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadSpliks(sOffset + sLimit)}
+              >
                 Next
               </Button>
               <Button size="sm" onClick={() => loadSpliks(sOffset)}>Load</Button>
@@ -250,7 +279,9 @@ export default function Admin() {
               <tbody>
                 {spliks.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-4 text-muted-foreground">No content</td>
+                    <td colSpan={5} className="p-4 text-muted-foreground">
+                      No content
+                    </td>
                   </tr>
                 ) : (
                   spliks.map((s) => (
