@@ -26,19 +26,7 @@ import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
-import {
-  Video,
-  Users,
-  TrendingUp,
-  Settings,
-  Plus,
-  Bookmark,
-  Lock,
-  Unlock,
-  Heart,
-  MessageCircle,
-  MessageSquare,
-} from "lucide-react";
+import { Video, Users, TrendingUp, Settings, Heart, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -82,8 +70,6 @@ const CreatorDashboard = () => {
     avatar_url: "",
   });
 
-  // Unread messages for dashboard button
-  const [unreadCount, setUnreadCount] = useState<number>(0);
   const channelCleanup = useRef<null | (() => void)>(null);
 
   useEffect(() => {
@@ -102,7 +88,6 @@ const CreatorDashboard = () => {
   }, []);
 
   const setupRealtimeUpdates = () => {
-    // Refresh dashboard periodically
     const interval = setInterval(() => {
       if (profile) {
         fetchStats();
@@ -130,14 +115,6 @@ const CreatorDashboard = () => {
           }
         }
       )
-      // messages: update unread badge live
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "messages" },
-        () => {
-          fetchUnreadCount(); // lightweight head-count
-        }
-      )
       .subscribe();
 
     channelCleanup.current = () => supabase.removeChannel(channel);
@@ -156,27 +133,7 @@ const CreatorDashboard = () => {
       navigate("/login");
       return;
     }
-    await Promise.all([fetchProfile(user.id), fetchSpliks(), fetchUnreadCount()]);
-  };
-
-  const fetchUnreadCount = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    // Count unread messages addressed to the current user
-    const { count, error } = await supabase
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("recipient_id", user.id)
-      .is("read_at", null);
-
-    if (error) {
-      console.error("Unread count error:", error);
-      return;
-    }
-    setUnreadCount(count || 0);
+    await Promise.all([fetchProfile(user.id), fetchSpliks()]);
   };
 
   const fetchProfile = async (userId: string) => {
@@ -187,7 +144,7 @@ const CreatorDashboard = () => {
         .eq("id", userId)
         .single();
 
-      if (error) throw error;
+    if (error) throw error;
 
       if (data) {
         setProfile(data);
@@ -221,7 +178,6 @@ const CreatorDashboard = () => {
     if (!user) return;
 
     try {
-      // Fetch user's videos
       const { data: spliksData, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
@@ -230,7 +186,6 @@ const CreatorDashboard = () => {
 
       if (spliksError) throw spliksError;
 
-      // Lightweight profile for display in grid/cards
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("username, display_name, avatar_url")
@@ -244,13 +199,11 @@ const CreatorDashboard = () => {
       const data =
         spliksData?.map((splik) => ({
           ...splik,
-          // IMPORTANT: cards expect `splik.profile`, not `splik.profiles`
           profile: profileData || null,
         })) || [];
 
       setSpliks(data || []);
 
-      // Reactions-only metrics
       const totalReactions =
         data?.reduce(
           (acc: number, s: any) =>
@@ -308,9 +261,7 @@ const CreatorDashboard = () => {
     }
   };
 
-  const togglePrivacy = async (
-    field: "followers_private" | "following_private"
-  ) => {
+  const togglePrivacy = async (field: "followers_private" | "following_private") => {
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -327,11 +278,7 @@ const CreatorDashboard = () => {
       if (error) throw error;
 
       setProfile({ ...profile, [field]: newValue });
-      toast.success(
-        `${
-          field === "followers_private" ? "Followers" : "Following"
-        } privacy updated`
-      );
+      toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
     } catch (error) {
       console.error("Error updating privacy:", error);
       toast.error("Failed to update privacy settings");
@@ -355,13 +302,12 @@ const CreatorDashboard = () => {
       <Header />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Title row — action bar removed */}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Creator Dashboard
           </h1>
-
-          {/* ACTION BUTTONS (now includes Messages with unread badge) */}
-          <div className="flex gap-2 items-center">
+        </div>
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -376,9 +322,7 @@ const CreatorDashboard = () => {
                 <div className="text-2xl font-bold">{stats.totalSpliks}</div>
                 <Video className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Videos uploaded
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Videos uploaded</p>
             </CardContent>
           </Card>
 
@@ -413,9 +357,7 @@ const CreatorDashboard = () => {
                 <div className="text-2xl font-bold">{stats.followers}</div>
                 <Users className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Build your community
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">Build your community</p>
             </CardContent>
           </Card>
 
@@ -427,9 +369,7 @@ const CreatorDashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-2xl font-bold">
-                  {stats.avgReactionsPerVideo}
-                </div>
+                <div className="text-2xl font-bold">{stats.avgReactionsPerVideo}</div>
                 <TrendingUp className="h-5 w-5 text-primary" />
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -450,19 +390,12 @@ const CreatorDashboard = () => {
           {/* My Videos */}
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
-              <>
-                <VideoGrid spliks={spliks} />
-                {/* NOTE: Removed the duplicate "Manage Videos / Delete" list per your request */}
-              </>
+              <VideoGrid spliks={spliks} />
             ) : (
               <Card className="p-12 text-center">
                 <Video className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-4">
-                  No videos uploaded yet
-                </p>
-                <Button onClick={() => setUploadModalOpen(true)}>
-                  Upload Your First Video
-                </Button>
+                <p className="text-muted-foreground mb-4">No videos uploaded yet</p>
+                <Button onClick={() => setUploadModalOpen(true)}>Upload Your First Video</Button>
               </Card>
             )}
           </TabsContent>
@@ -472,22 +405,17 @@ const CreatorDashboard = () => {
             <Card>
               <CardHeader>
                 <CardTitle>Performance Overview</CardTitle>
-                <CardDescription>
-                  Track your content performance and growth
-                </CardDescription>
+                <CardDescription>Track your content performance and growth</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
                   <div>
-                    <p className="text-sm text-muted-foreground">
-                      This Week’s Reactions
-                    </p>
+                    <p className="text-sm text-muted-foreground">This Week’s Reactions</p>
                     <p className="text-2xl font-bold">{stats.totalReactions}</p>
                   </div>
                   <Badge variant="secondary">Live</Badge>
                 </div>
 
-                {/* Pretty analytics block */}
                 <CreatorAnalytics spliks={spliks} stats={stats} />
               </CardContent>
             </Card>
@@ -505,14 +433,10 @@ const CreatorDashboard = () => {
                   <div className="space-y-6">
                     {/* Avatar uploader */}
                     <div>
-                      <p className="text-sm text-muted-foreground mb-2">
-                        Profile Photo
-                      </p>
+                      <p className="text-sm text-muted-foreground mb-2">Profile Photo</p>
                       <AvatarUploader
                         value={formData.avatar_url || profile?.avatar_url}
-                        onChange={(url) =>
-                          setFormData((f) => ({ ...f, avatar_url: url }))
-                        }
+                        onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
                       />
                       <p className="text-xs text-muted-foreground mt-2">
                         JPG/PNG recommended. We’ll compress for faster loading.
@@ -524,14 +448,10 @@ const CreatorDashboard = () => {
                       <Input
                         id="username"
                         value={formData.username}
-                        onChange={(e) =>
-                          setFormData({ ...formData, username: e.target.value })
-                        }
+                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                         placeholder="@username"
                       />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        This will be your unique identifier
-                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">This will be your unique identifier</p>
                     </div>
 
                     <div>
@@ -539,12 +459,7 @@ const CreatorDashboard = () => {
                       <Input
                         id="display_name"
                         value={formData.display_name}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            display_name: e.target.value,
-                          })
-                        }
+                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
                         placeholder="Your display name"
                       />
                     </div>
@@ -554,9 +469,7 @@ const CreatorDashboard = () => {
                       <Textarea
                         id="bio"
                         value={formData.bio}
-                        onChange={(e) =>
-                          setFormData({ ...formData, bio: e.target.value })
-                        }
+                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
                         placeholder="Tell us about yourself"
                         rows={4}
                       />
@@ -564,10 +477,7 @@ const CreatorDashboard = () => {
 
                     <div className="flex gap-2">
                       <Button onClick={handleProfileUpdate}>Save Changes</Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setEditingProfile(false)}
-                      >
+                      <Button variant="outline" onClick={() => setEditingProfile(false)}>
                         Cancel
                       </Button>
                     </div>
@@ -579,42 +489,28 @@ const CreatorDashboard = () => {
                       <Avatar className="h-16 w-16 ring-2 ring-primary/20">
                         <AvatarImage src={profile?.avatar_url || undefined} />
                         <AvatarFallback>
-                          {profile?.display_name?.[0] ||
-                            profile?.username?.[0] ||
-                            "U"}
+                          {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
                         </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="text-sm text-muted-foreground">
-                          Signed in as
-                        </p>
-                        <p className="font-medium">
-                          @{profile?.username || "Not set"}
-                        </p>
+                        <p className="text-sm text-muted-foreground">Signed in as</p>
+                        <p className="font-medium">@{profile?.username || "Not set"}</p>
                       </div>
                     </div>
 
                     <div>
-                      <p className="text-sm text-muted-foreground">
-                        Display Name
-                      </p>
-                      <p className="font-medium">
-                        {profile?.display_name || "Not set"}
-                      </p>
+                      <p className="text-sm text-muted-foreground">Display Name</p>
+                      <p className="font-medium">{profile?.display_name || "Not set"}</p>
                     </div>
 
                     <div>
                       <p className="text-sm text-muted-foreground">Bio</p>
-                      <p className="font-medium">
-                        {profile?.bio || "No bio yet"}
-                      </p>
+                      <p className="font-medium break-words">{profile?.bio || "No bio yet"}</p>
                     </div>
 
                     {profile?.username && (
                       <div>
-                        <p className="text-sm text-muted-foreground">
-                          Public Profile
-                        </p>
+                        <p className="text-sm text-muted-foreground">Public Profile</p>
                         <a
                           href={`/creator/${profile.username}`}
                           target="_blank"
@@ -632,53 +528,35 @@ const CreatorDashboard = () => {
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          {profile?.followers_private ? (
-                            <Lock className="h-4 w-4" />
-                          ) : (
-                            <Unlock className="h-4 w-4" />
-                          )}
                           <div>
-                            <p className="font-medium text-sm">
-                              Followers List
-                            </p>
+                            <p className="font-medium text-sm">Followers List</p>
                             <p className="text-xs text-muted-foreground">
                               {profile?.followers_private
-                                ? "Private - Only you can see"
-                                : "Public - Anyone can see"}
+                                ? "Private — Only you can see"
+                                : "Public — Anyone can see"}
                             </p>
                           </div>
                         </div>
                         <Switch
                           checked={profile?.followers_private || false}
-                          onCheckedChange={() =>
-                            togglePrivacy("followers_private")
-                          }
+                          onCheckedChange={() => togglePrivacy("followers_private")}
                         />
                       </div>
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          {profile?.following_private ? (
-                            <Lock className="h-4 w-4" />
-                          ) : (
-                            <Unlock className="h-4 w-4" />
-                          )}
                           <div>
-                            <p className="font-medium text-sm">
-                              Following List
-                            </p>
+                            <p className="font-medium text-sm">Following List</p>
                             <p className="text-xs text-muted-foreground">
                               {profile?.following_private
-                                ? "Private - Only you can see"
-                                : "Public - Anyone can see"}
+                                ? "Private — Only you can see"
+                                : "Public — Anyone can see"}
                             </p>
                           </div>
                         </div>
                         <Switch
                           checked={profile?.following_private || false}
-                          onCheckedChange={() =>
-                            togglePrivacy("following_private")
-                          }
+                          onCheckedChange={() => togglePrivacy("following_private")}
                         />
                       </div>
                     </div>
