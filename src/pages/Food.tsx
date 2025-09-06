@@ -99,10 +99,10 @@ const CATEGORY_PRESETS: { key: string; label: string; regex: string }[] = [
   { key: "cafe", label: "Cafe / Bakery", regex: "cafe|coffee|bakery|pastry" },
   { key: "italian", label: "Italian", regex: "italian|pasta|trattoria|osteria" },
   { key: "mexican", label: "Mexican", regex: "mexican|taqueria|taco" },
-  { key: "chinese", label: "Chinese", regex: "chinese|szechuan|cantonese|dim sum|dimsum" },
+  { key: "chinese", label: "Chinese", regex: "chinese|szechuan|cantonese|dim_sum|dimsum" },
   { key: "thai", label: "Thai", regex: "thai" },
   { key: "indian", label: "Indian", regex: "indian|curry|tandoor" },
-  { key: "sea", label: "— Custom (type below)", regex: "" }, // sentinel to enable custom input
+  { key: "custom", label: "— Custom (type below)", regex: "" }, // Changed from "sea" to "custom"
 ];
 
 export default function Food() {
@@ -239,13 +239,25 @@ export default function Food() {
   // ===== Nearby Restaurants =====
   const openNearby = () => {
     setNearbyOpen(true);
+    // Reset all state when opening modal
+    resetSearchState();
+  };
+
+  const resetSearchState = () => {
     setLocStage("idle");
+    setCoords(null);
+    setLocationQuery("");
     setNearby([]);
     setNearbyError(null);
+    setFetchingNearby(false);
+    setDistanceKey("2km");
+    setCategoryKey("any");
+    setCustomCategory("");
   };
 
   const requestLocation = () => {
     setLocStage("asking");
+    setNearbyError(null);
     if (!("geolocation" in navigator)) {
       setLocStage("error");
       setNearbyError("Geolocation is not available on this device.");
@@ -257,6 +269,8 @@ export default function Food() {
         const c = { lat: Number(latitude), lon: Number(longitude) };
         setCoords(c);
         setLocStage("have");
+        // Clear location query when using device location
+        setLocationQuery("");
       },
       (err) => {
         console.error("Geolocation error:", err);
@@ -267,7 +281,7 @@ export default function Food() {
             : "Unable to get your location. Try again or search by city/ZIP."
         );
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -287,30 +301,68 @@ export default function Food() {
       : `${(distanceKm * 0.621371).toFixed(1)} mi`;
 
   const overpassFetch = async (query: string) => {
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body: query,
-    });
-    if (!res.ok) throw new Error(`Overpass error ${res.status}`);
-    return (await res.json()) as any;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
+    try {
+      const res = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: query,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) throw new Error(`Overpass API error ${res.status}: ${res.statusText}`);
+      return await res.json();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error("Search timed out. Please try again.");
+      }
+      throw error;
+    }
   };
 
   const geocodeToCoords = async (q: string): Promise<{ lat: number; lon: number } | null> => {
-    const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", q);
-    url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("limit", "1");
-    const res = await fetch(url.toString(), { headers: { "Accept-Language": "en" } });
-    const arr = (await res.json()) as Array<{ lat: string; lon: string }>;
-    if (!arr.length) return null;
-    return { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("q", q);
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("limit", "1");
+      url.searchParams.set("countrycodes", "us,ca"); // Limit to North America for better results
+      
+      const res = await fetch(url.toString(), { 
+        headers: { 
+          "Accept-Language": "en",
+          "User-Agent": "SplikzApp/1.0"
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) throw new Error(`Geocoding failed: ${res.status}`);
+      const arr = await res.json() as Array<{ lat: string; lon: string; display_name: string }>;
+      if (!arr.length) return null;
+      
+      console.log("Geocoded location:", arr[0].display_name);
+      return { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error("Location search timed out. Please try again.");
+      }
+      throw error;
+    }
   };
 
   const buildCategoryRegex = () => {
-    // If a preset (not "any" and not custom sentinel), use it
+    // If a preset (not "any" and not custom), use it
     const preset = CATEGORY_PRESETS.find((c) => c.key === categoryKey);
-    if (preset && preset.key !== "any" && preset.key !== "sea") return preset.regex;
+    if (preset && preset.key !== "any" && preset.key !== "custom") return preset.regex;
 
     // If custom entered, convert "steak house" -> "steak|house|steakhouse|steak_house"
     const raw = customCategory.trim();
@@ -334,28 +386,31 @@ export default function Food() {
     radiusMeters: number,
     categoryRegex: string
   ) => {
-    const amenityFilter = `["amenity"~"restaurant|fast_food|cafe"]`;
+    const amenityFilter = `["amenity"~"restaurant|fast_food|cafe|bar|pub"]`;
     const around = `(around:${Math.round(radiusMeters)},${center.lat},${center.lon})`;
 
     if (categoryRegex) {
       const cat = categoryRegex.replace(/"/g, '\\"');
       return `
-        [out:json][timeout:25];
+        [out:json][timeout:30];
         (
           node${amenityFilter}["cuisine"~"${cat}",i]${around};
           node${amenityFilter}["name"~"${cat}",i]${around};
+          node${amenityFilter}["brand"~"${cat}",i]${around};
           way${amenityFilter}["cuisine"~"${cat}",i]${around};
           way${amenityFilter}["name"~"${cat}",i]${around};
+          way${amenityFilter}["brand"~"${cat}",i]${around};
           relation${amenityFilter}["cuisine"~"${cat}",i]${around};
           relation${amenityFilter}["name"~"${cat}",i]${around};
+          relation${amenityFilter}["brand"~"${cat}",i]${around};
         );
         out center tags;
       `;
     }
 
-    // No category: grab all nearby places to eat/drink
+    // No category: grab all nearby restaurants, cafes, fast food, bars
     return `
-      [out:json][timeout:25];
+      [out:json][timeout:30];
       (
         node${amenityFilter}${around};
         way${amenityFilter}${around};
@@ -391,54 +446,94 @@ export default function Food() {
           setFetchingNearby(false);
           return;
         }
-        const gc = await geocodeToCoords(locationQuery.trim());
-        if (!gc) {
-          setNearbyError("Couldn't find that place. Try a different city or ZIP.");
+        
+        try {
+          const gc = await geocodeToCoords(locationQuery.trim());
+          if (!gc) {
+            setNearbyError("Couldn't find that place. Try a different city or ZIP code.");
+            setFetchingNearby(false);
+            return;
+          }
+          center = gc;
+          setCoords(gc);
+          setLocStage("have");
+        } catch (geoError) {
+          setNearbyError("Error finding location: " + geoError.message);
           setFetchingNearby(false);
           return;
         }
-        center = gc;
-        setCoords(gc);
-        setLocStage("have");
       }
 
       const categoryRegex =
-        categoryKey === "sea" ? buildCategoryRegex() : buildCategoryRegex() || CATEGORY_PRESETS.find((c) => c.key === categoryKey)?.regex || "";
+        categoryKey === "custom" ? buildCategoryRegex() : buildCategoryRegex() || CATEGORY_PRESETS.find((c) => c.key === categoryKey)?.regex || "";
 
       const query = buildOverpassAroundQuery(center!, metersForDistanceKey, categoryRegex || "");
+      console.log("Running Overpass query for:", { center, radius: metersForDistanceKey, category: categoryRegex });
+      
       const json = await overpassFetch(query);
       const elements: any[] = json.elements || [];
 
+      console.log(`Found ${elements.length} raw elements from Overpass`);
+
       const mapped: NearbyRestaurant[] = elements
         .map((el) => {
-          const name = el.tags?.name || "Unnamed Restaurant";
+          const name = el.tags?.name || el.tags?.brand || "Unnamed Restaurant";
           const rLat = el.lat ?? el.center?.lat;
           const rLon = el.lon ?? el.center?.lon;
+          
           if (typeof rLat !== "number" || typeof rLon !== "number") return null;
+          
           const distanceKm = haversineKm(center!, { lat: rLat, lon: rLon });
+          
+          // Skip if outside our distance (with small buffer for rounding)
+          const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
+          if (distanceKm > maxDistanceKm) return null;
+          
           const addressParts = [
             el.tags?.["addr:housenumber"],
             el.tags?.["addr:street"],
             el.tags?.["addr:city"],
           ].filter(Boolean);
+          
           return {
             id: `${el.type}/${el.id}`,
             name,
             lat: rLat,
             lon: rLon,
             distanceKm,
-            address: addressParts.join(" "),
-            cuisine: el.tags?.cuisine,
+            address: addressParts.length > 0 ? addressParts.join(" ") : "Address not available",
+            cuisine: el.tags?.cuisine || el.tags?.["cuisine:type"] || undefined,
           } as NearbyRestaurant;
         })
         .filter(Boolean) as NearbyRestaurant[];
 
-      // sort by distance & cut
-      const byDistance = mapped.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 50);
+      // Remove duplicates based on name and approximate location
+      const uniqueRestaurants = mapped.reduce((acc, restaurant) => {
+        const existing = acc.find(r => 
+          r.name === restaurant.name && 
+          Math.abs(r.lat - restaurant.lat) < 0.0001 && 
+          Math.abs(r.lon - restaurant.lon) < 0.0001
+        );
+        if (!existing) {
+          acc.push(restaurant);
+        }
+        return acc;
+      }, [] as NearbyRestaurant[]);
+
+      // Sort by distance and limit results
+      const byDistance = uniqueRestaurants
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .slice(0, 100);
+        
+      console.log(`Processed to ${byDistance.length} unique restaurants`);
       setNearby(byDistance);
-    } catch (err) {
-      console.error(err);
-      setNearbyError("Couldn’t load restaurants. Please try again.");
+      
+      if (byDistance.length === 0) {
+        setNearbyError("No restaurants found in this area. Try increasing the distance or changing the category.");
+      }
+    } catch (err: any) {
+      console.error("Restaurant search error:", err);
+      setNearbyError(err.message || "Couldn't load restaurants. Please try again.");
     } finally {
       setFetchingNearby(false);
     }
@@ -695,8 +790,14 @@ export default function Food() {
       </main>
 
       {/* Nearby Restaurants Modal */}
-      <Dialog open={nearbyOpen} onOpenChange={setNearbyOpen}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={nearbyOpen} onOpenChange={(open) => {
+        setNearbyOpen(open);
+        if (!open) {
+          // Reset everything when modal is closed
+          resetSearchState();
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-primary" />
@@ -709,29 +810,42 @@ export default function Food() {
           </DialogHeader>
 
           {/* Controls */}
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Info className="h-3.5 w-3.5" />
-              We will only use your location if you tap “Use my location”.
+              We will only use your location if you tap "Use my location".
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2">
               <Input
-                placeholder="City or ZIP (e.g., Austin or 10001)"
+                placeholder="City or ZIP (e.g., Austin, TX or 78701)"
                 value={locationQuery}
-                onChange={(e) => setLocationQuery(e.target.value)}
+                onChange={(e) => {
+                  setLocationQuery(e.target.value);
+                  // Clear device coords when typing a manual location
+                  if (e.target.value.trim() && coords) {
+                    setCoords(null);
+                    setLocStage("idle");
+                  }
+                }}
                 className="flex-1"
+                disabled={fetchingNearby}
               />
-              <Button variant="outline" onClick={requestLocation} className="gap-2">
+              <Button 
+                variant="outline" 
+                onClick={requestLocation} 
+                className="gap-2"
+                disabled={fetchingNearby || locStage === "asking"}
+              >
                 <LocateFixed className="h-4 w-4" />
-                Use my location
+                {locStage === "asking" ? "Getting location..." : "Use my location"}
               </Button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground">Distance</label>
-                <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)}>
+                <label className="text-xs text-muted-foreground mb-1 block">Distance</label>
+                <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Choose distance" />
                   </SelectTrigger>
@@ -746,9 +860,9 @@ export default function Food() {
               </div>
 
               <div className="sm:col-span-2">
-                <label className="text-xs text-muted-foreground">Category (optional)</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Category (optional)</label>
                 <div className="flex gap-2">
-                  <Select value={categoryKey} onValueChange={setCategoryKey}>
+                  <Select value={categoryKey} onValueChange={setCategoryKey} disabled={fetchingNearby}>
                     <SelectTrigger className="w-[14rem]">
                       <SelectValue placeholder="Any" />
                     </SelectTrigger>
@@ -764,7 +878,7 @@ export default function Food() {
                     placeholder="Custom (e.g., ramen, steak house)"
                     value={customCategory}
                     onChange={(e) => setCustomCategory(e.target.value)}
-                    disabled={categoryKey !== "sea"}
+                    disabled={categoryKey !== "custom" || fetchingNearby}
                     className="flex-1"
                   />
                 </div>
@@ -774,71 +888,87 @@ export default function Food() {
             {locStage === "asking" && (
               <div className="flex items-center gap-3 py-2">
                 <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Requesting location…</p>
+                <p className="text-sm text-muted-foreground">Requesting location permission...</p>
               </div>
             )}
 
             {coords && (
-              <div className="text-xs text-muted-foreground">
-                Using location: <span className="font-mono">{coordsPretty}</span>
+              <div className="text-xs text-muted-foreground bg-muted/30 rounded p-2">
+                Using coordinates: <span className="font-mono">{coordsPretty}</span>
+                {locationQuery && (
+                  <span className="ml-2">• Clear the text field above to use a different location</span>
+                )}
               </div>
             )}
 
             <div className="flex justify-end">
-              <Button onClick={runNearbySearch} className="gap-2">
+              <Button 
+                onClick={runNearbySearch} 
+                className="gap-2" 
+                disabled={fetchingNearby || (!coords && !locationQuery.trim())}
+              >
                 <SearchIcon className="h-4 w-4" />
-                Search
+                {fetchingNearby ? "Searching..." : "Search"}
               </Button>
             </div>
 
             {/* Results */}
-            {nearbyError && <div className="text-sm text-red-500">{nearbyError}</div>}
-
-            {fetchingNearby ? (
-              <div className="flex items-center gap-3 py-3">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">Finding restaurants…</p>
-              </div>
-            ) : nearby.length > 0 ? (
-              <div className="max-h-[50vh] overflow-y-auto rounded-md border">
-                {nearby.map((r) => (
-                  <div
-                    key={r.id}
-                    className="flex items-center justify-between px-3 py-2 border-b last:border-b-0 hover:bg-accent/40"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">{r.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {r.address || "Address unavailable"}
-                        {r.cuisine ? ` • ${r.cuisine}` : ""}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {prettyDistance(r.distanceKm)} away
-                      </div>
-                    </div>
-                    <a
-                      href={`https://www.google.com/maps?q=${r.lat},${r.lon}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent"
-                      title="Open in Google Maps"
-                    >
-                      Maps <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">
-                {coords || locationQuery
-                  ? "No results yet. Try a different distance or category."
-                  : "Enter a city/ZIP or use your location to start."}
+            {nearbyError && (
+              <div className="text-sm text-red-500 bg-red-50 dark:bg-red-950 p-3 rounded">
+                {nearbyError}
               </div>
             )}
 
-            <p className="text-xs text-muted-foreground">
-              Tip: When you upload, mention the restaurant name in your description or drop it in the
-              comments so others can find it.
+            {fetchingNearby ? (
+              <div className="flex items-center gap-3 py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Finding restaurants...</p>
+              </div>
+            ) : nearby.length > 0 ? (
+              <div className="space-y-3">
+                <div className="text-sm font-medium">
+                  Found {nearby.length} restaurant{nearby.length !== 1 ? 's' : ''}
+                </div>
+                <div className="max-h-[40vh] overflow-y-auto rounded-md border">
+                  {nearby.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between px-3 py-3 border-b last:border-b-0 hover:bg-accent/40"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium truncate">{r.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {r.address}
+                          {r.cuisine ? ` • ${r.cuisine}` : ""}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {prettyDistance(r.distanceKm)} away
+                        </div>
+                      </div>
+                      <a
+                        href={`https://www.google.com/maps?q=${encodeURIComponent(r.name + " " + r.address)}&ll=${r.lat},${r.lon}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-accent flex-shrink-0 ml-2"
+                        title="Open in Google Maps"
+                      >
+                        Maps <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground py-2">
+                {coords || locationQuery.trim()
+                  ? "No results yet. Try a different distance or category."
+                  : "Enter a city/ZIP or use your location to start searching."}
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground border-t pt-3">
+              Tip: When you upload a food video, mention the restaurant name in your title or description 
+              so others can find it too!
             </p>
           </div>
         </DialogContent>
