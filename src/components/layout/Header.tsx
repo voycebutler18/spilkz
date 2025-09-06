@@ -14,9 +14,6 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 
-// Import your upload modal context
-import { useUploadModal } from "@/contexts/UploadModalContext";
-
 // NEW: type-ahead search
 import SearchOmni from "@/components/search/SearchOmni";
 
@@ -51,9 +48,6 @@ const Header: React.FC = () => {
   const [user, setUser] = React.useState<any>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
   const navigate = useNavigate();
-  
-  // Use the upload modal context
-  const { openUploadModal } = useUploadModal();
 
   // Load current user + listen for auth changes
   React.useEffect(() => {
@@ -102,14 +96,6 @@ const Header: React.FC = () => {
     await supabase.auth.signOut();
     setOpen(false);
     navigate("/");
-  };
-
-  const handleUploadClick = () => {
-    if (user) {
-      openUploadModal(); // Open modal instead of navigating
-    } else {
-      navigate("/login");
-    }
   };
 
   const avatarInitial =
@@ -173,7 +159,7 @@ const Header: React.FC = () => {
           <Button
             size="sm"
             className="gap-2"
-            onClick={handleUploadClick}
+            onClick={() => (user ? navigate("/upload") : navigate("/login"))}
             aria-label="Upload"
             title={user ? "Upload a 3-second Splik" : "Log in to upload"}
           >
@@ -271,7 +257,7 @@ const Header: React.FC = () => {
                   className="justify-start gap-2"
                   onClick={() => {
                     setOpen(false);
-                    handleUploadClick();
+                    user ? navigate("/upload") : navigate("/login");
                   }}
                 >
                   <Upload className="h-4 w-4" /> Upload
