@@ -362,7 +362,6 @@ const CreatorDashboard = () => {
 
           {/* ACTION BUTTONS (now includes Messages with unread badge) */}
           <div className="flex gap-2 items-center">
-            <Button
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
