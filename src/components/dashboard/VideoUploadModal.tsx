@@ -32,6 +32,15 @@ import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 
+// NEW: shadcn Select for Mood
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+
 // ffmpeg v0.12+ API
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
@@ -54,6 +63,29 @@ const MAX_VIDEO_DURATION = 3; // hard cap at save time (server rule)
 const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
 const MOBILE_MAX_SIZE  = 1024 * 1024 * 1024; // 1GB
 
+// NEW: Mood options (extend any time)
+const MOOD_OPTIONS = [
+  // Core moods used in the left sidebar today:
+  { value: "happy", label: "Happy" },
+  { value: "chill", label: "Chill" },
+  { value: "hype", label: "Hype" },
+  { value: "romance", label: "Romance" },
+  { value: "aww", label: "Aww" },
+  // Common extras so creators can be specific:
+  { value: "funny", label: "Funny" },
+  { value: "excited", label: "Excited" },
+  { value: "relaxed", label: "Relaxed" },
+  { value: "inspired", label: "Inspired" },
+  { value: "nostalgic", label: "Nostalgic" },
+  { value: "motivated", label: "Motivated" },
+  { value: "surprised", label: "Surprised" },
+  { value: "sad", label: "Sad" },
+  { value: "angry", label: "Angry" },
+  { value: "cozy", label: "Cozy" },
+  // Requested: a “natural/neutral” vibe
+  { value: "neutral", label: "Neutral / Natural" },
+] as const;
+
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -70,6 +102,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
   // Category toggle (lights up)
   const [isFood, setIsFood] = useState(false);
+
+  // NEW: Mood (required)
+  const [mood, setMood] = useState<string>("");
 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -477,6 +512,14 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       });
       return;
     }
+    if (!mood) {
+      toast({
+        title: "Pick a mood",
+        description: "Please choose the mood for this Splik so people can find it.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!currentUser) {
       toast({
         title: "Not authenticated",
@@ -516,6 +559,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         trim_start: selectedStart,
         trim_end: enforcedEnd,
         is_food: isFood,
+        // NEW: Persist mood (text). Ensure a `mood` column exists in `spliks`.
+        mood,
       });
       if (dbError) throw dbError;
 
@@ -527,6 +572,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setTitle("");
       setDescription("");
       setIsFood(false);
+      setMood(""); // NEW: reset mood
       if (videoPreview) URL.revokeObjectURL(videoPreview);
       setVideoPreview(null);
       setCurrentTime(0);
@@ -836,6 +882,26 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   />
                 </div>
 
+                {/* NEW: Mood (required) */}
+                <div>
+                  <Label htmlFor="mood">Mood (required)</Label>
+                  <Select value={mood} onValueChange={setMood} disabled={uploading}>
+                    <SelectTrigger id="mood" className="w-full">
+                      <SelectValue placeholder="Choose the mood for this video" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MOOD_OPTIONS.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Viewers can browse by mood. Pick the one that fits best.
+                  </p>
+                </div>
+
                 {/* Food toggle as a lighting button */}
                 <div className="mt-2 flex items-center justify-between rounded-md border p-3">
                   <div className="flex items-start gap-2">
@@ -890,6 +956,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     setTitle("");
                     setDescription("");
                     setIsFood(false);
+                    setMood(""); // NEW: reset
                     setIsPlaying(false);
                     setVideoReady(false);
                     setVideoError(null);
