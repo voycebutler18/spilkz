@@ -89,8 +89,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     const allVideos = document.querySelectorAll("video");
     allVideos.forEach((video) => {
       if (video !== videoRef.current) {
-        video.muted = true;
-        video.pause();
+        (video as HTMLVideoElement).muted = true;
+        (video as HTMLVideoElement).pause();
       }
     });
   };
@@ -176,6 +176,40 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splik.id]);
+
+  /* --------------------- Force any legacy promote pill to Boost ------------- */
+
+  useEffect(() => {
+    // Rewire any legacy anchor that points to /dashboard and says "Promote"
+    const selector = 'a[href="/dashboard"], a[href="/dashboard/"]';
+    const els = Array.from(document.querySelectorAll<HTMLAnchorElement>(selector)).filter(
+      (el) => /promote/i.test((el.textContent || "").trim())
+    );
+
+    const openBoost = (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setShowBoostModal(true);
+      return false;
+    };
+
+    els.forEach((el) => {
+      el.addEventListener("click", openBoost, { capture: true });
+      el.addEventListener("mousedown", openBoost, { capture: true });
+      el.addEventListener("touchstart", openBoost, { capture: true });
+      // Safety: stop it from taking clicks at all; our own pill will handle it
+      el.style.pointerEvents = "none";
+    });
+
+    return () => {
+      els.forEach((el) => {
+        el.removeEventListener("click", openBoost, { capture: true } as any);
+        el.removeEventListener("mousedown", openBoost, { capture: true } as any);
+        el.removeEventListener("touchstart", openBoost, { capture: true } as any);
+        el.style.pointerEvents = "";
+      });
+    };
+  }, []);
 
   /* --------------------------------- Actions -------------------------------- */
 
@@ -325,63 +359,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsMuted(!isMuted);
   };
 
-  /* ----- Promotion management helpers (safe even if your RPC/table isn't set yet) ---- */
-
-  const handleStopPromotion = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { error } = await supabase
-        .from("boosts") // <-- change if your table name differs
-        .update({ is_active: false })
-        .eq("splik_id", splik.id)
-        .eq("user_id", user.id);
-
-      if (error) throw error;
-
-      toast({
-        title: "Promotion stopped",
-        description: "This video is no longer being promoted.",
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to stop promotion",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleMakePrimaryPromotion = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { error } = await supabase.rpc("set_primary_promotion", {
-        splik_id: splik.id,
-        user_id: user.id,
-      } as any);
-
-      if (error) throw error;
-
-      toast({
-        title: "Primary promotion set",
-        description: "This video is now your primary promoted video.",
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to set primary promotion",
-        variant: "destructive",
-      });
-    }
-  };
-
   /* ----------------------------- Derived values ---------------------------- */
 
   const videoHeight = isMobile ? "60svh" : "500px";
@@ -398,11 +375,18 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     <div
       ref={cardRef}
       className={cn(
-        // isolate => new stacking context; helps prevent ghost clicks from elements outside
         "relative isolate bg-card rounded-xl overflow-hidden shadow-lg border border-border w-full max-w-[500px] mx-auto",
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
+      {/* Safety CSS to disable clicks on any rogue /dashboard promote pill that might exist outside this component */}
+      <style>{`
+        a[href="/dashboard"], a[href="/dashboard/"] {
+          /* prevent ghost-clicks; JS hijack above will open the modal */
+          pointer-events: none !important;
+        }
+      `}</style>
+
       {/* VIDEO AREA */}
       <div
         className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
@@ -412,7 +396,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         {/* hide any seam */}
         <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
 
-        {/* Brand chip */}
+        {/* Brand chip (kept) */}
         <div className="absolute top-2 left-3 z-30 pointer-events-none">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
             <Sparkles className="h-4 w-4 text-purple-400" />
@@ -420,9 +404,37 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         </div>
 
-        {/* Promoted badge - only show if boosted, positioned to not block logo */}
+        {/* Promote pill – ALWAYS opens Boost modal (owner only) */}
+        {isOwner && (
+          <div className="absolute top-2 right-3 z-40">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowBoostModal(true);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              className="
+                relative
+                flex items-center gap-2 rounded-full
+                px-3 py-1.5 text-sm font-semibold
+                bg-gradient-to-r from-cyan-400 to-emerald-400
+                text-black shadow-lg ring-1 ring-black/10
+                hover:from-cyan-300 hover:to-emerald-300
+                transition-colors
+              "
+              aria-label="Promote this video"
+            >
+              <Rocket className="h-4 w-4" />
+              Promote Video
+            </button>
+          </div>
+        )}
+
+        {/* Promoted badge (if already boosted) – does NOT block the promote pill */}
         {isBoosted && (
-          <div className="absolute top-2 right-3 z-30 pointer-events-none">
+          <div className="absolute top-2 right-[11.5rem] z-30 pointer-events-none">
             <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
               <Rocket className="h-3 w-3 mr-1" />
               Promoted
@@ -547,8 +559,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={5}>
-              {/* Show promote option for owner when not boosted */}
-              {isOwner && !isBoosted && (
+              {/* Promote option (owner) */}
+              {currentUser?.id === splik.user_id && (
                 <DropdownMenuItem
                   onClick={() => setShowBoostModal(true)}
                   className="cursor-pointer text-primary"
@@ -556,19 +568,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
                   <Rocket className="h-4 w-4 mr-2" />
                   Promote Video
                 </DropdownMenuItem>
-              )}
-              {/* Show promotion management options for owner when boosted */}
-              {isOwner && isBoosted && (
-                <>
-                  <DropdownMenuItem onClick={handleMakePrimaryPromotion} className="cursor-pointer">
-                    <Rocket className="h-4 w-4 mr-2" />
-                    Make Primary
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleStopPromotion} className="cursor-pointer text-red-600">
-                    <Rocket className="h-4 w-4 mr-2" />
-                    Stop Promotion
-                  </DropdownMenuItem>
-                </>
               )}
               <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
                 <Copy className="h-4 w-4 mr-2" />
