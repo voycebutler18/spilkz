@@ -1,5 +1,5 @@
 // src/components/SplikCard.tsx
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Heart,
@@ -27,8 +27,8 @@ import CommentsModal from "@/components/CommentsModal";
 import ReportModal from "@/components/ReportModal";
 import BoostModal from "@/components/BoostModal";
 import { useDeviceType } from "@/hooks/use-device-type";
-import { useToast } from "@/components/ui/use-toast"; // unified path
-// If you have a shared type, keep it; otherwise this local shape is fine.
+import { useToast } from "@/components/ui/use-toast";
+
 type Splik = {
   id: string;
   user_id: string;
@@ -36,8 +36,8 @@ type Splik = {
   description: string | null;
   status?: "active" | "draft" | "archived" | null;
   mood?: string | null;
-  video_url?: string | null;   // may be null if you only saved video_path
-  video_path?: string | null;  // e.g. "<userId>/<timestamp>.mp4"
+  video_url?: string | null;
+  video_path?: string | null; // e.g. "<userId>/<timestamp>.mp4"
   thumbnail_url?: string | null;
   likes_count?: number | null;
   comments_count?: number | null;
@@ -64,7 +64,7 @@ interface SplikCardProps {
   onShare?: () => void;
 }
 
-/* ------------------------ Single active player control -------------------- */
+/* ------------------------ single-active-player control -------------------- */
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
 
 const playExclusive = async (el: HTMLVideoElement) => {
@@ -81,14 +81,12 @@ const pauseIfCurrent = (el: HTMLVideoElement | null) => {
   try { el.pause(); } catch {}
 };
 
-/* -------------------------------- Helpers -------------------------------- */
 const toTitle = (s: string) =>
   s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-/* -------------------------------- Component ------------------------------ */
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true); // start muted so autoplay works
+  const [isMuted, setIsMuted] = useState(true); // autoplay friendly
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -98,7 +96,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [showBoostModal, setShowBoostModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
-  const [isInView, setIsInView] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(splik.video_url ?? null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -108,14 +105,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  const creatorSlug =
-    splik.profile?.username || splik.profile?.handle || splik.user_id;
+  const creatorSlug = splik.profile?.username || splik.profile?.handle || splik.user_id;
 
-  /* -------------------- Resolve playback URL from storage ------------------ */
+  /* -------------------- resolve playback url (url or path) ----------------- */
   useEffect(() => {
     let alive = true;
     (async () => {
-      // If we have a direct URL, use it. Otherwise, build from video_path.
       if (splik.video_url) {
         setResolvedUrl(splik.video_url);
         return;
@@ -130,11 +125,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => { alive = false; };
   }, [splik.video_url, splik.video_path]);
 
-  /* --------------------------- Autoplay/visibility ------------------------- */
+  /* --------------------------- autoplay/visibility ------------------------- */
   useEffect(() => {
     const video = videoRef.current;
-    const el = cardRef.current;
-    if (!video || !el) return;
+    const root = cardRef.current;
+    if (!video || !root) return;
 
     video.playsInline = true;
     video.setAttribute("playsinline", "true");
@@ -155,7 +150,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       (entries) => {
         entries.forEach(async (entry) => {
           const visible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
-          setIsInView(visible);
 
           if (visible) {
             try { video.currentTime = 0; } catch {}
@@ -181,18 +175,16 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       { threshold: [0, 0.25, 0.5, 0.7, 1], rootMargin: "0px 0px -10% 0px" }
     );
 
-    io.observe(el);
+    io.observe(root);
     document.addEventListener("visibilitychange", onVisibilityChange);
-
     return () => {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       pauseIfCurrent(video);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMuted]);
 
-  /* ------------------------ Enforce 3-second loop -------------------------- */
+  /* ------------------------ enforce 3-second loop -------------------------- */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -205,7 +197,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
   }, []);
 
-  /* ------------------------ Load user + initial states --------------------- */
+  /* ------------------------ load user + initial states --------------------- */
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -246,15 +238,16 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => {
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splik.id]);
 
-  /* --------------------- Force any legacy promote pill --------------------- */
+  /* ------------------- scope “Promote” hijack INSIDE this card ------------- */
   useEffect(() => {
-    const selector = 'a[href="/dashboard"], a[href="/dashboard/"]';
-    const els = Array.from(document.querySelectorAll<HTMLAnchorElement>(selector)).filter(
-      (el) => /promote/i.test((el.textContent || "").trim())
-    );
+    const root = cardRef.current;
+    if (!root) return;
+
+    const links = Array.from(
+      root.querySelectorAll<HTMLAnchorElement>('a[href="/dashboard"], a[href="/dashboard/"]')
+    ).filter((el) => /promote/i.test((el.textContent || "").trim()));
 
     const openBoost = (e: Event) => {
       e.preventDefault();
@@ -263,24 +256,23 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       return false;
     };
 
-    els.forEach((el) => {
+    links.forEach((el) => {
       el.addEventListener("click", openBoost, { capture: true });
       el.addEventListener("mousedown", openBoost, { capture: true });
       el.addEventListener("touchstart", openBoost, { capture: true });
-      el.style.pointerEvents = "none";
+      // do NOT set pointer-events: none on links anymore
     });
 
     return () => {
-      els.forEach((el) => {
+      links.forEach((el) => {
         el.removeEventListener("click", openBoost as any, { capture: true } as any);
         el.removeEventListener("mousedown", openBoost as any, { capture: true } as any);
         el.removeEventListener("touchstart", openBoost as any, { capture: true } as any);
-        el.style.pointerEvents = "";
       });
     };
   }, []);
 
-  /* --------------------------------- Actions ------------------------------- */
+  /* -------------------------------- actions -------------------------------- */
   const handleSplik = async () => {
     const { data: { user } } = await supabase.auth.getUser();
 
@@ -372,28 +364,15 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const handleCopyLink = () => {
-    // ✅ canonical share link to the video page
     const url = `${window.location.origin}/video/${splik.id}`;
     navigator.clipboard.writeText(url);
     toast({ title: "Link copied", description: "Video link copied to clipboard" });
-  };
-
-  const handleReport = () => setShowReportModal(true);
-  const handleBlock = () =>
-    toast({ title: "User blocked", description: "You won't see content from this user anymore" });
-
-  const formatCount = (count: number | undefined | null) => {
-    const safe = count ?? 0;
-    if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(1)}M`;
-    if (safe >= 1_000) return `${(safe / 1_000).toFixed(1)}K`;
-    return safe.toString();
   };
 
   const handlePlayToggle = async () => {
     const video = videoRef.current;
     if (!video) return;
 
-    // First tap: if muted → unmute; second tap → pause
     if (isPlaying) {
       if (isMuted) {
         video.muted = false;
@@ -425,7 +404,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsMuted(next);
   };
 
-  /* ----------------------------- Derived values ---------------------------- */
+  /* ----------------------------- derived values ---------------------------- */
   const videoHeight = isMobile ? "60svh" : "500px";
   const isBoosted = Boolean(
     (splik as any).isBoosted ||
@@ -434,7 +413,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   );
   const isOwner = currentUser && currentUser.id === splik.user_id;
 
-  /* ---------------------------------- UI ---------------------------------- */
+  /* ----------------------------------- UI --------------------------------- */
   return (
     <div
       ref={cardRef}
@@ -445,11 +424,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      <style>{`
-        a[href="/dashboard"], a[href="/dashboard/"] { pointer-events: none !important; }
-      `}</style>
-
-      {/* VIDEO AREA */}
+      {/* VIDEO */}
       <div
         className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
         style={{ height: videoHeight, maxHeight: "80svh" }}
@@ -487,25 +462,32 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         )}
 
-        <video
-          ref={videoRef}
-          src={resolvedUrl || undefined}
-          poster={splik.thumbnail_url || undefined}
-          className="block w-full h-full object-cover"
-          autoPlay={false}
-          loop={false}
-          muted={isMuted}
-          playsInline
-          controls={false}
-          // @ts-expect-error vendor attrs (harmless)
-          webkit-playsinline="true"
-          disablePictureInPicture
-          disableRemotePlayback
-          controlsList="nodownload noplaybackrate noremoteplayback"
-          preload="metadata"
-          data-splik-id={splik.id}
-          data-video-id={splik.id}
-        />
+        {/* Only render the <video> if we have a URL to avoid errors */}
+        {resolvedUrl ? (
+          <video
+            ref={videoRef}
+            src={resolvedUrl}
+            poster={splik.thumbnail_url || undefined}
+            className="block w-full h-full object-cover"
+            autoPlay={false}
+            loop={false}
+            muted={isMuted}
+            playsInline
+            controls={false}
+            // @ts-expect-error vendor attrs
+            webkit-playsinline="true"
+            disablePictureInPicture
+            disableRemotePlayback
+            controlsList="nodownload noplaybackrate noremoteplayback"
+            preload="metadata"
+            data-splik-id={splik.id}
+            data-video-id={splik.id}
+          />
+        ) : (
+          <div className="flex items-center justify-center w-full h-full text-white/80">
+            Video unavailable
+          </div>
+        )}
 
         <button
           onClick={(e) => { e.stopPropagation(); toggleMute(); }}
@@ -574,7 +556,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
                 <Flag className="h-4 w-4 mr-2" />
                 Report
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleBlock()} className="cursor-pointer">
+              <DropdownMenuItem onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })} className="cursor-pointer">
                 <UserX className="h-4 w-4 mr-2" />
                 Block User
               </DropdownMenuItem>
@@ -582,7 +564,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </DropdownMenu>
         </div>
 
-        {/* ENGAGEMENT ACTIONS */}
+        {/* ACTIONS */}
         <div className="flex items-center justify-between gap-1">
           <Button
             variant="ghost"
@@ -592,17 +574,17 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               isLiked && "text-red-500 hover:text-red-600")}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            <span className="text-xs font-medium">{formatCount(likesCount)}</span>
+            <span className="text-xs font-medium">{(likesCount ?? 0).toString()}</span>
           </Button>
 
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleComment}
+            onClick={() => { setShowCommentsModal(true); onReact?.(); }}
             className="flex items-center space-x-2 flex-1 hover:text-blue-500"
           >
             <MessageCircle className="h-4 w-4" />
-            <span className="text-xs font-medium">{formatCount(commentsCount)}</span>
+            <span className="text-xs font-medium">{(commentsCount ?? 0).toString()}</span>
           </Button>
 
           <Button
@@ -635,7 +617,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         )}
 
-        {likesCount === 0 && commentsCount === 0 && (
+        {(likesCount ?? 0) === 0 && (commentsCount ?? 0) === 0 && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
             Be the first to react! 💜
           </div>
