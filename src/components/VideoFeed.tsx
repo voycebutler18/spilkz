@@ -148,7 +148,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     v.disablePictureInPicture = true;
     v.disableRemotePlayback = true;
     v.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
-    v.preload = "metadata";
+    // NOTE: we do NOT force a preload here; the <video> prop handles that
     if (poster) v.poster = poster || "";
   };
 
@@ -430,6 +430,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     >
       {spliks.map((s, i) => {
         const isMuted = muted[i] ?? true;
+        const shouldPreload = Math.abs(i - activeIndex) <= 1; // 🔑 active, prev, next
 
         return (
           <section
@@ -473,7 +474,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   muted={isMuted}
                   // @ts-expect-error vendor attribute
                   webkit-playsinline="true"
-                  preload="metadata"
+                  preload={shouldPreload ? "metadata" : "none"} // ✅ only neighbors
+                  controls={false}
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
                   onLoadedData={() => {
                     const v = videoRefs.current[i];
