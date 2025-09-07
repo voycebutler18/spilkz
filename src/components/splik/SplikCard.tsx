@@ -29,6 +29,14 @@ import BoostModal from "@/components/BoostModal";
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 
+// ✅ MISSING IMPORTS (these caused your crash)
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
 type Splik = {
   id: string;
   user_id: string;
@@ -37,7 +45,7 @@ type Splik = {
   status?: "active" | "draft" | "archived" | null;
   mood?: string | null;
   video_url?: string | null;
-  video_path?: string | null; // e.g. "<userId>/<timestamp>.mp4"
+  video_path?: string | null;
   thumbnail_url?: string | null;
   likes_count?: number | null;
   comments_count?: number | null;
@@ -86,7 +94,7 @@ const toTitle = (s: string) =>
 
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true); // autoplay friendly
+  const [isMuted, setIsMuted] = useState(true);
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -107,7 +115,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   const creatorSlug = splik.profile?.username || splik.profile?.handle || splik.user_id;
 
-  /* -------------------- resolve playback url (url or path) ----------------- */
+  /* resolve url from storage path if needed */
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -125,7 +133,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => { alive = false; };
   }, [splik.video_url, splik.video_path]);
 
-  /* --------------------------- autoplay/visibility ------------------------- */
+  /* autoplay/visibility */
   useEffect(() => {
     const video = videoRef.current;
     const root = cardRef.current;
@@ -184,7 +192,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     };
   }, [isMuted]);
 
-  /* ------------------------ enforce 3-second loop -------------------------- */
+  /* enforce 3s loop */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -197,7 +205,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
   }, []);
 
-  /* ------------------------ load user + initial states --------------------- */
+  /* user + counters + live updates */
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -235,32 +243,23 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [splik.id]);
 
-  /* ------------------- scope “Promote” hijack INSIDE this card ------------- */
+  /* scope “Promote” hijack inside this card only */
   useEffect(() => {
     const root = cardRef.current;
     if (!root) return;
-
     const links = Array.from(
       root.querySelectorAll<HTMLAnchorElement>('a[href="/dashboard"], a[href="/dashboard/"]')
     ).filter((el) => /promote/i.test((el.textContent || "").trim()));
 
-    const openBoost = (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setShowBoostModal(true);
-      return false;
-    };
+    const openBoost = (e: Event) => { e.preventDefault(); e.stopPropagation(); setShowBoostModal(true); return false; };
 
     links.forEach((el) => {
       el.addEventListener("click", openBoost, { capture: true });
       el.addEventListener("mousedown", openBoost, { capture: true });
       el.addEventListener("touchstart", openBoost, { capture: true });
-      // do NOT set pointer-events: none on links anymore
     });
 
     return () => {
@@ -272,16 +271,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     };
   }, []);
 
-  /* -------------------------------- actions -------------------------------- */
+  /* actions */
   const handleSplik = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like videos",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
       return;
     }
 
@@ -303,14 +297,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     }
   };
 
-  const handleComment = () => {
-    setShowCommentsModal(true);
-    onReact?.();
-  };
-
-  const handleShare = () => {
-    setShowShareModal(true);
-    onShare?.();
+  const handleCopyLink = () => {
+    const url = `${window.location.origin}/video/${splik.id}`;
+    navigator.clipboard.writeText(url);
+    toast({ title: "Link copied", description: "Video link copied to clipboard" });
   };
 
   const checkIfFavorited = async () => {
@@ -330,11 +320,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const toggleFavorite = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to save videos",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
       return;
     }
 
@@ -361,12 +347,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     } catch {
       toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     }
-  };
-
-  const handleCopyLink = () => {
-    const url = `${window.location.origin}/video/${splik.id}`;
-    navigator.clipboard.writeText(url);
-    toast({ title: "Link copied", description: "Video link copied to clipboard" });
   };
 
   const handlePlayToggle = async () => {
@@ -404,7 +384,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     setIsMuted(next);
   };
 
-  /* ----------------------------- derived values ---------------------------- */
   const videoHeight = isMobile ? "60svh" : "500px";
   const isBoosted = Boolean(
     (splik as any).isBoosted ||
@@ -413,7 +392,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   );
   const isOwner = currentUser && currentUser.id === splik.user_id;
 
-  /* ----------------------------------- UI --------------------------------- */
   return (
     <div
       ref={cardRef}
@@ -424,7 +402,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* VIDEO */}
       <div
         className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
         style={{ height: videoHeight, maxHeight: "80svh" }}
@@ -462,7 +439,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         )}
 
-        {/* Only render the <video> if we have a URL to avoid errors */}
         {resolvedUrl ? (
           <video
             ref={videoRef}
@@ -498,7 +474,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         </button>
       </div>
 
-      {/* CREATOR + MENU */}
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -556,7 +531,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
                 <Flag className="h-4 w-4 mr-2" />
                 Report
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })} className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })}
+                className="cursor-pointer"
+              >
                 <UserX className="h-4 w-4 mr-2" />
                 Block User
               </DropdownMenuItem>
@@ -564,7 +542,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </DropdownMenu>
         </div>
 
-        {/* ACTIONS */}
+        {/* actions */}
         <div className="flex items-center justify-between gap-1">
           <Button
             variant="ghost"
@@ -624,7 +602,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         )}
       </div>
 
-      {/* MODALS */}
+      {/* modals */}
       <ShareModal
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
