@@ -4,17 +4,53 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 
-/** SQL view row from Step 4 */
-export type FeedItem = Database["public"]["Views"]["spliks_feed"]["Row"];
+/* =============================================================================
+   Types
+   -----------------------------------------------------------------------------
+   If you've regenerated types, your Database["public"]["Views"]["spliks_feed"]["Row"]
+   will exist. If not, we fall back to a local interface with the fields the UI uses.
+   ========================================================================== */
+
+// Try to reference the generated view row type. If it doesn't exist yet, TS will error
+// when indexing. To avoid that during transition, we declare a minimal fallback.
+type GeneratedFeedItem =
+  Database["public"] extends { Views: infer V }
+    ? V extends { spliks_feed: { Row: infer R } }
+      ? R
+      : never
+    : never;
+
+// Fallback for initial compile (keep in sync with your SQL view)
+type FallbackFeedItem = {
+  id: string;
+  user_id: string;
+  title: string | null;
+  description: string | null;
+  video_url: string;
+  thumb_url: string | null;
+  likes_count: number | null;
+  comments_count: number | null;
+  created_at: string;
+  trim_start: number | null;
+  trim_end: number | null;
+  mime_type: string | null;
+  file_size: number | null;
+  username: string | null;
+  // Optional columns you may have added:
+  is_food?: boolean | null;
+  liked_by_me?: boolean | null;
+};
+
+export type FeedItem = [GeneratedFeedItem] extends [never]
+  ? FallbackFeedItem
+  : GeneratedFeedItem;
 
 /** Optional runtime flags/fields for client-side ranking */
 export interface SplikWithScore extends FeedItem {
-  likes_count?: number | null;
-  comments_count?: number | null;
   boost_score?: number | null;
-  tag?: string;           // e.g., "food", "funny" — used by your category filter
-  isBoosted?: boolean;    // client flag
-  isFresh?: boolean;      // client flag (created within 24h)
+  tag?: string;        // e.g., "food", "funny" — used by your category filter
+  isBoosted?: boolean; // client flag
+  isFresh?: boolean;   // client flag (created within 24h)
 }
 
 interface FeedOptions {
@@ -25,7 +61,7 @@ interface FeedOptions {
 }
 
 /* =============================================================================
-   1) Typed fetch helpers (Step 5B)
+   1) Typed fetch helpers
    ========================================================================== */
 
 /** Latest feed (view already returns ready video_url / thumb_url) */
@@ -52,7 +88,7 @@ export async function fetchClipById(id: string): Promise<FeedItem> {
   return data as FeedItem;
 }
 
-/** Only food clips (if you use `is_food` in the view) */
+/** Only food clips (requires `is_food` to be selected in the view) */
 export async function fetchFoodFeed(limit = 50): Promise<FeedItem[]> {
   const { data, error } = await supabase
     .from("spliks_feed")
@@ -84,11 +120,13 @@ export async function fetchFeedPage(opts: {
 
   if (onlyFood) query = query.eq("is_food", true);
 
+  // Supabase .or() expects a filter expression string; be careful with ISO timestamps.
   if (cursor) {
-    // WHERE created_at < cursor.created_at
-    //   OR (created_at = cursor.created_at AND id < cursor.id)
+    const cTime = cursor.created_at;
+    const cId = cursor.id;
     query = query.or(
-      `and(created_at.lt.${cursor.created_at}),and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
+      // (created_at < cTime) OR (created_at = cTime AND id < cId)
+      `and(created_at.lt.${cTime}),and(created_at.eq.${cTime},id.lt.${cId})`
     );
   }
 
@@ -100,15 +138,18 @@ export async function fetchFeedPage(opts: {
   const items = (data || []) as FeedItem[];
   const next =
     items.length === limit
-      ? { created_at: items[items.length - 1].created_at, id: items[items.length - 1].id }
+      ? {
+          created_at: items[items.length - 1].created_at,
+          id: items[items.length - 1].id,
+        }
       : null;
 
   return { items, nextCursor: next };
 }
 
 /**
- * (Optional) Fetch currently boosted spliks.
- * We treat rows in boosted_videos with status='active' and date window.
+ * Fetch currently boosted spliks.
+ * We treat rows in boosted_videos with status='active' and NOW inside [start_date, end_date].
  * Then we fetch their full feed rows from spliks_feed.
  */
 export async function fetchBoostedNow(): Promise<FeedItem[]> {
@@ -135,7 +176,7 @@ export async function fetchBoostedNow(): Promise<FeedItem[]> {
 }
 
 /* =============================================================================
-   2) Session-based rotation utilities (corrected & SSR-safe)
+   2) Session-based rotation utilities (SSR-safe)
    ========================================================================== */
 
 /** Cheap non-crypto hash (stable across refresh for the same string) */
@@ -145,7 +186,7 @@ const stringHash = (s: string): number => {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return h >>> 0; // unsigned
+  return h >>> 0;
 };
 
 /** Mulberry32 PRNG — fast, decent distribution for UI shuffling */
@@ -161,12 +202,10 @@ const mulberry32 = (seed: number) => {
 /** SSR-safe session seed stored in sessionStorage (falls back to in-memory) */
 const SESSION_SEED_KEY = "__feedRotationSeed";
 let memorySeed: number | null = null;
-
 const isBrowser = typeof window !== "undefined";
 
 const getSessionSeed = (): number => {
   if (!isBrowser) {
-    // On server, generate once per process (best-effort; client will re-shuffle)
     if (memorySeed == null) {
       memorySeed = Date.now() ^ Math.floor(Math.random() * 1e9);
     }
@@ -177,7 +216,6 @@ const getSessionSeed = (): number => {
     const raw = sessionStorage.getItem(SESSION_SEED_KEY);
     if (raw) return Number(raw);
 
-    // New seed (use crypto if available)
     let seed = Date.now();
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
       const buf = new Uint32Array(1);
@@ -190,7 +228,6 @@ const getSessionSeed = (): number => {
     sessionStorage.setItem(SESSION_SEED_KEY, String(seed));
     return seed;
   } catch {
-    // sessionStorage blocked? fall back to window prop or memory
     const anyWin = window as any;
     if (!anyWin[SESSION_SEED_KEY]) {
       anyWin[SESSION_SEED_KEY] = Date.now() ^ Math.floor(Math.random() * 1e9);
@@ -203,7 +240,7 @@ const getSessionSeed = (): number => {
 const shuffleWithSeed = <T>(array: T[], seed: number): T[] => {
   const a = array.slice();
   const rand = mulberry32(seed >>> 0);
-  for (let i = a.length - 1; i > 0; i++) {
+  for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
@@ -226,13 +263,20 @@ export const forceNewRotation = (): void => {
 /** Debug info */
 export const getRotationInfo = () => ({
   sessionSeed:
-    (isBrowser && (() => {
-      try {
-        return sessionStorage.getItem(SESSION_SEED_KEY) || (window as any)[SESSION_SEED_KEY] || "Not set";
-      } catch {
-        return (window as any)[SESSION_SEED_KEY] || "Not set";
-      }
-    })()) || memorySeed || "Not set (SSR)",
+    (isBrowser &&
+      (() => {
+        try {
+          return (
+            sessionStorage.getItem(SESSION_SEED_KEY) ||
+            (window as any)[SESSION_SEED_KEY] ||
+            "Not set"
+          );
+        } catch {
+          return (window as any)[SESSION_SEED_KEY] || "Not set";
+        }
+      })()) ||
+    memorySeed ||
+    "Not set (SSR)",
   nextRotationOn: "Page refresh",
 });
 
@@ -249,13 +293,13 @@ export const applySessionRotation = <T extends SplikWithScore>(
 
   const sessionSeed = getSessionSeed();
 
-  // Salt by user (stable per user) — use a hash so we never get NaN
+  // Salt by user (stable per user)
   const userSalt = options.userId ? stringHash(options.userId) : 0;
   const finalSeed = (sessionSeed ^ userSalt) >>> 0;
 
   const shuffled = shuffleWithSeed(items, finalSeed);
 
-  // Optional category filter: check tag first, then description/title fallback
+  // Optional category filter: tag, then description/title fallback
   const cat = options.category?.toLowerCase().trim();
   const filtered = cat
     ? shuffled.filter((item) => {
@@ -271,8 +315,7 @@ export const applySessionRotation = <T extends SplikWithScore>(
 
 /** Mark content fresh if within last 24h */
 const markFresh = <T extends FeedItem>(rows: T[]): (T & { isFresh: boolean })[] => {
-  const now = Date.now();
-  const cutoff = now - 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   return rows.map((r) => ({
     ...r,
     isFresh: new Date(r.created_at).getTime() > cutoff,
@@ -300,7 +343,9 @@ const interleaveBoosted = <T extends SplikWithScore>(items: T[], every = 5): T[]
   if (!boosted.length) return items;
 
   const out: T[] = [];
-  let b = 0, o = 0, count = 0;
+  let b = 0,
+    o = 0,
+    count = 0;
 
   while (o < organic.length || b < boosted.length) {
     if (count % every === 0 && b < boosted.length) {
