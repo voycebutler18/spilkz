@@ -1,6 +1,5 @@
 // src/pages/Index.tsx
 import { useState, useEffect } from "react";
-import { Helmet } from "react-helmet";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
@@ -21,6 +20,11 @@ const Index = () => {
   const [refreshing, setRefreshing] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  // set a static title without Helmet
+  useEffect(() => {
+    document.title = "Splikz - Short Video Platform";
+  }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
@@ -162,11 +166,6 @@ const Index = () => {
 
   return (
     <div className="w-full">
-      <Helmet>
-        <title>Splikz - Short Video Platform</title>
-        <meta name="description" content="Watch and share short vertical videos on Splikz" />
-      </Helmet>
-
       {/* top controls */}
       <div className="w-full pt-2 pb-2">
         <div className="flex justify-center gap-2">
