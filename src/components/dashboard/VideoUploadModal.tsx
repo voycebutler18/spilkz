@@ -152,12 +152,23 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     }
   };
 
+  // Keep currentUser synced and avoid stale/null state
   useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setCurrentUser(user);
+    let mounted = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!mounted) return;
+      setCurrentUser(data.user ?? null);
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setCurrentUser(session?.user ?? null);
+    });
+
+    return () => {
+      mounted = false;
+      sub?.subscription.unsubscribe();
     };
-    getUser();
   }, []);
 
   useEffect(() => {
@@ -455,11 +466,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const xhr = new XMLHttpRequest();
       xhr.open("PUT", data.signedUrl, true);
 
-      // Content-Type (already handled by SDK uploads; do it here too for signed URL)
+      // Content-Type
       xhr.setRequestHeader("content-type", (blob as any).type || "application/octet-stream");
-      // 7A: long-lived immutable caching right on the object
+      // Long-lived immutable caching
       xhr.setRequestHeader("cache-control", "31536000, immutable");
-      // NOTE: do NOT set x-upsert unless you want to allow overwrites
 
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
@@ -503,10 +513,13 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       });
       return;
     }
-    if (!currentUser) {
+
+    // Fresh auth check to avoid stale "not logged in" state
+    const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !user) {
       toast({
-        title: "Not authenticated",
-        description: "Please login to upload videos",
+        title: "Session required",
+        description: "Please log in to upload videos.",
         variant: "destructive",
       });
       return;
@@ -517,7 +530,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
     try {
       const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
-      const videoPath = `${currentUser.id}/${Date.now()}.${ext}`;
+      const videoPath = `${user.id}/${Date.now()}.${ext}`;
 
       // Upload with progress + immutable caching
       const { publicUrl } = await uploadWithProgress("spliks", videoPath, file);
@@ -534,7 +547,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
       const payload: any = {
-        user_id: currentUser.id,
+        user_id: user.id,
         title,
         description: finalDescription.trim(),
         duration: MAX_VIDEO_DURATION,
@@ -544,11 +557,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         trim_start: selectedStart,
         trim_end: enforcedEnd,
         is_food: isFood,
-
-        // KEY: storage path
         video_path: videoPath,
-
-        // Legacy/url field your UI may still read (Step 4 view will supersede)
         video_url: publicUrl,
       };
 
