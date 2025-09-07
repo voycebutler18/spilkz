@@ -1,7 +1,9 @@
+// src/components/layout/MobileMenu.tsx
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -10,7 +12,7 @@ interface MobileMenuProps {
   onClose: () => void;
 }
 
-const DASHBOARD_PATH = "/dashboard"; // <-- change if your desktop header uses a different path
+const DASHBOARD_PATH = "/dashboard";
 
 const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
   const [isAuthed, setIsAuthed] = useState(false);
@@ -19,13 +21,11 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
   useEffect(() => {
     let mounted = true;
 
-    // initial session check
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       setIsAuthed(!!data.session);
     });
 
-    // live auth updates
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsAuthed(!!session);
     });
@@ -54,27 +54,86 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
           </SheetTitle>
         </SheetHeader>
 
-        <nav className="mt-8 flex flex-col space-y-4">
-          <Link to="/" onClick={onClose} className="text-sm font-medium transition-colors hover:text-primary">
-            Home
-          </Link>
-          <Link to="/explore" onClick={onClose} className="text-sm font-medium transition-colors hover:text-primary">
+        {/* Browse */}
+        <div className="mt-6 text-[11px] uppercase tracking-wide text-muted-foreground">
+          Browse
+        </div>
+        <nav className="mt-2 flex flex-col space-y-2">
+          <Link
+            to="/explore"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
             Discover
           </Link>
-          <Link to="/prompts" onClick={onClose} className="text-sm font-medium transition-colors hover:text-primary">
-            Prompts
+
+          <Link
+            to="/food"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            Food
           </Link>
-          <Link to="/about" onClick={onClose} className="text-sm font-medium transition-colors hover:text-primary">
-            About
-          </Link>
-          <Link to="/brands" onClick={onClose} className="text-sm font-medium transition-colors hover:text-primary">
+
+          {/* Splikz Dating (coming soon) – non-clickable row */}
+          <div
+            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 hover:bg-white/5 cursor-not-allowed select-none"
+            aria-disabled="true"
+            title="Splikz Dating is coming soon"
+          >
+            <span>Splikz Dating</span>
+            <Badge variant="secondary" className="text-[10px]">Coming soon</Badge>
+          </div>
+
+          <Link
+            to="/brands"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
             For Brands
           </Link>
-          <Link to="/help" onClick={onClose} className="text-sm font-medium transition-colors hover:text-primary">
+          <Link
+            to="/help"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
             Help
+          </Link>
+          <Link
+            to="/about"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            About
           </Link>
         </nav>
 
+        {/* Me */}
+        {isAuthed && (
+          <>
+            <div className="mt-6 text-[11px] uppercase tracking-wide text-muted-foreground">
+              Me
+            </div>
+            <nav className="mt-2 flex flex-col space-y-2">
+              <Link
+                to="/dashboard/favorites"
+                onClick={onClose}
+                className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+              >
+                My Favorites
+              </Link>
+              <Link
+                to="/messages"
+                onClick={onClose}
+                className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+              >
+                Messages
+              </Link>
+            </nav>
+          </>
+        )}
+
+        {/* Auth / Dashboard actions */}
         <div className="mt-8 flex flex-col space-y-2">
           {isAuthed ? (
             <>
