@@ -5,11 +5,12 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+// ✅ use the same client everywhere to avoid multi-client auth weirdness
+import { supabase } from "@/integrations/supabase/client";
 
 interface MobileMenuProps {
   open: boolean;
-  onClose: () => void;
+  onClose: () => void; // should set open=false in parent
 }
 
 const DASHBOARD_PATH = "/dashboard";
@@ -17,6 +18,13 @@ const DASHBOARD_PATH = "/dashboard";
 const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
   const [isAuthed, setIsAuthed] = useState(false);
   const navigate = useNavigate();
+
+  // Helper: close sheet then navigate (fixes iOS tap not navigating)
+  const go = (path: string) => {
+    onClose();
+    // let the Sheet unmount before routing so the tap isn't swallowed
+    setTimeout(() => navigate(path), 0);
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -38,8 +46,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    onClose();
-    navigate("/");
+    go("/");
   };
 
   return (
@@ -56,28 +63,24 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
 
         {/* Top links */}
         <nav className="mt-6 flex flex-col space-y-3">
-          <Link to="/" onClick={onClose} className="text-sm font-medium hover:text-primary">
+          <Link to="/" onClick={(e) => { e.preventDefault(); go("/"); }} className="text-sm font-medium hover:text-primary">
             Home
           </Link>
 
           {isAuthed && (
             <Link
               to={DASHBOARD_PATH}
-              onClick={onClose}
+              onClick={(e) => { e.preventDefault(); go(DASHBOARD_PATH); }}
               className="text-sm font-medium hover:text-primary"
             >
               Creator Dashboard
             </Link>
           )}
 
-          {/* Optional upload CTA (remove if you handle upload elsewhere) */}
+          {/* Optional upload CTA */}
           {isAuthed && (
-            <Button
-              className="mt-1"
-              asChild
-              onClick={onClose}
-            >
-              <Link to="/upload">Upload</Link>
+            <Button className="mt-1" onClick={() => go("/upload")}>
+              Upload
             </Button>
           )}
         </nav>
@@ -89,7 +92,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
         <nav className="mt-2 flex flex-col space-y-2">
           <Link
             to="/explore"
-            onClick={onClose}
+            onClick={(e) => { e.preventDefault(); go("/explore"); }}
             className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
           >
             Discover
@@ -97,7 +100,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
 
           <Link
             to="/food"
-            onClick={onClose}
+            onClick={(e) => { e.preventDefault(); go("/food"); }}
             className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
           >
             Food
@@ -115,21 +118,21 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
 
           <Link
             to="/brands"
-            onClick={onClose}
+            onClick={(e) => { e.preventDefault(); go("/brands"); }}
             className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
           >
             For Brands
           </Link>
           <Link
             to="/help"
-            onClick={onClose}
+            onClick={(e) => { e.preventDefault(); go("/help"); }}
             className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
           >
             Help
           </Link>
           <Link
             to="/about"
-            onClick={onClose}
+            onClick={(e) => { e.preventDefault(); go("/about"); }}
             className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
           >
             About
@@ -145,14 +148,14 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             <nav className="mt-2 flex flex-col space-y-2">
               <Link
                 to="/dashboard/favorites"
-                onClick={onClose}
+                onClick={(e) => { e.preventDefault(); go("/dashboard/favorites"); }}
                 className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
               >
                 My Favorites
               </Link>
               <Link
                 to="/messages"
-                onClick={onClose}
+                onClick={(e) => { e.preventDefault(); go("/messages"); }}
                 className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
               >
                 Messages
@@ -167,15 +170,14 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             <Button variant="outline" onClick={handleSignOut}>Sign out</Button>
           ) : (
             <>
-              <Button variant="outline" asChild onClick={onClose}>
-                <Link to="/login">Log in</Link>
+              <Button variant="outline" onClick={() => go("/login")}>
+                Log in
               </Button>
               <Button
                 className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
-                asChild
-                onClick={onClose}
+                onClick={() => go("/signup")}
               >
-                <Link to="/signup">Sign up</Link>
+                Sign up
               </Button>
             </>
           )}
