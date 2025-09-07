@@ -1,6 +1,6 @@
 // src/pages/CreatorProfile.tsx
 import { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,13 +32,12 @@ interface Profile {
 }
 
 const isUuid = (v: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
-  );
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 
 export function CreatorProfile() {
   const { slug = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams(); // ⬅️ read ?video=<id>
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
@@ -263,9 +262,7 @@ export function CreatorProfile() {
       // 4) keep the order by like time
       const orderIndex: Record<string, number> = {};
       likesRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
-      withProfiles.sort(
-        (a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0)
-      );
+      withProfiles.sort((a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0));
 
       if (!cancelled) setLikedSpliks(withProfiles);
     } catch (e) {
@@ -276,11 +273,71 @@ export function CreatorProfile() {
     }
   };
 
+  /* ---------- NEW: honor ?video=<id> deep links ---------- */
+  useEffect(() => {
+    const deepId = searchParams.get("video");
+    if (!deepId || !spliks.length) return;
+
+    let cancelled = false;
+    let tries = 0;
+    const maxTries = 14;
+
+    const tryPlayUnmuted = (vid: HTMLVideoElement) => {
+      try {
+        vid.muted = false;
+        const p = vid.play();
+        if (p && typeof (p as any).catch === "function") {
+          (p as Promise<void>).catch(() => {
+            // fallback to muted autoplay if the browser blocks sound
+            vid.muted = true;
+            vid.play().catch(() => {});
+          });
+        }
+      } catch {}
+    };
+
+    const attempt = () => {
+      if (cancelled) return;
+
+      // Look for a tile your grid marks; support several selectors.
+      const selectors = [
+        `[data-splik-id="${deepId}"]`,
+        `#splik-${deepId}`,
+        `[data-video-id="${deepId}"]`,
+        `[data-id="${deepId}"]`,
+      ];
+
+      let host: HTMLElement | null = null;
+      for (const s of selectors) {
+        const el = document.querySelector<HTMLElement>(s);
+        if (el) {
+          host = el;
+          break;
+        }
+      }
+
+      if (host) {
+        host.scrollIntoView({ behavior: "smooth", block: "center" });
+        const vid = host.querySelector("video") as HTMLVideoElement | null;
+        if (vid) {
+          setTimeout(() => tryPlayUnmuted(vid), 80);
+        }
+        return; // success
+      }
+
+      if (tries++ < maxTries) {
+        setTimeout(attempt, 120);
+      }
+    };
+
+    attempt();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, spliks.length]);
+
   const formatDate = (date: string) =>
-    new Date(date).toLocaleDateString("en-US", {
-      month: "long",
-      year: "numeric",
-    });
+    new Date(date).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
   if (loading) {
     return (
@@ -371,9 +428,7 @@ export function CreatorProfile() {
 
               <div className="flex gap-8">
                 <div className="text-center min-w-[80px]">
-                  <p className="text-2xl font-bold">
-                    {profile.spliks_count || 0}
-                  </p>
+                  <p className="text-2xl font-bold">{profile.spliks_count || 0}</p>
                   <p className="text-sm text-muted-foreground">Videos</p>
                 </div>
                 <button
@@ -461,9 +516,7 @@ export function CreatorProfile() {
                   </div>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">
-                    Member Since
-                  </p>
+                  <p className="text-sm text-muted-foreground mb-1">Member Since</p>
                   <p>{formatDate(profile.created_at)}</p>
                 </div>
               </div>
@@ -474,9 +527,7 @@ export function CreatorProfile() {
             {likedLoading ? (
               <Card className="p-12 text-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-                <p className="text-muted-foreground mt-3">
-                  Loading liked videos…
-                </p>
+                <p className="text-muted-foreground mt-3">Loading liked videos…</p>
               </Card>
             ) : likedSpliks.length > 0 ? (
               <VideoGrid
