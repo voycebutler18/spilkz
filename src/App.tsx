@@ -18,6 +18,7 @@ import ForCreators from "./pages/business/ForCreators";
 import Press from "./pages/business/Press";
 import HelpCenter from "./pages/support/HelpCenter";
 import Contact from "./pages/support/Contact";
+import SplikPage from "@/pages/SplikPage";
 
 // Legal / Community
 import Terms from "./pages/legal/Terms";
@@ -124,6 +125,7 @@ const App = () => (
               <Route path="/creator/:slug" element={<CreatorProfile />} />
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/search" element={<Search />} />
+              <Route path="/splik/:id" element={<SplikPage />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesInbox />} />
