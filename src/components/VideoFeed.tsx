@@ -4,7 +4,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getViewSessionId } from "@/lib/session";
+
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Heart,
