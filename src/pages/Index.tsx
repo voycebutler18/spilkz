@@ -1,6 +1,5 @@
 // src/pages/Index.tsx
 import { useState, useEffect } from "react";
-import { Helmet } from "react-helmet";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
@@ -162,11 +161,6 @@ const Index = () => {
 
   return (
     <div className="w-full">
-      <Helmet>
-        <title>Splikz - Short Video Platform</title>
-        <meta name="description" content="Watch and share short vertical videos on Splikz" />
-      </Helmet>
-
       {/* top controls */}
       <div className="w-full pt-2 pb-2">
         <div className="flex justify-center gap-2">
@@ -231,7 +225,6 @@ const Index = () => {
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
               {spliks.map((splik: any, index: number) => (
                 <div key={`${splik.id}-${index}`} className="relative">
-                  {/* No extra overlays here — SplikCard owns the promote UI */}
                   <SplikCard
                     splik={splik}
                     onSplik={() => handleSplik(splik.id)}
