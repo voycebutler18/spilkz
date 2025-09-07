@@ -25,15 +25,15 @@ interface Splik {
   title: string | null;
   description?: string | null;
   video_url: string;
-  thumb_url?: string | null;   // <- from view
+  thumb_url?: string | null;     // from view
   user_id: string;
-  username?: string | null;    // <- from view
+  username?: string | null;      // from view
   likes_count?: number | null;
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  mime_type?: string | null;
+  mime_type?: string | null;     // optional
   file_size?: number | null;
 }
 
@@ -50,14 +50,30 @@ interface VideoFeedProps {
 }
 
 /* ---------- helpers ---------- */
-const displayName = (s: Splik) =>
-  s.username ? `@${s.username}` : "Anonymous";
+const displayName = (s: Splik) => (s.username ? `@${s.username}` : "Anonymous");
 
 const initialsFor = (s: Splik) =>
-  (s.username || "A")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 2) || "A";
+  (s.username || "A").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 2) || "A";
+
+/** 7D: robust MIME inference so <source type="..."> matches all formats */
+const mimeFromUrl = (url: string): string => {
+  const clean = url.split("?")[0].split("#")[0];
+  const ext = clean.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "mp4":
+      return "video/mp4";
+    case "mov":
+      return "video/quicktime";
+    case "webm":
+      return "video/webm";
+    case "flv":
+      return "video/x-flv";
+    case "avi":
+      return "video/x-msvideo";
+    default:
+      return "video/mp4";
+  }
+};
 
 /* =================================================================== */
 
@@ -81,8 +97,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [muted, setMuted] = useState<Record<number, boolean>>({});
   const [activeIndex, setActiveIndex] = useState<number>(-1);
 
-  // store per-video loop handlers so we can cleanly replace/remove them
+  // per-video bookkeeping
   const timeupdateHandlers = useRef<Record<number, (e: Event) => void>>({});
+  const errorRetried = useRef<Record<number, boolean>>({});
 
   /* --------- ALWAYS start at top on route change + on load --------- */
   useLayoutEffect(() => {
@@ -97,7 +114,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   useEffect(() => {
     const load = async () => {
       try {
-        // ⬇️ pull straight from the view
+        // 7A/7B: read from view; URL + username + thumb already resolved
         const { data, error } = await supabase
           .from("spliks_feed")
           .select("*")
@@ -125,7 +142,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     load();
   }, [user?.id]);
 
-  // also ensure top when the list length changes (navigating between feeds)
+  // ensure top when list length changes (e.g., switching feeds)
   useEffect(() => {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
@@ -136,23 +153,24 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     []
   );
 
-  // helper to configure a video for mobile autoplay + first frame
+  // configure inline/mobile behavior (7C/7D hardening)
   const setupVideoForMobile = (v: HTMLVideoElement, poster?: string | null) => {
     v.muted = true;
     v.playsInline = true;
     v.setAttribute("playsinline", "true");
+    // @ts-expect-error vendor attr
     v.setAttribute("webkit-playsinline", "true");
     v.setAttribute("x5-playsinline", "true"); // some Android browsers
     v.setAttribute("x5-video-player-type", "h5");
     v.controls = false;
     v.disablePictureInPicture = true;
+    // @ts-expect-error vendor attr
     v.disableRemotePlayback = true;
     v.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
-    // NOTE: we do NOT force a preload here; the <video> prop handles that
     if (poster) v.poster = poster || "";
   };
 
-  // safely attach a 3s loop timeupdate handler (one per index)
+  // enforce 3s loop from trim_start (7E)
   const applyThreeSecondLoop = (index: number, startAt: number) => {
     const v = videoRefs.current[index];
     if (!v) return;
@@ -430,7 +448,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     >
       {spliks.map((s, i) => {
         const isMuted = muted[i] ?? true;
-        const shouldPreload = Math.abs(i - activeIndex) <= 1; // 🔑 active, prev, next
+        const shouldPreload = Math.abs(i - activeIndex) <= 1; // 7B: active, prev, next only
 
         return (
           <section
@@ -467,28 +485,70 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
                 <video
                   ref={(el) => (videoRefs.current[i] = el)}
-                  src={s.video_url}
                   poster={s.thumb_url ?? undefined}
                   className="w-full h-full object-cover"
                   playsInline
                   muted={isMuted}
                   // @ts-expect-error vendor attribute
                   webkit-playsinline="true"
-                  preload={shouldPreload ? "metadata" : "none"} // ✅ only neighbors
+                  preload={shouldPreload ? "metadata" : "none"}  // 7B: neighbor preload
                   controls={false}
+                  controlsList="nodownload noplaybackrate noremoteplayback"
+                  disablePictureInPicture
+                  // @ts-expect-error vendor attribute
+                  disableRemotePlayback
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
-                  onLoadedData={() => {
+                  onLoadedMetadata={() => {
                     const v = videoRefs.current[i];
-                    if (v && v.currentTime === 0) {
+                    if (!v) return;
+                    const start = Number(s.trim_start ?? 0);
+                    if (v.currentTime < start || v.currentTime > start + 3) {
                       try {
-                        v.currentTime = Math.max(0.1, Number(s.trim_start ?? 0));
+                        v.currentTime = Math.max(0.1, start);
                       } catch {}
                     }
                   }}
+                  onError={() => {
+                    // 7F: one-shot retry with a cache-busting fragment to help Safari
+                    const v = videoRefs.current[i];
+                    if (!v) return;
+                    if (!errorRetried.current[i]) {
+                      errorRetried.current[i] = true;
+                      const bust = s.video_url.includes("#") ? "" : "#t=0.001";
+                      // Replace <source> if present; otherwise set src
+                      const source = v.querySelector("source");
+                      if (source) {
+                        source.setAttribute("src", s.video_url + bust);
+                        try {
+                          // force reload of source list
+                          v.load();
+                        } catch {}
+                      } else {
+                        // fallback path
+                        // @ts-ignore
+                        v.src = s.video_url + bust;
+                        try {
+                          v.load();
+                        } catch {}
+                      }
+                    } else {
+                      toast({
+                        title: "Playback error",
+                        description: "This video format isn’t supported on your device.",
+                        variant: "destructive",
+                      });
+                    }
+                  }}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
+                >
+                  {/* 7D: typed source so browsers pick the right decoder quickly */}
+                  <source
+                    src={s.video_url}
+                    type={s.mime_type || mimeFromUrl(s.video_url)}
+                  />
+                </video>
 
-                {/* invisible tap layer (only assists snapping/centering) */}
+                {/* invisible tap layer (assists snapping/centering only) */}
                 <div className="absolute inset-0" onClick={() => scrollTo(i)} />
 
                 {/* mute toggle */}
