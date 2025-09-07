@@ -249,6 +249,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   ...s,
                   likes_count: row.likes_count ?? s.likes_count,
                   comments_count: row.comments_count ?? s.comments_count,
+                  views_count: row.views_count ?? s.views_count,   // 👈 add this
                 }
               : s
           )
