@@ -500,6 +500,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     return { publicUrl: pub.publicUrl };
   };
 
+  // ✅ UPDATED: deterministic path + save video_path in DB
   const handleUpload = async () => {
     if (!file || !title) {
       toast({
@@ -522,32 +523,31 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     setUploadProgress(1);
 
     try {
-      const fileExt = file.name.split(".").pop();
-      const fileName = `${currentUser.id}/${Date.now()}.${fileExt}`;
+      // 1) Build deterministic STORAGE PATH (powers per-clip URLs later)
+      const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+      const videoPath = `${currentUser.id}/${Date.now()}.${ext}`; // e.g. "user-uuid/1725720800123.mp4"
 
-      // Upload original file with progress (fastest path via signed URL)
-      const { publicUrl } = await uploadWithProgress("spliks", fileName, file);
+      // 2) Upload the file to the 'spliks' bucket at that exact path
+      const { publicUrl } = await uploadWithProgress("spliks", videoPath, file);
 
-      // ENFORCE 3 SECONDS AT SAVE TIME
+      // 3) Enforce trim metadata (existing behavior)
       const selectedStart = Math.max(0, Math.min(trimRange[0], originalDuration));
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
 
-      // Build base description (existing behavior)
+      // Build description + optional mood tag (existing behavior)
       const baseDesc =
         (description || "").trim() ||
         (showTrimmer
           ? `Trimmed: ${selectedStart.toFixed(1)}s - ${enforcedEnd.toFixed(1)}s`
           : "");
-
-      // 👇 mood tag appended to description if chosen (no DB column needed)
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
+      // 4) INSERT: SAVE video_path (KEY)
       const payload: any = {
         user_id: currentUser.id,
         title,
         description: finalDescription.trim(),
-        video_url: publicUrl,
         duration: MAX_VIDEO_DURATION,
         file_size: file.size,
         mime_type: file.type || inferMimeFromName(file.name),
@@ -555,7 +555,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         trim_start: selectedStart,
         trim_end: enforcedEnd,
         is_food: isFood,
-        // no mood column
+
+        // NEW: the storage path we just used
+        video_path: videoPath,
+
+        // Keep this for now so existing UI keeps working until Step 4 view
+        video_url: publicUrl,
       };
 
       const { error: dbError } = await supabase.from("spliks").insert(payload);
