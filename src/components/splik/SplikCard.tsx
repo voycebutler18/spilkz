@@ -10,7 +10,6 @@ import {
   UserX,
   Copy,
   Bookmark,
-  Play,
   Volume2,
   VolumeX,
   Rocket,
@@ -58,25 +57,19 @@ let CURRENT_PLAYING: HTMLVideoElement | null = null;
 
 const playExclusive = async (el: HTMLVideoElement) => {
   if (CURRENT_PLAYING && CURRENT_PLAYING !== el) {
-    try {
-      CURRENT_PLAYING.pause();
-    } catch {}
+    try { CURRENT_PLAYING.pause(); } catch {}
   }
   CURRENT_PLAYING = el;
-  try {
-    await el.play();
-  } catch {}
+  try { await el.play(); } catch {}
 };
 
 const pauseIfCurrent = (el: HTMLVideoElement | null) => {
   if (!el) return;
   if (CURRENT_PLAYING === el) CURRENT_PLAYING = null;
-  try {
-    el.pause();
-  } catch {}
+  try { el.pause(); } catch {}
 };
 
-/* ----------------------------- Helper functions -------------------------- */
+/* ----------------------------- Helpers ----------------------------------- */
 
 const toTitle = (s: string) =>
   s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -85,7 +78,7 @@ const toTitle = (s: string) =>
 
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true); // start muted for reliable autoplay
+  const [isMuted, setIsMuted] = useState(true); // start muted for autoplay
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -125,7 +118,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           setIsInView(visible);
 
           if (visible) {
-            video.muted = isMuted; // typically true initially
+            // start each view from 0s and loop the first 3s
+            video.currentTime = 0;
+            video.muted = isMuted;
             try {
               await playExclusive(video);
               setIsPlaying(true);
@@ -153,6 +148,26 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMuted]);
+
+  /* ------------------------ Enforce 3-second loop --------------------------- */
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    const onTimeUpdate = () => {
+      // hard cap at 3.00s; loop back without changing play state
+      if (v.currentTime >= 3) {
+        // keep it smooth: jump and continue
+        try { v.currentTime = 0; } catch {}
+      }
+    };
+
+    v.addEventListener("timeupdate", onTimeUpdate);
+    return () => {
+      v.removeEventListener("timeupdate", onTimeUpdate);
+    };
+  }, []);
 
   /* ------------------------ Load user + initial states ----------------------- */
 
@@ -201,7 +216,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splik.id]);
 
-  /* --------------------- Force any legacy promote pill to Boost ------------- */
+  /* --------------------- Force any legacy promote pill ---------------------- */
 
   useEffect(() => {
     const selector = 'a[href="/dashboard"], a[href="/dashboard/"]';
@@ -350,6 +365,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       pauseIfCurrent(video);
       setIsPlaying(false);
     } else {
+      // resume from current position; timeupdate will loop at 3s
       video.muted = isMuted;
       await playExclusive(video);
       setIsPlaying(true);
@@ -384,7 +400,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* disable clicks on any old promote pill anchors elsewhere */}
       <style>{`
         a[href="/dashboard"], a[href="/dashboard/"] {
           pointer-events: none !important;
@@ -397,10 +412,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         style={{ height: videoHeight, maxHeight: "80svh" }}
         onClick={handlePlayToggle}
       >
-        {/* top seam */}
         <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
 
-        {/* chip (generic) */}
+        {/* small chip (generic) */}
         <div className="absolute top-2 left-3 z-30 pointer-events-none">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
             <Sparkles className="h-4 w-4 text-white/80" />
@@ -408,7 +422,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         </div>
 
-        {/* Promote pill (owner only) */}
+        {/* promote pill (owner only) */}
         {isOwner && (
           <div className="absolute top-2 right-3 z-40">
             <button
@@ -427,7 +441,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         )}
 
-        {/* Promoted badge */}
+        {/* promoted badge */}
         {isBoosted && (
           <div className="absolute top-2 right-[11.5rem] z-30 pointer-events-none">
             <Badge className="bg-primary text-white border-0 px-2 py-1">
@@ -443,7 +457,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           poster={splik.thumbnail_url}
           className="block w-full h-full object-cover"
           autoPlay={false}           // controlled by observer/clicks
-          loop                        // continuous playback like modern feeds
+          loop={false}                // we loop manually for 0-3s
           muted={isMuted}
           playsInline
           controls={false}            // hide native UI
@@ -453,48 +467,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           preload="metadata"
         />
 
-        {/* Center overlay: show only when paused */}
-        {!isPlaying && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <button
-              aria-label="Play"
-              className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePlayToggle();
-              }}
-            >
-              <Play className="h-10 w-10 text-white ml-1" />
-            </button>
-          </div>
-        )}
-
-        {/* Title & description overlay */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-          <div className="bg-gradient-to-t from-black/70 via-black/35 to-transparent px-4 pt-10 pb-3">
-            <h3 className="text-white font-semibold text-sm truncate">
-              {splik.title || "Untitled"}
-            </h3>
-            {splik.description ? (
-              <p className="text-white/85 text-xs truncate">{splik.description}</p>
-            ) : null}
-          </div>
-        </div>
-
-        {/* Sound Control */}
-        {isPlaying && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className="absolute bottom-3 right-3 z-30 text-white hover:bg-white/20"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleMute();
-            }}
-          >
-            {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-          </Button>
-        )}
+        {/* No center play button at all (invisible) */}
       </div>
 
       {/* CREATOR + MENU */}
