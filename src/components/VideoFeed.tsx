@@ -1,11 +1,11 @@
 // src/components/ui/VideoFeed.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Heart, MessageCircle, Share2, Bookmark, MoreVertical, Play, Volume2, VolumeX, Send } from "lucide-react";
+import { Heart, MessageCircle, Share2, Bookmark, MoreVertical, Volume2, VolumeX, Send } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -57,6 +57,7 @@ const initialsFor = (s: Splik) =>
 
 export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
+  const { pathname } = useLocation();
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,12 +75,22 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
 
+  /* --------- ALWAYS start at top on route change + on load --------- */
+  useLayoutEffect(() => {
+    // reset window scroll (in case the page itself can scroll)
+    try { window.scrollTo({ top: 0, left: 0, behavior: "auto" }); } catch {}
+    // reset the feed container scroll
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }
+  }, [pathname]);
+
   useEffect(() => {
     const load = async () => {
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select("id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start")
+          .select("id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start,profiles(first_name,username)")
           .order("created_at", { ascending: false });
 
         if (error) throw error;
@@ -97,16 +108,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         console.error(e);
       } finally {
         setLoading(false);
+        // after data is ready, force container to top
+        if (containerRef.current) {
+          containerRef.current.scrollTop = 0;
+        }
       }
     };
     load();
   }, [user?.id]);
 
+  // also ensure top when the list length changes (navigation between feeds)
+  useEffect(() => {
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+  }, [spliks.length]);
+
   /* ========== ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES ========== */
-  /**
-   * **Autoplay**: The most-visible video plays automatically; others pause. 
-   * When you scroll so the current video is less than ~45% visible, it pauses and the next one takes over.
-   */
   const thresholds = useMemo(
     () => Array.from({ length: 21 }, (_, i) => i / 20), // 0, .05, .10 ... 1
     []
@@ -125,8 +141,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const setupVideoForMobile = (video: HTMLVideoElement) => {
       video.muted = true;
       video.playsInline = true;
-      video.setAttribute('webkit-playsinline', 'true');
-      video.preload = 'metadata';
+      video.setAttribute("webkit-playsinline", "true");
+      video.preload = "metadata";
       video.load(); // Force load to show first frame
     };
 
@@ -134,14 +150,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       const visibilityEntries = Object.entries(sectionVisibility);
       if (visibilityEntries.length === 0) return null;
 
-      // Sort by visibility ratio descending
       const sortedSections = visibilityEntries
         .map(([index, ratio]) => ({ index: Number(index), ratio }))
         .sort((a, b) => b.ratio - a.ratio);
-      
+
       const mostVisible = sortedSections[0];
-      
-      // Only return if visibility is above threshold (60% for switching)
       return mostVisible && mostVisible.ratio >= 0.6 ? mostVisible.index : null;
     };
 
@@ -151,7 +164,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
       try {
         const targetIndex = findMostVisibleSection();
-        
+
         // If current video falls below 45% visibility, pause it
         if (currentPlayingIndex !== null && (sectionVisibility[currentPlayingIndex] || 0) < 0.45) {
           const currentVideo = videoRefs.current[currentPlayingIndex];
@@ -163,56 +176,47 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         // Switch to new target video if different from current
         if (targetIndex !== null && targetIndex !== currentPlayingIndex) {
-          // Pause all other videos first
+          // Pause all others
           videoRefs.current.forEach((video, i) => {
             if (video && i !== targetIndex && !video.paused) {
               video.pause();
             }
           });
-          
+
           const targetVideo = videoRefs.current[targetIndex];
           if (targetVideo) {
-            // Configure video for mobile autoplay
             setupVideoForMobile(targetVideo);
             targetVideo.muted = muted[targetIndex] ?? true;
 
-            // Mobile fix: ensure video has loaded enough data to display
-            if (targetVideo.readyState < 2) { // HAVE_CURRENT_DATA
+            if (targetVideo.readyState < 2) {
               targetVideo.load();
-              // Small delay to let load complete
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise((r) => setTimeout(r, 100));
             }
 
-            // Force load first frame on mobile if needed
-            if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
+            if (targetVideo.currentTime === 0 && (targetVideo.duration || 0) > 0) {
               targetVideo.currentTime = 0.1;
             }
 
-            // Handle trim_start for 3s loop
+            // Enforce 3s loop (with optional trim_start)
             const startAt = Number(spliks[targetIndex]?.trim_start ?? 0);
             const onTimeUpdate = () => {
               if (targetVideo.currentTime - startAt >= 3) {
                 targetVideo.currentTime = startAt;
               }
             };
-            
-            // Remove existing listener and add new one
             targetVideo.removeEventListener("timeupdate", onTimeUpdate);
             targetVideo.addEventListener("timeupdate", onTimeUpdate);
 
-            // Set starting position if needed
             if (startAt > 0) {
-              targetVideo.currentTime = startAt;
+              try { targetVideo.currentTime = startAt; } catch {}
             }
 
-            // Attempt to play
             try {
               await targetVideo.play();
               currentPlayingIndex = targetIndex;
               setActiveIndex(targetIndex);
             } catch (playError) {
-              console.log("Autoplay prevented, trying muted:", playError);
-              // If autoplay blocked, ensure muted and try again
+              // Retry muted
               if (!targetVideo.muted) {
                 targetVideo.muted = true;
                 setMuted((prev) => ({ ...prev, [targetIndex]: true }));
@@ -220,18 +224,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   await targetVideo.play();
                   currentPlayingIndex = targetIndex;
                   setActiveIndex(targetIndex);
-                } catch (mutedError) {
-                  console.log("Video autoplay blocked even when muted:", mutedError);
-                  // Fallback: at least show the first frame
-                  if (targetVideo.currentTime === 0) {
-                    targetVideo.currentTime = 0.1;
-                  }
+                } catch {
+                  if (targetVideo.currentTime === 0) targetVideo.currentTime = 0.1;
                 }
               } else {
-                // Video is already muted but still failed - show first frame
-                if (targetVideo.currentTime === 0) {
-                  targetVideo.currentTime = 0.1;
-                }
+                if (targetVideo.currentTime === 0) targetVideo.currentTime = 0.1;
               }
             }
           }
@@ -250,62 +247,53 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }
     };
 
-    // Create intersection observer with multiple thresholds for smooth tracking
+    // Create intersection observer
     const intersectionObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           const index = Number((entry.target as HTMLElement).dataset.index);
           sectionVisibility[index] = entry.intersectionRatio;
         });
-        
-        // Handle playback changes
         handleVideoPlayback();
       },
-      { 
-        root, 
+      {
+        root,
         threshold: thresholds,
-        rootMargin: "10px" // Better mobile performance
+        rootMargin: "10px",
       }
     );
 
-    // Initialize all videos for mobile when they're added to DOM
+    // Initialize videos and observe sections
     const initializeVideos = () => {
       videoRefs.current.forEach((video) => {
-        if (video && !video.hasAttribute('data-mobile-initialized')) {
+        if (video && !video.hasAttribute("data-mobile-initialized")) {
           setupVideoForMobile(video);
-          video.setAttribute('data-mobile-initialized', 'true');
+          video.setAttribute("data-mobile-initialized", "true");
         }
       });
     };
 
-    // Observe all sections and initialize videos
     const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
     sections.forEach((section) => {
       intersectionObserver.observe(section);
     });
 
-    // Initialize videos after a short delay to ensure DOM is ready
     setTimeout(initializeVideos, 100);
 
-    // Watch for new videos being added
     const mutationObserver = new MutationObserver(() => {
       setTimeout(initializeVideos, 100);
     });
 
     mutationObserver.observe(root, {
       childList: true,
-      subtree: true
+      subtree: true,
     });
 
-    // Cleanup function
     return () => {
       intersectionObserver.disconnect();
       mutationObserver.disconnect();
-      // Pause all videos
       videoRefs.current.forEach((video) => {
-        if (video && !video.paused) {
-          video.pause();
-        }
+        if (video && !video.paused) video.pause();
       });
     };
   }, [spliks.length, thresholds, muted, spliks]);
@@ -325,75 +313,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     setMuted((m) => ({ ...m, [i]: next }));
   };
 
-  /* -------------------------- social actions -------------------------- */
-  const handleLike = async (splikId: string) => {
-    if (!user?.id) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like videos",
-        variant: "destructive",
-      });
-      return;
-    }
-    const isLiked = likedIds.has(splikId);
-    setLikedIds((prev) => {
-      const ns = new Set(prev);
-      isLiked ? ns.delete(splikId) : ns.add(splikId);
-      return ns;
-    });
-    try {
-      if (isLiked) {
-        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
-      } else {
-        await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
-      }
-    } catch {
-      // revert on error
-      setLikedIds((prev) => {
-        const ns = new Set(prev);
-        isLiked ? ns.add(splikId) : ns.delete(splikId);
-        return ns;
-      });
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
-    }
-  };
-
-  const openComments = async (s: Splik) => {
-    setShowCommentsFor(s.id);
-    setLoadingComments(true);
-    try {
-      const { data, error } = await supabase
-        .from("comments")
-        .select("*, profiles!comments_user_id_fkey(first_name,last_name)")
-        .eq("splik_id", s.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setComments(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingComments(false);
-    }
-  };
-
-  const submitComment = async () => {
-    if (!showCommentsFor || !user?.id || !newComment.trim()) return;
-    try {
-      const { error } = await supabase.from("comments").insert({
-        splik_id: showCommentsFor,
-        user_id: user.id,
-        content: newComment.trim(),
-      });
-      if (error) throw error;
-      setNewComment("");
-      // re-fetch
-      const splik = spliks.find((s) => s.id === showCommentsFor);
-      if (splik) openComments(splik);
-    } catch {
-      toast({ title: "Error", description: "Failed to post comment", variant: "destructive" });
-    }
-  };
-
   /* ------------------------------ UI ------------------------------ */
   if (loading) {
     return (
@@ -405,6 +324,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   return (
     <div
+      key={pathname} /* remount on route, guarantees fresh scroll state */
       ref={containerRef}
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
@@ -453,26 +373,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   preload="metadata"
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
                   onLoadedData={() => {
-                    // Ensure first frame is visible on load
                     const video = videoRefs.current[i];
                     if (video && video.currentTime === 0) {
                       video.currentTime = 0.1;
                     }
                   }}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover'
-                  }}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 />
 
-                {/* play hint when paused (if ever) */}
+                {/* invisible tap layer (kept for snap assist) */}
                 <div
-                  className="absolute inset-0 flex items-center justify-center bg-black/0"
-                  onClick={() => scrollTo(i)} // single tap recenters/ensures snap
-                >
-                  <div className="bg-white/80 rounded-full p-3 opacity-0 pointer-events-none" />
-                </div>
+                  className="absolute inset-0"
+                  onClick={() => scrollTo(i)}
+                />
 
                 {/* mute toggle */}
                 <button
@@ -500,9 +413,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       onClick={() => handleLike(s.id)}
                       className={likedIds.has(s.id) ? "text-red-500" : ""}
                     >
-                      <Heart
-                        className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`}
-                      />
+                      <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
                     </Button>
 
                     <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
