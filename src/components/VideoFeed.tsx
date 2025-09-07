@@ -670,11 +670,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     >
                       <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
                     </Button>
-
                     <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
                       <MessageCircle className="h-6 w-6" />
                     </Button>
-
                     <Button
                       size="icon"
                       variant="ghost"
@@ -687,12 +685,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       <Share2 className="h-6 w-6" />
                     </Button>
                   </div>
-
                   <Button size="icon" variant="ghost">
                     <Bookmark className="h-6 w-6" />
                   </Button>
                 </div>
-
+                {/* counts row */}
+                <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                  <span>{s.likes_count ?? 0} likes</span>
+                  <span>{s.comments_count ?? 0} comments</span>
+                  <span>{s.views_count ?? 0} views</span>   {/* 👈 new */}
+                </div>
                 {s.description && (
                   <p className="text-sm">
                     <span className="font-semibold mr-2">{displayName(s)}</span>
