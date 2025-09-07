@@ -9,6 +9,7 @@ import { formatDistanceToNow } from "date-fns";
 import { fetchClipById } from "@/lib/feed";
 import type { FeedItem } from "@/lib/feed";
 import { useToast } from "@/hooks/use-toast";
+import { Helmet } from "react-helmet-async";   // 👈 at the top of SplikPage.tsx
 
 export default function SplikPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,7 +26,7 @@ export default function SplikPage() {
         const row = await fetchClipById(id!);
         if (alive) setS(row);
       } catch {
-        toast({ title: "Not found", description: "This video doesn’t exist.", variant: "destructive" });
+        toast({ title: "Not found", description: "This video doesn't exist.", variant: "destructive" });
       } finally {
         if (alive) setLoading(false);
       }
@@ -44,6 +45,20 @@ export default function SplikPage() {
 
   return (
     <div className="min-h-[100svh] flex items-center justify-center bg-background p-3">
+      {/* 👇 put Helmet before rendering the Card */}
+      <Helmet>
+        <title>{s.title ? `${s.title} — Splikz` : "Splik — Splikz"}</title>
+        <meta
+          name="description"
+          content={s.description || "Watch this 3-second moment on Splikz"}
+        />
+        <meta property="og:type" content="video.other" />
+        <meta property="og:title" content={s.title || "Splik"} />
+        <meta property="og:description" content={s.description || ""} />
+        <meta property="og:image" content={s.thumb_url || ""} />
+        <meta property="og:url" content={window.location.href} />
+        <meta name="twitter:card" content="summary_large_image" />
+      </Helmet>
       <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
         {/* header */}
         <div className="flex items-center justify-between p-3 border-b">
