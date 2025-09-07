@@ -1,4 +1,3 @@
-
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -23,22 +22,19 @@ import { useToast } from "@/hooks/use-toast";
 /* ---------------- types ---------------- */
 interface Splik {
   id: string;
-  title: string;
+  title: string | null;
   description?: string | null;
   video_url: string;
-  thumbnail_url?: string | null;
+  thumb_url?: string | null;   // <- from view
   user_id: string;
+  username?: string | null;    // <- from view
   likes_count?: number | null;
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
-  profiles?:
-    | {
-        first_name?: string | null;
-        last_name?: string | null;
-        username?: string | null;
-      }
-    | null;
+  trim_end?: number | null;
+  mime_type?: string | null;
+  file_size?: number | null;
 }
 
 interface Comment {
@@ -54,16 +50,14 @@ interface VideoFeedProps {
 }
 
 /* ---------- helpers ---------- */
-const nameFor = (s: Splik) =>
-  (s.profiles?.first_name || s.profiles?.username || "Anonymous User")!.toString();
+const displayName = (s: Splik) =>
+  s.username ? `@${s.username}` : "Anonymous";
 
 const initialsFor = (s: Splik) =>
-  nameFor(s)
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  (s.username || "A")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 2) || "A";
 
 /* =================================================================== */
 
@@ -103,15 +97,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   useEffect(() => {
     const load = async () => {
       try {
+        // ⬇️ pull straight from the view
         const { data, error } = await supabase
-          .from("spliks")
-          .select(
-            "id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start,profiles(first_name,username)"
-          )
+          .from("spliks_feed")
+          .select("*")
           .order("created_at", { ascending: false });
 
         if (error) throw error;
-        setSpliks(data || []);
+        setSpliks((data as Splik[]) || []);
 
         if (user?.id) {
           const { data: likes } = await supabase
@@ -217,7 +210,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       if (!v) return false;
 
       // configure inline/mobile behavior
-      setupVideoForMobile(v, spliks[i]?.thumbnail_url ?? undefined);
+      setupVideoForMobile(v, spliks[i]?.thumb_url ?? undefined);
       v.muted = muted[i] ?? true;
 
       // enforce 3s loop from trim_start
@@ -448,14 +441,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               {/* header */}
               <div className="flex items-center justify-between p-3 border-b">
                 <Link
-                  to={`/creator/${s.profiles?.username || s.user_id}`}
+                  to={`/creator/${s.username || s.user_id}`}
                   className="flex items-center gap-3 hover:opacity-80 transition-opacity"
                 >
                   <Avatar className="h-8 w-8">
                     <AvatarFallback>{initialsFor(s)}</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="text-sm font-semibold">{nameFor(s)}</p>
+                    <p className="text-sm font-semibold">{displayName(s)}</p>
                     <p className="text-xs text-muted-foreground">
                       {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
                     </p>
@@ -474,7 +467,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 <video
                   ref={(el) => (videoRefs.current[i] = el)}
                   src={s.video_url}
-                  poster={s.thumbnail_url ?? undefined}
+                  poster={s.thumb_url ?? undefined}
                   className="w-full h-full object-cover"
                   playsInline
                   muted={isMuted}
@@ -552,7 +545,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 {/* caption */}
                 {s.description && (
                   <p className="text-sm">
-                    <span className="font-semibold mr-2">{nameFor(s)}</span>
+                    <span className="font-semibold mr-2">{displayName(s)}</span>
                     {s.description}
                   </p>
                 )}
