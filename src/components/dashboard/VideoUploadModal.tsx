@@ -90,6 +90,99 @@ const formatBytes = (bytes: number) => {
   return `${value.toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
 };
 
+/* =========================================================
+   NEW: Create a poster image (JPEG) from the uploaded video
+   ========================================================= */
+async function makePosterFromFileVideo(file: File, atSeconds = 1): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.crossOrigin = "anonymous";
+
+    const url = URL.createObjectURL(file);
+    video.src = url;
+
+    const cleanup = () => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+      try {
+        video.pause();
+      } catch {}
+      video.removeAttribute("src");
+      video.load();
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error("Failed to read video for poster"));
+    };
+
+    video.onerror = onError;
+
+    video.onloadedmetadata = () => {
+      // choose a safe time: middle of the trimmed region usually looks good
+      const safeTarget =
+        Number.isFinite(video.duration) && video.duration > 0
+          ? Math.min(Math.max(0.1, atSeconds), Math.max(0.1, video.duration - 0.1))
+          : 1.0;
+
+      const onSeeked = () => {
+        try {
+          const targetWidth = 720; // good OG size; FB/Twitter will resize
+          const ratio =
+            video.videoWidth > 0
+              ? video.videoHeight / video.videoWidth
+              : 16 / 9;
+          const canvas = document.createElement("canvas");
+          canvas.width = targetWidth;
+          canvas.height = Math.round(targetWidth * ratio);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas context failed");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob(
+            (blob) => {
+              cleanup();
+              if (blob) resolve(blob);
+              else reject(new Error("Poster encode failed"));
+            },
+            "image/jpeg",
+            0.85
+          );
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      };
+
+      video.currentTime = safeTarget;
+      video.onseeked = onSeeked;
+    };
+  });
+}
+
+/* =========================================================
+   NEW: Small helper to upload a Blob via a signed URL
+   (no progress UI, used for the tiny poster)
+   ========================================================= */
+async function uploadBlob(bucket: string, path: string, blob: Blob): Promise<{ publicUrl: string }> {
+  const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path);
+  if (error || !data?.signedUrl) throw error || new Error("Failed to create signed upload URL.");
+
+  await fetch(data.signedUrl, {
+    method: "PUT",
+    headers: {
+      "content-type": blob.type || "application/octet-stream",
+      "cache-control": "31536000, immutable",
+    },
+    body: blob,
+  });
+
+  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
+  return { publicUrl: pub.publicUrl };
+}
+
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
@@ -532,7 +625,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
       const videoPath = `${user.id}/${Date.now()}.${ext}`;
 
-      // Upload with progress + immutable caching
+      // Upload video with progress + immutable caching
       const { publicUrl } = await uploadWithProgress("spliks", videoPath, file);
 
       const selectedStart = Math.max(0, Math.min(trimRange[0], originalDuration));
@@ -545,6 +638,25 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           : "");
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
+
+      /* =========================
+         NEW: make & upload poster
+         ========================= */
+      let thumbnail_url: string | null = null;
+      try {
+        // Grab a frame ~1s into the trimmed segment
+        const thumbSecond = Math.min(
+          Math.max(0.1, selectedStart + 1.0),
+          Math.max(0.1, enforcedEnd - 0.1)
+        );
+        const posterBlob = await makePosterFromFileVideo(file, thumbSecond);
+        const thumbPath = `${user.id}/${Date.now()}_poster.jpg`;
+        const poster = await uploadBlob("spliks", thumbPath, posterBlob);
+        thumbnail_url = poster.publicUrl || null;
+      } catch (e) {
+        // It's safe to continue without a poster; OG will fall back to site image.
+        console.warn("Poster generation failed:", e);
+      }
 
       const payload: any = {
         user_id: user.id,
@@ -559,6 +671,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         is_food: isFood,
         video_path: videoPath,
         video_url: publicUrl,
+        // NEW: store it for OG unfurls
+        thumbnail_url,
       };
 
       const { error: dbError } = await supabase.from("spliks").insert(payload);
