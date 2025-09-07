@@ -18,7 +18,7 @@ import BoostModal from "@/components/BoostModal";
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 
-// shadcn dropdown (this import must exist, otherwise you’ll get “DropdownMenu is not defined”)
+// shadcn dropdown (this import must exist, otherwise you'll get "DropdownMenu is not defined")
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -254,9 +254,9 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
   };
 
   const handleCopyLink = () => {
-    const url = `${window.location.origin}/video/${splik.id}`; // ← copy canonical link
+    const url = `${window.location.origin.replace(/\/$/,'')}/v/${splik.id}`;
     navigator.clipboard.writeText(url);
-    toast({ title: "Link copied", description: "Video link copied to clipboard" });
+    toast({ title: "Link copied", description: "Share link copied to clipboard" });
   };
 
   const handlePlayToggle = async () => {
