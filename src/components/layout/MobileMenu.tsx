@@ -1,24 +1,33 @@
-// src/components/layout/LeftSidebar.tsx
-import * as React from "react";
-import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+// src/components/layout/MobileMenu.tsx
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Sparkles } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
-const LeftSidebar: React.FC = () => {
-  const [user, setUser] = React.useState<any>(null);
+interface MobileMenuProps {
+  open: boolean;
+  onClose: () => void;
+}
 
-  React.useEffect(() => {
+const DASHBOARD_PATH = "/dashboard";
+
+const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
+  const [isAuthed, setIsAuthed] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
     let mounted = true;
 
-    const load = async () => {
-      const { data } = await supabase.auth.getUser();
+    supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      setUser(data.user ?? null);
-    };
-    load();
+      setIsAuthed(!!data.session);
+    });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthed(!!session);
     });
 
     return () => {
@@ -27,100 +36,153 @@ const LeftSidebar: React.FC = () => {
     };
   }, []);
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    onClose();
+    navigate("/");
+  };
+
   return (
-    <>
-      {/* Removed the mobile teaser — sidebar stays hidden on mobile (md:hidden behavior retained) */}
-      <aside
-        className="
-          hidden md:flex
-          sticky top-14
-          h-[calc(100svh-56px)] w-[260px]
-          flex-shrink-0
-          border-r border-border/60
-          bg-background/40 backdrop-blur-sm
-          overflow-y-auto overscroll-contain
-        "
-        aria-label="Left navigation"
-      >
-        <div className="w-full px-3 py-3">
-          {/* Browse */}
-          <div className="border-b border-border/60 pb-3 text-[11px] uppercase tracking-wide text-muted-foreground">
-            Browse
-          </div>
+    <Sheet open={open} onOpenChange={onClose}>
+      <SheetContent side="left" className="w-[280px] sm:w-[350px]">
+        <SheetHeader>
+          <SheetTitle className="flex items-center space-x-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            <span className="text-lg font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+              Splikz
+            </span>
+          </SheetTitle>
+        </SheetHeader>
 
-          <nav className="mt-3 space-y-1">
-            <Link
-              to="/explore"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
-            >
-              Discover
-            </Link>
+        {/* Top links */}
+        <nav className="mt-6 flex flex-col space-y-3">
+          <Link to="/" onClick={onClose} className="text-sm font-medium hover:text-primary">
+            Home
+          </Link>
 
+          {isAuthed && (
             <Link
-              to="/food"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
+              to={DASHBOARD_PATH}
+              onClick={onClose}
+              className="text-sm font-medium hover:text-primary"
             >
-              Food
+              Creator Dashboard
             </Link>
-
-            {/* Splikz Dating (coming soon) — desktop/tablet only */}
-            <div
-              className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 hover:bg-white/5 cursor-not-allowed select-none"
-              aria-disabled="true"
-              title="Splikz Dating is coming soon"
-            >
-              <span>Splikz Dating</span>
-              <Badge variant="secondary" className="text-[10px]">Coming soon</Badge>
-            </div>
-
-            <Link
-              to="/brands"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
-            >
-              For Brands
-            </Link>
-            <Link
-              to="/help"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
-            >
-              Help
-            </Link>
-            <Link
-              to="/about"
-              className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
-            >
-              About
-            </Link>
-          </nav>
-
-          {/* Me */}
-          {user && (
-            <>
-              <div className="mt-5 text-[11px] uppercase tracking-wide text-muted-foreground">
-                Me
-              </div>
-              <nav className="mt-1 space-y-1">
-                <Link
-                  to="/dashboard/favorites"
-                  className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
-                >
-                  My Favorites
-                </Link>
-                <Link
-                  to="/messages"
-                  className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
-                >
-                  Messages
-                </Link>
-              </nav>
-            </>
           )}
 
-          <div className="pb-6" />
+          {/* Optional upload CTA (remove if you handle upload elsewhere) */}
+          {isAuthed && (
+            <Button
+              className="mt-1"
+              asChild
+              onClick={onClose}
+            >
+              <Link to="/upload">Upload</Link>
+            </Button>
+          )}
+        </nav>
+
+        {/* Browse */}
+        <div className="mt-6 text-[11px] uppercase tracking-wide text-muted-foreground">
+          Browse
         </div>
-      </aside>
-    </>
+        <nav className="mt-2 flex flex-col space-y-2">
+          <Link
+            to="/explore"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            Discover
+          </Link>
+
+          <Link
+            to="/food"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            Food
+          </Link>
+
+          {/* Splikz Dating (Coming soon) — visible in the mobile menu */}
+          <div
+            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 bg-white/5 cursor-not-allowed select-none"
+            aria-disabled="true"
+            title="Splikz Dating is coming soon"
+          >
+            <span>Splikz Dating</span>
+            <Badge variant="secondary" className="text-[10px]">Coming soon</Badge>
+          </div>
+
+          <Link
+            to="/brands"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            For Brands
+          </Link>
+          <Link
+            to="/help"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            Help
+          </Link>
+          <Link
+            to="/about"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+          >
+            About
+          </Link>
+        </nav>
+
+        {/* Me */}
+        {isAuthed && (
+          <>
+            <div className="mt-6 text-[11px] uppercase tracking-wide text-muted-foreground">
+              Me
+            </div>
+            <nav className="mt-2 flex flex-col space-y-2">
+              <Link
+                to="/dashboard/favorites"
+                onClick={onClose}
+                className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+              >
+                My Favorites
+              </Link>
+              <Link
+                to="/messages"
+                onClick={onClose}
+                className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+              >
+                Messages
+              </Link>
+            </nav>
+          </>
+        )}
+
+        {/* Auth actions */}
+        <div className="mt-8 flex flex-col space-y-2">
+          {isAuthed ? (
+            <Button variant="outline" onClick={handleSignOut}>Sign out</Button>
+          ) : (
+            <>
+              <Button variant="outline" asChild onClick={onClose}>
+                <Link to="/login">Log in</Link>
+              </Button>
+              <Button
+                className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
+                asChild
+                onClick={onClose}
+              >
+                <Link to="/signup">Sign up</Link>
+              </Button>
+            </>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 };
 
-export default LeftSidebar;
+export default MobileMenu;
