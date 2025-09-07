@@ -57,16 +57,22 @@ let CURRENT_PLAYING: HTMLVideoElement | null = null;
 
 const playExclusive = async (el: HTMLVideoElement) => {
   if (CURRENT_PLAYING && CURRENT_PLAYING !== el) {
-    try { CURRENT_PLAYING.pause(); } catch {}
+    try {
+      CURRENT_PLAYING.pause();
+    } catch {}
   }
   CURRENT_PLAYING = el;
-  try { await el.play(); } catch {}
+  try {
+    await el.play();
+  } catch {}
 };
 
 const pauseIfCurrent = (el: HTMLVideoElement | null) => {
   if (!el) return;
   if (CURRENT_PLAYING === el) CURRENT_PLAYING = null;
-  try { el.pause(); } catch {}
+  try {
+    el.pause();
+  } catch {}
 };
 
 /* ----------------------------- Helpers ----------------------------------- */
@@ -96,6 +102,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
+
+  const creatorSlug =
+    splik.profile?.username || splik.profile?.handle || splik.user_id;
 
   /* --------------------------- Autoplay/visibility --------------------------- */
 
@@ -127,7 +136,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
           if (visible) {
             // reset to start and try to play (muted on entry)
-            try { video.currentTime = 0; } catch {}
+            try {
+              video.currentTime = 0;
+            } catch {}
             video.muted = isMuted;
             if (isMuted) video.setAttribute("muted", "true");
             else video.removeAttribute("muted");
@@ -169,7 +180,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
 
     const onTimeUpdate = () => {
       if (v.currentTime >= 3) {
-        try { v.currentTime = 0; } catch {}
+        try {
+          v.currentTime = 0;
+        } catch {}
       }
     };
 
@@ -323,7 +336,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save videos",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -339,7 +356,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
         }
       } else {
-        const { error } = await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
+        const { error } = await supabase
+          .from("favorites")
+          .insert({ user_id: user.id, splik_id: splik.id });
         if (!error) {
           setIsFavorited(true);
           toast({ title: "Added to favorites", description: "Video saved to your favorites" });
@@ -351,9 +370,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   };
 
   const handleCopyLink = () => {
-    const url = `${window.location.origin}/video/${splik.id}`;
+    // 🔗 Share the canonical creator deep-link so opening jumps to this exact video
+    const url = `${window.location.origin}/creator/${creatorSlug}?video=${splik.id}`;
     navigator.clipboard.writeText(url);
-    toast({ title: "Link copied", description: "Video link copied to clipboard" });
+    toast({ title: "Link copied", description: "Creator link copied to clipboard" });
   };
 
   const handleReport = () => setShowReportModal(true);
@@ -419,6 +439,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   return (
     <div
       ref={cardRef}
+      data-splik-id={splik.id}          // 🔎 allow deep-link scroll targeting
+      id={`splik-${splik.id}`}          // 🔎 alternate target id
       className={cn(
         "relative isolate bg-card rounded-xl overflow-hidden shadow-lg border border-border w-full max-w-[500px] mx-auto",
         isBoosted && "ring-2 ring-primary/50"
@@ -491,6 +513,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           disableRemotePlayback
           controlsList="nodownload noplaybackrate noremoteplayback"
           preload="metadata"
+          data-splik-id={splik.id}    // 🔎 extra hook for deep-link script
+          data-video-id={splik.id}
         />
 
         {/* Mute/Unmute button — always visible, high z-index */}
@@ -502,7 +526,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           className="absolute bottom-3 right-3 z-50 pointer-events-auto bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
           aria-label={isMuted ? "Unmute" : "Mute"}
         >
-          {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+          {isMuted ? (
+            <VolumeX className="h-5 w-5 text-white" />
+          ) : (
+            <Volume2 className="h-5 w-5 text-white" />
+          )}
         </button>
       </div>
 
@@ -511,7 +539,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <Link
-              to={`/creator/${splik.profile?.username || splik.profile?.handle || splik.user_id}`}
+              to={`/creator/${creatorSlug}`}
               className="flex items-center space-x-3 group flex-1 min-w-0"
             >
               <Avatar className="h-10 w-10 ring-2 ring-primary/20 group-hover:ring-primary/40 transition-all">
@@ -662,9 +690,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         onClose={() => setShowReportModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || splik.description || "Untitled Video"}
-        creatorName={
-          splik.profile?.display_name || splik.profile?.username || "Unknown Creator"
-        }
+        creatorName={splik.profile?.display_name || splik.profile?.username || "Unknown Creator"}
       />
       {showBoostModal && (
         <BoostModal
