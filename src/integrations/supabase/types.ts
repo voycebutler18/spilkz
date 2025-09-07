@@ -254,6 +254,12 @@ export type Database = {
           user_id: string
           video_url: string
           views: number | null
+          /** NEW */
+          video_path: string | null
+          /** OPTIONAL if you added this column */
+          thumb_path: string | null
+          /** matches your UI toggles */
+          is_food: boolean | null
         }
         Insert: {
           boost_score?: number | null
@@ -275,6 +281,12 @@ export type Database = {
           user_id: string
           video_url: string
           views?: number | null
+          /** NEW */
+          video_path?: string | null
+          /** OPTIONAL if you added this column */
+          thumb_path?: string | null
+          /** matches your UI toggles */
+          is_food?: boolean | null
         }
         Update: {
           boost_score?: number | null
@@ -296,6 +308,12 @@ export type Database = {
           user_id?: string
           video_url?: string
           views?: number | null
+          /** NEW */
+          video_path?: string | null
+          /** OPTIONAL if you added this column */
+          thumb_path?: string | null
+          /** matches your UI toggles */
+          is_food?: boolean | null
         }
         Relationships: []
       }
@@ -336,7 +354,29 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      /** Step 4 feed view */
+      spliks_feed: {
+        Row: {
+          id: string
+          user_id: string
+          username: string | null
+          title: string | null
+          description: string | null
+          is_food: boolean | null
+          status: string | null
+          created_at: string
+          trim_start: number | null
+          trim_end: number | null
+          mime_type: string | null
+          file_size: number | null
+          /** computed from video_path */
+          video_url: string
+          /** computed from thumb_path (or null) */
+          thumb_url: string | null
+        }
+        Relationships: []
+      }
+      // keep any other views here
     }
     Functions: {
       can_view_profile: {
