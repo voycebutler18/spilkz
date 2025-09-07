@@ -25,7 +25,7 @@ export default function SmartVideo({
   const rafId = useRef<number | null>(null);
   const tappedOnce = useRef(false);
 
-  // one-time setup for best mobile behavior
+  // one-time setup for mobile-friendly playback
   useEffect(() => {
     const v = vRef.current;
     if (!v) return;
@@ -37,7 +37,7 @@ export default function SmartVideo({
     v.setAttribute("x5-playsinline", "true");
     v.setAttribute("x5-video-player-type", "h5");
 
-    // keep it minimal in feeds
+    // minimal UI for feeds
     v.controls = false;
     v.disablePictureInPicture = true;
     v.disableRemotePlayback = true;
@@ -68,7 +68,7 @@ export default function SmartVideo({
     if (v) v.muted = !!muted;
   }, [muted]);
 
-  // enforce 3s loop from startAt using rVFC when available
+  // enforce 3s loop from startAt
   useEffect(() => {
     const v = vRef.current;
     if (!v) return;
@@ -87,7 +87,6 @@ export default function SmartVideo({
       else rafId.current = requestAnimationFrame(tick);
     };
 
-    // fallback for very old engines
     const onTimeUpdate = () => {
       if (v.currentTime >= loopEnd) {
         try { v.currentTime = startAt; } catch {}
@@ -95,7 +94,7 @@ export default function SmartVideo({
     };
 
     const rVFC = (v as any).requestVideoFrameCallback as
-      | ((cb: (now: number, meta: any) => void) => number)
+      | ((cb: (now: number, meta: any) => void) => void)
       | undefined;
 
     if (rVFC) rVFC(tick);
@@ -128,7 +127,6 @@ export default function SmartVideo({
     const onFirstGesture = async () => {
       if (tappedOnce.current) return;
       tappedOnce.current = true;
-      // ensure muted for strict autoplay policies, then try again
       if (!v.muted) v.muted = true;
       const ok = await tryPlay();
       if (!ok && !v.paused) v.pause();
@@ -137,19 +135,15 @@ export default function SmartVideo({
     };
 
     if (active) {
-      // start inside the 3s window
       try {
         if (v.currentTime < startAt || v.currentTime > startAt + 3) v.currentTime = startAt;
       } catch {}
-      // first attempt
       tryPlay().then(async (ok) => {
         if (ok) return;
-        // retry muted if needed
         if (!v.muted) {
           v.muted = true;
           if (await tryPlay()) return;
         }
-        // still blocked: wait for first user gesture
         v.addEventListener("pointerdown", onFirstGesture, { once: true });
         v.addEventListener("touchstart", onFirstGesture, { once: true, passive: true });
       });
