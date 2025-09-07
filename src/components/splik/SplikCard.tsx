@@ -11,7 +11,6 @@ import {
   Copy,
   Bookmark,
   Play,
-  Pause,
   Volume2,
   VolumeX,
   Rocket,
@@ -53,6 +52,30 @@ interface SplikCardProps {
   onShare?: () => void;
 }
 
+/* ------------------------ Single active player control -------------------- */
+
+let CURRENT_PLAYING: HTMLVideoElement | null = null;
+
+const playExclusive = async (el: HTMLVideoElement) => {
+  if (CURRENT_PLAYING && CURRENT_PLAYING !== el) {
+    try {
+      CURRENT_PLAYING.pause();
+    } catch {}
+  }
+  CURRENT_PLAYING = el;
+  try {
+    await el.play();
+  } catch {}
+};
+
+const pauseIfCurrent = (el: HTMLVideoElement | null) => {
+  if (!el) return;
+  if (CURRENT_PLAYING === el) CURRENT_PLAYING = null;
+  try {
+    el.pause();
+  } catch {}
+};
+
 /* ----------------------------- Helper functions -------------------------- */
 
 const toTitle = (s: string) =>
@@ -62,7 +85,7 @@ const toTitle = (s: string) =>
 
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // start muted for reliable autoplay
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -73,62 +96,63 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isFavorited, setIsFavorited] = useState(false);
   const [isInView, setIsInView] = useState(false);
-  const [showPauseButton, setShowPauseButton] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const viewedRef = useRef(false);
-  const pauseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
   /* --------------------------- Autoplay/visibility --------------------------- */
 
-  const muteOtherVideos = () => {
-    const allVideos = document.querySelectorAll("video");
-    allVideos.forEach((video) => {
-      if (video !== videoRef.current) {
-        (video as HTMLVideoElement).muted = true;
-        (video as HTMLVideoElement).pause();
-      }
-    });
-  };
-
   useEffect(() => {
-    const observer = new IntersectionObserver(
+    const video = videoRef.current;
+    const el = cardRef.current;
+    if (!video || !el) return;
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        pauseIfCurrent(video);
+        setIsPlaying(false);
+      }
+    };
+
+    const io = new IntersectionObserver(
       (entries) => {
-        entries.forEach((entry) => {
-          const visible = entry.isIntersecting && entry.intersectionRatio >= 0.5;
+        entries.forEach(async (entry) => {
+          const visible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
           setIsInView(visible);
 
-          if (visible && videoRef.current) {
-            muteOtherVideos();
-            videoRef.current.currentTime = 0;
-            videoRef.current.muted = isMuted;
-            videoRef.current
-              .play()
-              .then(() => setIsPlaying(true))
-              .catch(() => {});
-            if (!viewedRef.current) viewedRef.current = true;
-          } else if (videoRef.current && isPlaying) {
-            videoRef.current.pause();
-            videoRef.current.muted = true;
+          if (visible) {
+            video.muted = isMuted; // typically true initially
+            try {
+              await playExclusive(video);
+              setIsPlaying(true);
+              if (!viewedRef.current) viewedRef.current = true;
+            } catch {
+              setIsPlaying(false);
+            }
+          } else {
+            pauseIfCurrent(video);
+            video.muted = true;
             setIsPlaying(false);
           }
         });
       },
-      { threshold: [0.5], rootMargin: "0px" }
+      { threshold: [0, 0.25, 0.5, 0.7, 1], rootMargin: "0px 0px -10% 0px" }
     );
 
-    if (cardRef.current) observer.observe(cardRef.current);
+    io.observe(el);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      if (cardRef.current) observer.unobserve(cardRef.current);
-      if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
+      io.disconnect();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      pauseIfCurrent(video);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, isMuted]);
+  }, [isMuted]);
 
   /* ------------------------ Load user + initial states ----------------------- */
 
@@ -180,7 +204,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   /* --------------------- Force any legacy promote pill to Boost ------------- */
 
   useEffect(() => {
-    // Rewire any legacy anchor that points to /dashboard and says "Promote"
     const selector = 'a[href="/dashboard"], a[href="/dashboard/"]';
     const els = Array.from(document.querySelectorAll<HTMLAnchorElement>(selector)).filter(
       (el) => /promote/i.test((el.textContent || "").trim())
@@ -197,15 +220,14 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       el.addEventListener("click", openBoost, { capture: true });
       el.addEventListener("mousedown", openBoost, { capture: true });
       el.addEventListener("touchstart", openBoost, { capture: true });
-      // Safety: stop it from taking clicks at all; our own pill will handle it
       el.style.pointerEvents = "none";
     });
 
     return () => {
       els.forEach((el) => {
-        el.removeEventListener("click", openBoost, { capture: true } as any);
-        el.removeEventListener("mousedown", openBoost, { capture: true } as any);
-        el.removeEventListener("touchstart", openBoost, { capture: true } as any);
+        el.removeEventListener("click", openBoost as any, { capture: true } as any);
+        el.removeEventListener("mousedown", openBoost as any, { capture: true } as any);
+        el.removeEventListener("touchstart", openBoost as any, { capture: true } as any);
         el.style.pointerEvents = "";
       });
     };
@@ -221,7 +243,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     if (!user) {
       toast({
         title: "Sign in required",
-        description: "Please sign in to like spliks",
+        description: "Please sign in to like videos",
         variant: "destructive",
       });
       return;
@@ -295,7 +317,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         const { error } = await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
         if (!error) {
           setIsFavorited(true);
-          toast({ title: "Added to favorites!", description: "Video saved to your favorites" });
+          toast({ title: "Added to favorites", description: "Video saved to your favorites" });
         }
       }
     } catch {
@@ -306,7 +328,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const handleCopyLink = () => {
     const url = `${window.location.origin}/video/${splik.id}`;
     navigator.clipboard.writeText(url);
-    toast({ title: "Link copied!", description: "Video link copied to clipboard" });
+    toast({ title: "Link copied", description: "Video link copied to clipboard" });
   };
 
   const handleReport = () => setShowReportModal(true);
@@ -320,41 +342,24 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     return safe.toString();
   };
 
-  const handlePlayToggle = () => {
+  const handlePlayToggle = async () => {
     const video = videoRef.current;
     if (!video) return;
 
     if (isPlaying) {
-      video.pause();
+      pauseIfCurrent(video);
       setIsPlaying(false);
-      setShowPauseButton(false);
-      if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
-      pauseTimeoutRef.current = setTimeout(() => setShowPauseButton(true), 2000);
     } else {
-      muteOtherVideos();
-      video.currentTime = 0;
       video.muted = isMuted;
-      void video.play();
+      await playExclusive(video);
       setIsPlaying(true);
-      setShowPauseButton(true);
       if (!viewedRef.current) viewedRef.current = true;
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.currentTime >= 3) {
-      video.pause();
-      video.currentTime = 0;
-      setIsPlaying(false);
     }
   };
 
   const toggleMute = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (!isMuted) muteOtherVideos();
     video.muted = !isMuted;
     setIsMuted(!isMuted);
   };
@@ -379,10 +384,9 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* Safety CSS to disable clicks on any rogue /dashboard promote pill that might exist outside this component */}
+      {/* disable clicks on any old promote pill anchors elsewhere */}
       <style>{`
         a[href="/dashboard"], a[href="/dashboard/"] {
-          /* prevent ghost-clicks; JS hijack above will open the modal */
           pointer-events: none !important;
         }
       `}</style>
@@ -393,18 +397,18 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         style={{ height: videoHeight, maxHeight: "80svh" }}
         onClick={handlePlayToggle}
       >
-        {/* hide any seam */}
+        {/* top seam */}
         <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
 
-        {/* Brand chip (kept) */}
+        {/* chip (generic) */}
         <div className="absolute top-2 left-3 z-30 pointer-events-none">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
-            <Sparkles className="h-4 w-4 text-purple-400" />
-            <span className="text-sm font-bold text-white">Splikz</span>
+            <Sparkles className="h-4 w-4 text-white/80" />
+            <span className="text-sm font-bold text-white">Feed</span>
           </div>
         </div>
 
-        {/* Promote pill – ALWAYS opens Boost modal (owner only) */}
+        {/* Promote pill (owner only) */}
         {isOwner && (
           <div className="absolute top-2 right-3 z-40">
             <button
@@ -415,7 +419,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
-              className="relative flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold bg-gradient-to-r from-cyan-400 to-emerald-400 text-black shadow-lg ring-1 ring-black/10 hover:from-cyan-300 hover:to-emerald-300 transition-colors"
+              className="relative flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold bg-white text-black shadow-lg ring-1 ring-black/10 hover:bg-white/90 transition-colors"
             >
               <Rocket className="h-4 w-4" />
               Promote
@@ -423,10 +427,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           </div>
         )}
 
-        {/* Promoted badge (if already boosted) – does NOT block the promote pill */}
+        {/* Promoted badge */}
         {isBoosted && (
           <div className="absolute top-2 right-[11.5rem] z-30 pointer-events-none">
-            <Badge className="bg-gradient-to-r from-primary to-secondary text-white border-0 px-2 py-1">
+            <Badge className="bg-primary text-white border-0 px-2 py-1">
               <Rocket className="h-3 w-3 mr-1" />
               Promoted
             </Badge>
@@ -438,28 +442,20 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           src={splik.video_url}
           poster={splik.thumbnail_url}
           className="block w-full h-full object-cover"
-          loop={false}
+          autoPlay={false}           // controlled by observer/clicks
+          loop                        // continuous playback like modern feeds
           muted={isMuted}
           playsInline
-          onTimeUpdate={handleTimeUpdate}
+          controls={false}            // hide native UI
+          disablePictureInPicture
+          disableRemotePlayback
+          controlsList="nodownload noplaybackrate noremoteplayback"
+          preload="metadata"
         />
 
-        {/* Center play/pause icon */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          {isPlaying ? (
-            showPauseButton && (
-              <button
-                aria-label="Pause"
-                className="opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePlayToggle();
-                }}
-              >
-                <Pause className="h-14 w-14 text-white drop-shadow-lg" />
-              </button>
-            )
-          ) : (
+        {/* Center overlay: show only when paused */}
+        {!isPlaying && (
+          <div className="absolute inset-0 flex items-center justify-center">
             <button
               aria-label="Play"
               className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
@@ -470,8 +466,8 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             >
               <Play className="h-10 w-10 text-white ml-1" />
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Title & description overlay */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
@@ -550,7 +546,6 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={5}>
-              {/* Promote option (owner) */}
               {currentUser?.id === splik.user_id && (
                 <DropdownMenuItem
                   onClick={() => setShowBoostModal(true)}
@@ -582,7 +577,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             variant="ghost"
             size="sm"
             onClick={handleSplik}
-            className={cn("flex items-center space-x-2 transition-colors flex-1", isLiked && "text-red-500 hover:text-red-600")}
+            className={cn(
+              "flex items-center space-x-2 transition-colors flex-1",
+              isLiked && "text-red-500 hover:text-red-600"
+            )}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
             <span className="text-xs font-medium">{formatCount(likesCount)}</span>
@@ -612,7 +610,10 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
             variant="ghost"
             size="sm"
             onClick={toggleFavorite}
-            className={cn("flex items-center space-x-2 transition-colors flex-1", isFavorited && "text-yellow-500 hover:text-yellow-600")}
+            className={cn(
+              "flex items-center space-x-2 transition-colors flex-1",
+              isFavorited && "text-yellow-500 hover:text-yellow-600"
+            )}
           >
             <Bookmark className={cn("h-4 w-4", isFavorited && "fill-current")} />
             <span className="text-xs font-medium">Save</span>
@@ -639,7 +640,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
-        videoTitle={splik.title || "Check out this splik!"}
+        videoTitle={splik.title || "Check out this video"}
       />
       <CommentsModal
         isOpen={showCommentsModal}
