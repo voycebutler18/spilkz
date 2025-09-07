@@ -142,17 +142,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
 
-  // record a (session-unique) view when the focused card changes
   useEffect(() => {
     if (activeIndex < 0 || !spliks[activeIndex]) return;
     const s = spliks[activeIndex];
-    const sessionId = getViewSessionId(); // your helper that returns a stable per-session id
-    // best-effort; don't block UI
+    const sessionId = getViewSessionId();
     supabase.rpc("increment_view_with_session", {
       p_session_id: sessionId,
       p_splik_id: s.id,
       p_viewer_id: user?.id ?? null,
-      p_ip_address: null, // let server ignore / fill via edge if you add that later
+      p_ip_address: null,
     }).catch(() => {});
   }, [activeIndex, spliks, user?.id]);
 
