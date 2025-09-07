@@ -33,8 +33,9 @@ interface Splik {
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  mime_type?: string | null;     // optional
+  mime_type?: string | null;     // from view when present
   file_size?: number | null;
+  liked_by_me?: boolean;         // from view
 }
 
 interface Comment {
@@ -55,7 +56,7 @@ const displayName = (s: Splik) => (s.username ? `@${s.username}` : "Anonymous");
 const initialsFor = (s: Splik) =>
   (s.username || "A").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 2) || "A";
 
-/** 7D: robust MIME inference so <source type="..."> matches all formats */
+/** Robust MIME inference so <source type="..."> matches all formats */
 const mimeFromUrl = (url: string): string => {
   const clean = url.split("?")[0].split("#")[0];
   const ext = clean.split(".").pop()?.toLowerCase();
@@ -114,22 +115,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   useEffect(() => {
     const load = async () => {
       try {
-        // 7A/7B: read from view; URL + username + thumb already resolved
+        // Read from view; URL + username + thumb already resolved
         const { data, error } = await supabase
           .from("spliks_feed")
           .select("*")
           .order("created_at", { ascending: false });
 
         if (error) throw error;
-        setSpliks((data as Splik[]) || []);
 
-        if (user?.id) {
-          const { data: likes } = await supabase
-            .from("likes")
-            .select("splik_id")
-            .eq("user_id", user.id);
-          if (likes) setLikedIds(new Set(likes.map((l) => l.splik_id)));
-        }
+        const rows = (data as Splik[]) || [];
+        setSpliks(rows);
+
+        // Initialize liked ids from view's liked_by_me
+        setLikedIds(new Set(rows.filter((r) => r.liked_by_me).map((r) => r.id)));
       } catch (e) {
         console.error(e);
       } finally {
@@ -153,7 +151,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     []
   );
 
-  // configure inline/mobile behavior (7C/7D hardening)
+  // configure inline/mobile behavior
   const setupVideoForMobile = (v: HTMLVideoElement, poster?: string | null) => {
     v.muted = true;
     v.playsInline = true;
@@ -170,7 +168,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (poster) v.poster = poster || "";
   };
 
-  // enforce 3s loop from trim_start (7E)
+  // enforce 3s loop from trim_start
   const applyThreeSecondLoop = (index: number, startAt: number) => {
     const v = videoRefs.current[index];
     if (!v) return;
@@ -448,7 +446,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     >
       {spliks.map((s, i) => {
         const isMuted = muted[i] ?? true;
-        const shouldPreload = Math.abs(i - activeIndex) <= 1; // 7B: active, prev, next only
+        const shouldPreload = Math.abs(i - activeIndex) <= 1; // active, prev, next only
 
         return (
           <section
@@ -491,7 +489,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   muted={isMuted}
                   // @ts-expect-error vendor attribute
                   webkit-playsinline="true"
-                  preload={shouldPreload ? "metadata" : "none"}  // 7B: neighbor preload
+                  preload={shouldPreload ? "metadata" : "none"}
                   controls={false}
                   controlsList="nodownload noplaybackrate noremoteplayback"
                   disablePictureInPicture
@@ -509,22 +507,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     }
                   }}
                   onError={() => {
-                    // 7F: one-shot retry with a cache-busting fragment to help Safari
+                    // one-shot retry with tiny time fragment to help Safari
                     const v = videoRefs.current[i];
                     if (!v) return;
                     if (!errorRetried.current[i]) {
                       errorRetried.current[i] = true;
                       const bust = s.video_url.includes("#") ? "" : "#t=0.001";
-                      // Replace <source> if present; otherwise set src
                       const source = v.querySelector("source");
                       if (source) {
                         source.setAttribute("src", s.video_url + bust);
                         try {
-                          // force reload of source list
                           v.load();
                         } catch {}
                       } else {
-                        // fallback path
                         // @ts-ignore
                         v.src = s.video_url + bust;
                         try {
@@ -541,11 +536,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   }}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 >
-                  {/* 7D: typed source so browsers pick the right decoder quickly */}
-                  <source
-                    src={s.video_url}
-                    type={s.mime_type || mimeFromUrl(s.video_url)}
-                  />
+                  {/* typed source so browsers pick the right decoder quickly */}
+                  <source src={s.video_url} type={s.mime_type || mimeFromUrl(s.video_url)} />
                 </video>
 
                 {/* invisible tap layer (assists snapping/centering only) */}
@@ -577,9 +569,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       onClick={() => handleLike(s.id)}
                       className={likedIds.has(s.id) ? "text-red-500" : ""}
                     >
-                      <Heart
-                        className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`}
-                      />
+                      <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
                     </Button>
 
                     <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
