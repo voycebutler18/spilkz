@@ -5,16 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  Heart,
-  MessageCircle,
-  Share2,
-  Bookmark,
-  MoreVertical,
-  Volume2,
-  VolumeX,
-  Send,
-} from "lucide-react";
+import { Heart, MessageCircle, Share2, Bookmark, MoreVertical, Volume2, VolumeX, Send } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -31,13 +22,11 @@ interface Splik {
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
-  profiles?:
-    | {
-        first_name?: string | null;
-        last_name?: string | null;
-        username?: string | null;
-      }
-    | null;
+  profiles?: {
+    first_name?: string | null;
+    last_name?: string | null;
+    username?: string | null;
+  } | null;
 }
 
 interface Comment {
@@ -80,14 +69,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
 
-  // feed / autoplay state
+  // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
-  const [activeIndex, setActiveIndex] = useState<number>(-1);
-
-  // store per-video loop handlers so we can cleanly replace/remove them
-  const timeupdateHandlers = useRef<Record<number, (e: Event) => void>>({});
 
   /* --------- ALWAYS start at top on route change + on load --------- */
   useLayoutEffect(() => {
@@ -113,78 +99,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setSpliks(data || []);
 
         if (user?.id) {
-          const { data: likes } = await supabase
-            .from("likes")
-            .select("splik_id")
-            .eq("user_id", user.id);
+          const { data: likes } = await supabase.from("likes").select("splik_id").eq("user_id", user.id);
           if (likes) setLikedIds(new Set(likes.map((l) => l.splik_id)));
         }
       } catch (e) {
         console.error(e);
       } finally {
         setLoading(false);
-        if (containerRef.current) {
-          containerRef.current.scrollTop = 0;
-        }
+        if (containerRef.current) containerRef.current.scrollTop = 0;
       }
     };
     load();
   }, [user?.id]);
 
-  // also ensure top when the list length changes (navigating between feeds)
+  // also ensure top when the list length changes (navigation between feeds)
   useEffect(() => {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
 
-  /* ========== AUTOPLAY MANAGER (mobile-safe) ========== */
-  const thresholds = useMemo(
-    () => Array.from({ length: 21 }, (_, i) => i / 20), // 0, .05, .10 ... 1
-    []
-  );
+  /* ========== ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES ========== */
+  const thresholds = useMemo(() => Array.from({ length: 21 }, (_, i) => i / 20), []);
 
-  // helper to configure a video for mobile autoplay + first frame
-  const setupVideoForMobile = (v: HTMLVideoElement, poster?: string | null) => {
-    v.muted = true;
-    v.playsInline = true;
-    v.setAttribute("playsinline", "true");
-    v.setAttribute("webkit-playsinline", "true");
-    v.setAttribute("x5-playsinline", "true"); // some Android browsers
-    v.setAttribute("x5-video-player-type", "h5");
-    v.controls = false;
-    v.disablePictureInPicture = true;
-    v.disableRemotePlayback = true;
-    v.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
-    v.preload = "metadata";
-    if (poster) v.poster = poster || "";
-  };
-
-  // safely attach a 3s loop timeupdate handler (one per index)
-  const applyThreeSecondLoop = (index: number, startAt: number) => {
-    const v = videoRefs.current[index];
-    if (!v) return;
-
-    const loopEnd = startAt + 3;
-
-    // remove previous handler if any
-    const prev = timeupdateHandlers.current[index];
-    if (prev) {
-      v.removeEventListener("timeupdate", prev);
-      delete timeupdateHandlers.current[index];
-    }
-
-    const handler = () => {
-      if (v.currentTime >= loopEnd) {
-        try {
-          v.currentTime = startAt;
-        } catch {}
-      }
-    };
-
-    v.addEventListener("timeupdate", handler);
-    timeupdateHandlers.current[index] = handler;
-  };
-
-  // observe sections to pick the most-visible one
   useEffect(() => {
     const root = containerRef.current;
     if (!root) return;
@@ -193,149 +128,158 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     let currentPlayingIndex: number | null = null;
     let isProcessing = false;
 
-    const findMostVisible = () => {
-      const pairs = Object.entries(sectionVisibility).map(([i, r]) => ({
-        i: Number(i),
-        r,
-      }));
-      if (!pairs.length) return -1;
-      pairs.sort((a, b) => b.r - a.r);
-      return pairs[0].r >= 0.6 ? pairs[0].i : -1; // need ≥60% to take control
+    const setupVideo = (video: HTMLVideoElement) => {
+      // inline + muted at creation time improves mobile autoplay
+      video.playsInline = true;
+      video.muted = true;
+      video.preload = "metadata";
+      video.setAttribute("webkit-playsinline", "true");
+      video.setAttribute("muted", "true"); // keep muted attr on the node
+      video.load();
     };
 
-    const pauseVideo = (i: number) => {
-      const v = videoRefs.current[i];
-      if (!v) return;
-      try {
-        v.pause();
-      } catch {}
+    const findMostVisibleSection = (): number | null => {
+      const entries = Object.entries(sectionVisibility);
+      if (!entries.length) return null;
+      const most = entries
+        .map(([i, r]) => ({ i: Number(i), r }))
+        .sort((a, b) => b.r - a.r)[0];
+      return most && most.r >= 0.6 ? most.i : null;
     };
 
-    const playVideo = async (i: number) => {
-      const v = videoRefs.current[i];
-      if (!v) return false;
-
-      // configure inline/mobile behavior
-      setupVideoForMobile(v, spliks[i]?.thumbnail_url ?? undefined);
-      v.muted = muted[i] ?? true;
-
-      // enforce 3s loop from trim_start
-      const startAt = Number(spliks[i]?.trim_start ?? 0);
-      if (v.currentTime < startAt || v.currentTime > startAt + 3) {
-        try {
-          v.currentTime = startAt;
-        } catch {}
-      }
-      applyThreeSecondLoop(i, startAt);
-
-      // make sure we have some data so first frame shows
-      if (v.readyState < 2) {
-        v.load();
-        await new Promise((r) => setTimeout(r, 80));
-      }
-      if (v.currentTime === 0 && (v.duration || 0) > 0) {
-        try {
-          v.currentTime = Math.max(0.1, startAt);
-        } catch {}
-      }
-
-      // attempt autoplay; if blocked, force muted and retry
-      try {
-        await v.play();
-        return true;
-      } catch {
-        if (!v.muted) v.muted = true;
-        try {
-          await v.play();
-          return true;
-        } catch {
-          return false;
-        }
-      }
-    };
-
-    const handlePlayback = async () => {
+    const handleVideoPlayback = async () => {
       if (isProcessing) return;
       isProcessing = true;
 
-      const target = findMostVisible();
+      try {
+        const targetIndex = findMostVisibleSection();
 
-      // current fell out of view? pause it
-      if (
-        currentPlayingIndex !== null &&
-        (sectionVisibility[currentPlayingIndex] || 0) < 0.45
-      ) {
-        pauseVideo(currentPlayingIndex);
-        currentPlayingIndex = null;
-      }
-
-      if (target !== -1 && target !== currentPlayingIndex) {
-        // pause all others
-        videoRefs.current.forEach((v, idx) => {
-          if (v && idx !== target && !v.paused) pauseVideo(idx);
-        });
-
-        const ok = await playVideo(target);
-
-        // if autoplay still blocked, show first frame but don't steal focus
-        if (ok) {
-          currentPlayingIndex = target;
-          setActiveIndex(target);
-        } else {
-          const v = videoRefs.current[target];
-          if (v && v.currentTime === 0) {
-            try {
-              v.currentTime = Math.max(0.1, Number(spliks[target]?.trim_start ?? 0));
-            } catch {}
-          }
+        if (currentPlayingIndex !== null && (sectionVisibility[currentPlayingIndex] || 0) < 0.45) {
+          const cv = videoRefs.current[currentPlayingIndex];
+          if (cv && !cv.paused) cv.pause();
+          currentPlayingIndex = null;
         }
-      } else if (target === -1 && currentPlayingIndex !== null) {
-        pauseVideo(currentPlayingIndex);
-        currentPlayingIndex = null;
-      }
 
-      isProcessing = false;
+        if (targetIndex !== null && targetIndex !== currentPlayingIndex) {
+          videoRefs.current.forEach((v, i) => {
+            if (v && i !== targetIndex && !v.paused) v.pause();
+          });
+
+          const v = videoRefs.current[targetIndex];
+          if (v) {
+            setupVideo(v);
+            v.muted = muted[targetIndex] ?? true;
+
+            if (v.readyState < 2) {
+              v.load();
+              await new Promise((r) => setTimeout(r, 80));
+            }
+            if (v.currentTime === 0 && (v.duration || 0) > 0) v.currentTime = 0.1;
+
+            const startAt = Number(spliks[targetIndex]?.trim_start ?? 0);
+            const onTimeUpdate = () => {
+              if (v.currentTime - startAt >= 3) v.currentTime = startAt;
+            };
+            v.removeEventListener("timeupdate", onTimeUpdate);
+            v.addEventListener("timeupdate", onTimeUpdate);
+
+            if (startAt > 0) {
+              try {
+                v.currentTime = startAt;
+              } catch {}
+            }
+
+            try {
+              await v.play();
+              currentPlayingIndex = targetIndex;
+              setActiveIndex(targetIndex);
+            } catch {
+              if (!v.muted) {
+                v.muted = true;
+                setMuted((m) => ({ ...m, [targetIndex]: true }));
+                try {
+                  await v.play();
+                  currentPlayingIndex = targetIndex;
+                  setActiveIndex(targetIndex);
+                } catch {
+                  if (v.currentTime === 0) v.currentTime = 0.1;
+                }
+              } else {
+                if (v.currentTime === 0) v.currentTime = 0.1;
+              }
+            }
+          }
+        } else if (targetIndex === null && currentPlayingIndex !== null) {
+          const cv = videoRefs.current[currentPlayingIndex];
+          if (cv && !cv.paused) cv.pause();
+          currentPlayingIndex = null;
+        }
+      } finally {
+        isProcessing = false;
+      }
     };
 
-    const io = new IntersectionObserver(
+    const intersectionObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          const i = Number((entry.target as HTMLElement).dataset.index);
-          sectionVisibility[i] = entry.intersectionRatio;
+          const index = Number((entry.target as HTMLElement).dataset.index);
+          sectionVisibility[index] = entry.intersectionRatio;
         });
-        void handlePlayback();
+        handleVideoPlayback();
       },
       { root, threshold: thresholds, rootMargin: "10px" }
     );
 
-    const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
-    sections.forEach((s) => io.observe(s));
-
-    // pause on tab hidden; resume when visible if still the active one
-    const onVis = () => {
-      if (document.hidden && currentPlayingIndex !== null) {
-        pauseVideo(currentPlayingIndex);
-      } else {
-        void handlePlayback();
-      }
+    const initializeVideos = () => {
+      videoRefs.current.forEach((v) => {
+        if (v && !v.hasAttribute("data-mobile-initialized")) {
+          setupVideo(v);
+          v.setAttribute("data-mobile-initialized", "true");
+        }
+      });
     };
-    document.addEventListener("visibilitychange", onVis);
+
+    const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
+    sections.forEach((s) => intersectionObserver.observe(s));
+
+    // kick off immediately (some mobile browsers delay IO callbacks until first scroll)
+    initializeVideos();
+    handleVideoPlayback();
+    requestAnimationFrame(handleVideoPlayback);
+
+    const mutationObserver = new MutationObserver(() => setTimeout(initializeVideos, 60));
+    mutationObserver.observe(root, { childList: true, subtree: true });
 
     return () => {
-      io.disconnect();
-      document.removeEventListener("visibilitychange", onVis);
-      // clean up listeners and pause everything
-      videoRefs.current.forEach((v, i) => {
-        if (!v) return;
-        const h = timeupdateHandlers.current[i];
-        if (h) v.removeEventListener("timeupdate", h);
-        try {
-          v.pause();
-        } catch {}
-      });
-      timeupdateHandlers.current = {};
+      intersectionObserver.disconnect();
+      mutationObserver.disconnect();
+      videoRefs.current.forEach((v) => v && !v.paused && v.pause());
     };
-  }, [spliks, thresholds, muted]);
+  }, [spliks.length, thresholds, muted, spliks]);
+
+  /* Try to start the very first video as soon as data + DOM are ready */
+  useEffect(() => {
+    if (loading || !spliks.length) return;
+    const v = videoRefs.current[0];
+    if (!v) return;
+    // prepare + start
+    v.playsInline = true;
+    v.muted = true;
+    v.setAttribute("muted", "true");
+    v.setAttribute("webkit-playsinline", "true");
+    const startAt = Number(spliks[0]?.trim_start ?? 0);
+    if (startAt > 0) {
+      try {
+        v.currentTime = startAt;
+      } catch {}
+    }
+    // small rAF ensures layout settled
+    requestAnimationFrame(() => {
+      v.play().catch(() => {
+        // will be started by observer fallback if this fails
+      });
+    });
+  }, [loading, spliks]);
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
@@ -349,27 +293,25 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (!v) return;
     const next = !(muted[i] ?? true);
     v.muted = next;
+    if (next) v.setAttribute("muted", "true");
+    else v.removeAttribute("muted");
     setMuted((m) => ({ ...m, [i]: next }));
   };
 
-  /* -------------------------- social actions -------------------------- */
+  /* ---------------- social actions ---------------- */
   const handleLike = async (splikId: string) => {
     if (!user?.id) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like videos",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
       return;
     }
-    const isLiked = likedIds.has(splikId);
+    const liked = likedIds.has(splikId);
     setLikedIds((prev) => {
       const ns = new Set(prev);
-      isLiked ? ns.delete(splikId) : ns.add(splikId);
+      liked ? ns.delete(splikId) : ns.add(splikId);
       return ns;
     });
     try {
-      if (isLiked) {
+      if (liked) {
         await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
       } else {
         await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
@@ -377,7 +319,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     } catch {
       setLikedIds((prev) => {
         const ns = new Set(prev);
-        isLiked ? ns.add(splikId) : ns.delete(splikId);
+        liked ? ns.add(splikId) : ns.delete(splikId);
         return ns;
       });
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
@@ -412,8 +354,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       if (error) throw error;
       setNewComment("");
-      const splik = spliks.find((s) => s.id === showCommentsFor);
-      if (splik) openComments(splik);
+      const s = spliks.find((x) => x.id === showCommentsFor);
+      if (s) openComments(s);
     } catch {
       toast({ title: "Error", description: "Failed to post comment", variant: "destructive" });
     }
@@ -430,13 +372,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   return (
     <div
-      key={pathname} // remount on route, guarantees fresh scroll state
+      key={pathname}
       ref={containerRef}
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
       {spliks.map((s, i) => {
-        const isMuted = muted[i] ?? true;
-
         return (
           <section
             key={s.id}
@@ -467,7 +407,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
               {/* video */}
               <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-                {/* top mask */}
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
                 <video
@@ -475,24 +414,22 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   src={s.video_url}
                   poster={s.thumbnail_url ?? undefined}
                   className="w-full h-full object-cover"
+                  // autoplay on the first item to guarantee instant start on load
+                  autoPlay={i === 0}
                   playsInline
-                  muted={isMuted}
-                  // @ts-expect-error vendor attribute
-                  webkit-playsinline="true"
-                  preload="metadata"
+                  muted={muted[i] ?? true}
+                  preload={i === 0 ? "auto" : "metadata"}
+                  disablePictureInPicture
+                  controls={false}
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
                   onLoadedData={() => {
                     const v = videoRefs.current[i];
-                    if (v && v.currentTime === 0) {
-                      try {
-                        v.currentTime = Math.max(0.1, Number(s.trim_start ?? 0));
-                      } catch {}
-                    }
+                    if (v && v.currentTime === 0) v.currentTime = 0.1;
                   }}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 />
 
-                {/* invisible tap layer (only assists snapping/centering) */}
+                {/* invisible tap layer (kept for snap assist) */}
                 <div className="absolute inset-0" onClick={() => scrollTo(i)} />
 
                 {/* mute toggle */}
@@ -503,7 +440,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   }}
                   className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
                 >
-                  {isMuted ? (
+                  {muted[i] ? (
                     <VolumeX className="h-4 w-4 text-white" />
                   ) : (
                     <Volume2 className="h-4 w-4 text-white" />
@@ -521,9 +458,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       onClick={() => handleLike(s.id)}
                       className={likedIds.has(s.id) ? "text-red-500" : ""}
                     >
-                      <Heart
-                        className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`}
-                      />
+                      <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
                     </Button>
 
                     <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
@@ -548,7 +483,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </Button>
                 </div>
 
-                {/* caption */}
                 {s.description && (
                   <p className="text-sm">
                     <span className="font-semibold mr-2">{nameFor(s)}</span>
