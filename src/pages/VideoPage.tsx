@@ -1,3 +1,4 @@
+// src/pages/VideoPage.tsx
 import * as React from "react";
 import { useParams, Link } from "react-router-dom";
 import Header from "@/components/layout/Header";
@@ -14,7 +15,7 @@ export default function VideoPage() {
     if (!id) return;
 
     (async () => {
-      // 1) fetch the video
+      // 1) Fetch the video itself (only public/active)
       const { data: v, error: vErr } = await supabase
         .from("spliks")
         .select("*")
@@ -28,7 +29,7 @@ export default function VideoPage() {
         return;
       }
 
-      // 2) fetch the profile separately (no FK/relationship required)
+      // 2) Fetch the profile separately to avoid FK/relationship requirements
       const { data: p } = await supabase
         .from("profiles")
         .select("*")
