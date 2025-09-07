@@ -4,6 +4,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { getViewSessionId } from "@/lib/session";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Heart,
@@ -140,6 +141,20 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   useEffect(() => {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
+
+  // --- record a (session-unique) view when the focused card changes
+  useEffect(() => {
+    if (activeIndex < 0 || !spliks[activeIndex]) return;
+    const s = spliks[activeIndex];
+    const sessionId = getViewSessionId(); // helper below
+    // best-effort: don't block UI, ignore errors
+    supabase.rpc("increment_view_with_session", {
+      p_session_id: sessionId,
+      p_splik_id: s.id,
+      p_viewer_id: user?.id ?? null,
+      p_ip_address: null, // optional: let server fill/ignore
+    }).catch(() => {});
+  }, [activeIndex, spliks, user?.id]);
 
   /* -------- Realtime: likes/comments/counter updates -------- */
   useEffect(() => {
@@ -616,7 +631,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     } else {
                       toast({
                         title: "Playback error",
-                        description: "This video format isn’t supported on your device.",
+                        description: "This video format isn't supported on your device.",
                         variant: "destructive",
                       });
                     }
