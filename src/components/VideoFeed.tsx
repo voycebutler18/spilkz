@@ -53,6 +53,12 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
+// Detect if device is mobile
+const isMobile = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+         (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+};
+
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
@@ -61,6 +67,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isMobileDevice] = useState(isMobile());
 
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
@@ -69,11 +76,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
 
-  // autoplay state
+  // autoplay state - mobile defaults to unmuted, desktop to muted
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
 
   /* --------- ALWAYS start at top on route change + on load --------- */
   useLayoutEffect(() => {
@@ -84,6 +92,32 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       containerRef.current.scrollTo({ top: 0, left: 0, behavior: "auto" });
     }
   }, [pathname]);
+
+  // Add user interaction detection
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      setHasUserInteracted(true);
+      // Try to unmute current video if on mobile
+      if (isMobileDevice) {
+        const currentVideo = videoRefs.current[activeIndex];
+        if (currentVideo) {
+          currentVideo.muted = false;
+          setMuted(prev => ({ ...prev, [activeIndex]: false }));
+        }
+      }
+    };
+
+    const events = ['touchstart', 'click', 'scroll', 'keydown'];
+    events.forEach(event => {
+      document.addEventListener(event, handleFirstInteraction, { once: true });
+    });
+
+    return () => {
+      events.forEach(event => {
+        document.removeEventListener(event, handleFirstInteraction);
+      });
+    };
+  }, [activeIndex, isMobileDevice]);
 
   useEffect(() => {
     const load = async () => {
@@ -117,7 +151,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
 
-  /* ========== ENHANCED AUTOPLAY MANAGER WITH MOBILE FIXES ========== */
+  /* ========== ENHANCED AUTOPLAY MANAGER WITH MOBILE SOUND ========== */
   const thresholds = useMemo(() => Array.from({ length: 21 }, (_, i) => i / 20), []);
 
   useEffect(() => {
@@ -128,13 +162,20 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     let currentPlayingIndex: number | null = null;
     let isProcessing = false;
 
-    const setupVideo = (video: HTMLVideoElement) => {
-      // inline + muted at creation time improves mobile autoplay
+    const setupVideo = (video: HTMLVideoElement, index: number) => {
       video.playsInline = true;
-      video.muted = true;
+      // For mobile: start unmuted after user interaction, for desktop: start muted
+      const shouldBeMuted = isMobileDevice ? !hasUserInteracted : (muted[index] ?? true);
+      video.muted = shouldBeMuted;
       video.preload = "metadata";
       video.setAttribute("webkit-playsinline", "true");
-      video.setAttribute("muted", "true"); // keep muted attr on the node
+      
+      if (shouldBeMuted) {
+        video.setAttribute("muted", "true");
+      } else {
+        video.removeAttribute("muted");
+      }
+      
       video.load();
     };
 
@@ -167,8 +208,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
           const v = videoRefs.current[targetIndex];
           if (v) {
-            setupVideo(v);
-            v.muted = muted[targetIndex] ?? true;
+            setupVideo(v, targetIndex);
+            
+            // Set mute state based on device and user preference
+            if (muted.hasOwnProperty(targetIndex)) {
+              v.muted = muted[targetIndex];
+            } else {
+              // Default: mobile unmuted (after interaction), desktop muted
+              const shouldBeMuted = isMobileDevice ? !hasUserInteracted : true;
+              v.muted = shouldBeMuted;
+              setMuted(prev => ({ ...prev, [targetIndex]: shouldBeMuted }));
+            }
 
             if (v.readyState < 2) {
               v.load();
@@ -193,7 +243,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               await v.play();
               currentPlayingIndex = targetIndex;
               setActiveIndex(targetIndex);
-            } catch {
+            } catch (error) {
+              console.log('Autoplay failed, trying with muted:', error);
               if (!v.muted) {
                 v.muted = true;
                 setMuted((m) => ({ ...m, [targetIndex]: true }));
@@ -231,9 +282,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     );
 
     const initializeVideos = () => {
-      videoRefs.current.forEach((v) => {
+      videoRefs.current.forEach((v, index) => {
         if (v && !v.hasAttribute("data-mobile-initialized")) {
-          setupVideo(v);
+          setupVideo(v, index);
           v.setAttribute("data-mobile-initialized", "true");
         }
       });
@@ -242,7 +293,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
     sections.forEach((s) => intersectionObserver.observe(s));
 
-    // kick off immediately (some mobile browsers delay IO callbacks until first scroll)
+    // kick off immediately
     initializeVideos();
     handleVideoPlayback();
     requestAnimationFrame(handleVideoPlayback);
@@ -255,31 +306,44 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       mutationObserver.disconnect();
       videoRefs.current.forEach((v) => v && !v.paused && v.pause());
     };
-  }, [spliks.length, thresholds, muted, spliks]);
+  }, [spliks.length, thresholds, muted, spliks, hasUserInteracted, isMobileDevice]);
 
   /* Try to start the very first video as soon as data + DOM are ready */
   useEffect(() => {
     if (loading || !spliks.length) return;
     const v = videoRefs.current[0];
     if (!v) return;
+    
     // prepare + start
     v.playsInline = true;
-    v.muted = true;
-    v.setAttribute("muted", "true");
+    const shouldBeMuted = isMobileDevice ? !hasUserInteracted : true;
+    v.muted = shouldBeMuted;
+    
+    if (shouldBeMuted) {
+      v.setAttribute("muted", "true");
+    } else {
+      v.removeAttribute("muted");
+    }
+    
     v.setAttribute("webkit-playsinline", "true");
+    
     const startAt = Number(spliks[0]?.trim_start ?? 0);
     if (startAt > 0) {
       try {
         v.currentTime = startAt;
       } catch {}
     }
+    
+    // Set initial mute state
+    setMuted(prev => ({ ...prev, 0: shouldBeMuted }));
+    
     // small rAF ensures layout settled
     requestAnimationFrame(() => {
       v.play().catch(() => {
         // will be started by observer fallback if this fails
       });
     });
-  }, [loading, spliks]);
+  }, [loading, spliks, hasUserInteracted, isMobileDevice]);
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
@@ -293,8 +357,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (!v) return;
     const next = !(muted[i] ?? true);
     v.muted = next;
-    if (next) v.setAttribute("muted", "true");
-    else v.removeAttribute("muted");
+    if (next) {
+      v.setAttribute("muted", "true");
+    } else {
+      v.removeAttribute("muted");
+    }
     setMuted((m) => ({ ...m, [i]: next }));
   };
 
@@ -377,6 +444,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
       {spliks.map((s, i) => {
+        const isVideoMuted = muted[i] ?? (isMobileDevice ? !hasUserInteracted : true);
+        
         return (
           <section
             key={s.id}
@@ -417,7 +486,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   // autoplay on the first item to guarantee instant start on load
                   autoPlay={i === 0}
                   playsInline
-                  muted={muted[i] ?? true}
+                  muted={isVideoMuted}
                   preload={i === 0 ? "auto" : "metadata"}
                   disablePictureInPicture
                   controls={false}
@@ -432,20 +501,31 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 {/* invisible tap layer (kept for snap assist) */}
                 <div className="absolute inset-0" onClick={() => scrollTo(i)} />
 
-                {/* mute toggle */}
+                {/* Enhanced mute toggle - more prominent on mobile */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleMute(i);
                   }}
-                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
+                  className={`absolute bottom-3 right-3 rounded-full p-3 z-20 transition-all duration-200 ${
+                    isMobileDevice 
+                      ? 'bg-black/70 border-2 border-white/30' 
+                      : 'bg-black/50'
+                  }`}
                 >
-                  {muted[i] ? (
-                    <VolumeX className="h-4 w-4 text-white" />
+                  {isVideoMuted ? (
+                    <VolumeX className={`text-white ${isMobileDevice ? 'h-5 w-5' : 'h-4 w-4'}`} />
                   ) : (
-                    <Volume2 className="h-4 w-4 text-white" />
+                    <Volume2 className={`text-white ${isMobileDevice ? 'h-5 w-5' : 'h-4 w-4'}`} />
                   )}
                 </button>
+
+                {/* Mobile-specific sound indicator */}
+                {isMobileDevice && !hasUserInteracted && (
+                  <div className="absolute top-3 left-3 bg-black/70 px-3 py-1 rounded-full z-20">
+                    <p className="text-white text-xs">Tap anywhere to enable sound</p>
+                  </div>
+                )}
               </div>
 
               {/* actions */}
