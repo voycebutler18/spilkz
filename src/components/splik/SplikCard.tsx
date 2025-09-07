@@ -78,7 +78,7 @@ const toTitle = (s: string) =>
 
 const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true); // start muted for autoplay
+  const [isMuted, setIsMuted] = useState(true); // start muted so autoplay works everywhere
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
@@ -104,6 +104,14 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     const el = cardRef.current;
     if (!video || !el) return;
 
+    // Ensure best chance for mobile inline autoplay
+    video.playsInline = true;
+    video.setAttribute("playsinline", "true");
+    // @ts-expect-error vendor attr
+    video.setAttribute("webkit-playsinline", "true");
+    video.setAttribute("muted", "true"); // keep muted attr synced with state
+    video.controls = false;
+
     const onVisibilityChange = () => {
       if (document.hidden) {
         pauseIfCurrent(video);
@@ -118,9 +126,12 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           setIsInView(visible);
 
           if (visible) {
-            // start each view from 0s and loop the first 3s
-            video.currentTime = 0;
+            // reset to start and try to play (muted on entry)
+            try { video.currentTime = 0; } catch {}
             video.muted = isMuted;
+            if (isMuted) video.setAttribute("muted", "true");
+            else video.removeAttribute("muted");
+
             try {
               await playExclusive(video);
               setIsPlaying(true);
@@ -131,6 +142,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
           } else {
             pauseIfCurrent(video);
             video.muted = true;
+            video.setAttribute("muted", "true");
             setIsPlaying(false);
           }
         });
@@ -156,9 +168,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     if (!v) return;
 
     const onTimeUpdate = () => {
-      // hard cap at 3.00s; loop back without changing play state
       if (v.currentTime >= 3) {
-        // keep it smooth: jump and continue
         try { v.currentTime = 0; } catch {}
       }
     };
@@ -361,12 +371,23 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
     const video = videoRef.current;
     if (!video) return;
 
+    // First tap should enable sound if currently muted (browser allows sound after a user gesture)
     if (isPlaying) {
+      if (isMuted) {
+        video.muted = false;
+        video.removeAttribute("muted");
+        setIsMuted(false);
+        return; // keep playing, just unmuted
+      }
       pauseIfCurrent(video);
       setIsPlaying(false);
     } else {
-      // resume from current position; timeupdate will loop at 3s
-      video.muted = isMuted;
+      // about to play (user gesture) — if you want sound, unmute now
+      if (isMuted) {
+        video.muted = false;
+        video.removeAttribute("muted");
+        setIsMuted(false);
+      }
       await playExclusive(video);
       setIsPlaying(true);
       if (!viewedRef.current) viewedRef.current = true;
@@ -376,8 +397,11 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
   const toggleMute = () => {
     const video = videoRef.current;
     if (!video) return;
-    video.muted = !isMuted;
-    setIsMuted(!isMuted);
+    const next = !isMuted;
+    video.muted = next;
+    if (next) video.setAttribute("muted", "true");
+    else video.removeAttribute("muted");
+    setIsMuted(next);
   };
 
   /* ----------------------------- Derived values ---------------------------- */
@@ -414,7 +438,7 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
       >
         <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
 
-        {/* small chip (generic) */}
+        {/* tiny chip */}
         <div className="absolute top-2 left-3 z-30 pointer-events-none">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
             <Sparkles className="h-4 w-4 text-white/80" />
@@ -454,20 +478,32 @@ const SplikCard = ({ splik, onSplik, onReact, onShare }: SplikCardProps) => {
         <video
           ref={videoRef}
           src={splik.video_url}
-          poster={splik.thumbnail_url}
+          poster={splik.thumbnail_url || undefined}
           className="block w-full h-full object-cover"
           autoPlay={false}           // controlled by observer/clicks
-          loop={false}                // we loop manually for 0-3s
+          loop={false}                // we loop 0–3s manually
           muted={isMuted}
           playsInline
-          controls={false}            // hide native UI
+          controls={false}
+          // @ts-expect-error vendor attrs (harmless)
+          webkit-playsinline="true"
           disablePictureInPicture
           disableRemotePlayback
           controlsList="nodownload noplaybackrate noremoteplayback"
           preload="metadata"
         />
 
-        {/* No center play button at all (invisible) */}
+        {/* Mute/Unmute button — always visible, high z-index */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleMute();
+          }}
+          className="absolute bottom-3 right-3 z-50 pointer-events-auto bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
+          aria-label={isMuted ? "Unmute" : "Mute"}
+        >
+          {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+        </button>
       </div>
 
       {/* CREATOR + MENU */}
