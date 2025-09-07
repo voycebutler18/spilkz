@@ -3,30 +3,52 @@ import { useParams, Link } from "react-router-dom";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import { supabase } from "@/integrations/supabase/client";
-import SplikCard from "@/components/SplikCard";
+import SplikCard from "@/components/splik/SplikCard"; // ← make sure this path matches your file
 
 export default function VideoPage() {
   const { id } = useParams<{ id: string }>();
   const [splik, setSplik] = React.useState<any>(null);
+  const [reason, setReason] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!id) return;
+
     (async () => {
       setLoading(true);
-      setError(null);
-      const { data, error } = await supabase
+      setReason(null);
+
+      // 1) get the video itself
+      const { data: video, error: vErr } = await supabase
         .from("spliks")
-        .select("*, profile:profiles(*)")
+        .select("*")
         .eq("id", id)
         .maybeSingle();
 
-      if (error) {
-        console.error("VideoPage select error:", error);
-        setError(error.message);
+      if (vErr) {
+        setReason(vErr.message);
+        setSplik(null);
+        setLoading(false);
+        return;
       }
-      setSplik(data ?? null);
+      if (!video) {
+        setReason("Not found or not public");
+        setSplik(null);
+        setLoading(false);
+        return;
+      }
+
+      // 2) (best-effort) get the creator profile; page still renders if this fails
+      let profile: any = null;
+      const { data: prof, error: pErr } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", video.user_id)
+        .maybeSingle();
+
+      if (!pErr) profile = prof ?? null;
+
+      setSplik({ ...video, profile });
       setLoading(false);
     })();
   }, [id]);
@@ -40,8 +62,12 @@ export default function VideoPage() {
       <div className="min-h-screen grid place-items-center text-center p-6">
         <div>
           <h1 className="text-5xl font-bold mb-2">404</h1>
-          <p className="mb-2">Oops! This splik doesn’t exist or isn’t public.</p>
-          {error && <p className="text-xs text-muted-foreground">Reason: {error}</p>}
+          <p className="mb-1">Oops! This splik doesn’t exist or isn’t public.</p>
+          {reason && (
+            <p className="mb-4 text-xs text-muted-foreground">
+              Reason: {reason}
+            </p>
+          )}
           <Link to="/" className="underline">Back to Home</Link>
         </div>
       </div>
