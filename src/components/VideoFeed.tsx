@@ -56,7 +56,6 @@ const displayName = (s: Splik) => (s.username ? `@${s.username}` : "Anonymous");
 const initialsFor = (s: Splik) =>
   (s.username || "A").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 2) || "A";
 
-/** Robust MIME inference so <source type="..."> matches all formats */
 const mimeFromUrl = (url: string): string => {
   const clean = url.split("?")[0].split("#")[0];
   const ext = clean.split(".").pop()?.toLowerCase();
@@ -115,7 +114,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   useEffect(() => {
     const load = async () => {
       try {
-        // Read from view; URL + username + thumb already resolved
         const { data, error } = await supabase
           .from("spliks_feed")
           .select("*")
@@ -126,15 +124,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const rows = (data as Splik[]) || [];
         setSpliks(rows);
 
-        // Initialize liked ids from view's liked_by_me
+        // seed liked set from view
         setLikedIds(new Set(rows.filter((r) => r.liked_by_me).map((r) => r.id)));
       } catch (e) {
         console.error(e);
       } finally {
         setLoading(false);
-        if (containerRef.current) {
-          containerRef.current.scrollTop = 0;
-        }
+        containerRef.current && (containerRef.current.scrollTop = 0);
       }
     };
     load();
@@ -145,20 +141,125 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
 
+  /* -------- Realtime: likes/comments/counter updates -------- */
+  useEffect(() => {
+    const channel = supabase.channel("feed-realtime", {
+      config: { broadcast: { ack: true }, presence: { key: user?.id || "anon" } },
+    });
+
+    // Likes
+    channel.on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "likes" },
+      (payload: any) => {
+        const { splik_id, user_id } = payload.new || {};
+        if (user?.id && user_id === user.id) {
+          setLikedIds((prev) => new Set(prev).add(splik_id));
+        }
+        setSpliks((prev) =>
+          prev.map((s) =>
+            s.id === splik_id ? { ...s, likes_count: (Number(s.likes_count) || 0) + 1 } : s
+          )
+        );
+      }
+    );
+
+    channel.on(
+      "postgres_changes",
+      { event: "DELETE", schema: "public", table: "likes" },
+      (payload: any) => {
+        const { splik_id, user_id } = payload.old || {};
+        if (user?.id && user_id === user.id) {
+          setLikedIds((prev) => {
+            const ns = new Set(prev);
+            ns.delete(splik_id);
+            return ns;
+          });
+        }
+        setSpliks((prev) =>
+          prev.map((s) =>
+            s.id === splik_id
+              ? { ...s, likes_count: Math.max(0, (Number(s.likes_count) || 0) - 1) }
+              : s
+          )
+        );
+      }
+    );
+
+    // Comments
+    channel.on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "comments" },
+      (payload: any) => {
+        const { splik_id } = payload.new || {};
+        setSpliks((prev) =>
+          prev.map((s) =>
+            s.id === splik_id ? { ...s, comments_count: (Number(s.comments_count) || 0) + 1 } : s
+          )
+        );
+        if (showCommentsFor === splik_id) {
+          setComments((prev) => [payload.new, ...prev]);
+        }
+      }
+    );
+
+    channel.on(
+      "postgres_changes",
+      { event: "DELETE", schema: "public", table: "comments" },
+      (payload: any) => {
+        const { splik_id, id } = payload.old || {};
+        setSpliks((prev) =>
+          prev.map((s) =>
+            s.id === splik_id
+              ? { ...s, comments_count: Math.max(0, (Number(s.comments_count) || 0) - 1) }
+              : s
+          )
+        );
+        if (showCommentsFor === splik_id) {
+          setComments((prev) => prev.filter((c) => c.id !== id));
+        }
+      }
+    );
+
+    // If your backend updates counter columns directly on spliks, reflect them
+    channel.on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "spliks" },
+      (payload: any) => {
+        const row = payload.new;
+        setSpliks((prev) =>
+          prev.map((s) =>
+            s.id === row.id
+              ? {
+                  ...s,
+                  likes_count: row.likes_count ?? s.likes_count,
+                  comments_count: row.comments_count ?? s.comments_count,
+                }
+              : s
+          )
+        );
+      }
+    );
+
+    channel.subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, showCommentsFor]);
+
   /* ========== AUTOPLAY MANAGER (mobile-safe) ========== */
   const thresholds = useMemo(
     () => Array.from({ length: 21 }, (_, i) => i / 20), // 0, .05, .10 ... 1
     []
   );
 
-  // configure inline/mobile behavior
   const setupVideoForMobile = (v: HTMLVideoElement, poster?: string | null) => {
     v.muted = true;
     v.playsInline = true;
     v.setAttribute("playsinline", "true");
     // @ts-expect-error vendor attr
     v.setAttribute("webkit-playsinline", "true");
-    v.setAttribute("x5-playsinline", "true"); // some Android browsers
+    v.setAttribute("x5-playsinline", "true");
     v.setAttribute("x5-video-player-type", "h5");
     v.controls = false;
     v.disablePictureInPicture = true;
@@ -168,20 +269,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (poster) v.poster = poster || "";
   };
 
-  // enforce 3s loop from trim_start
   const applyThreeSecondLoop = (index: number, startAt: number) => {
     const v = videoRefs.current[index];
     if (!v) return;
-
     const loopEnd = startAt + 3;
-
-    // remove previous handler if any
     const prev = timeupdateHandlers.current[index];
     if (prev) {
       v.removeEventListener("timeupdate", prev);
       delete timeupdateHandlers.current[index];
     }
-
     const handler = () => {
       if (v.currentTime >= loopEnd) {
         try {
@@ -189,12 +285,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         } catch {}
       }
     };
-
     v.addEventListener("timeupdate", handler);
     timeupdateHandlers.current[index] = handler;
   };
 
-  // observe sections to pick the most-visible one
   useEffect(() => {
     const root = containerRef.current;
     if (!root) return;
@@ -210,7 +304,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }));
       if (!pairs.length) return -1;
       pairs.sort((a, b) => b.r - a.r);
-      return pairs[0].r >= 0.6 ? pairs[0].i : -1; // need ≥60% to take control
+      return pairs[0].r >= 0.6 ? pairs[0].i : -1;
     };
 
     const pauseVideo = (i: number) => {
@@ -225,11 +319,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       const v = videoRefs.current[i];
       if (!v) return false;
 
-      // configure inline/mobile behavior
       setupVideoForMobile(v, spliks[i]?.thumb_url ?? undefined);
       v.muted = muted[i] ?? true;
 
-      // enforce 3s loop from trim_start
       const startAt = Number(spliks[i]?.trim_start ?? 0);
       if (v.currentTime < startAt || v.currentTime > startAt + 3) {
         try {
@@ -238,7 +330,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }
       applyThreeSecondLoop(i, startAt);
 
-      // make sure we have some data so first frame shows
       if (v.readyState < 2) {
         v.load();
         await new Promise((r) => setTimeout(r, 80));
@@ -249,7 +340,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         } catch {}
       }
 
-      // attempt autoplay; if blocked, force muted and retry
       try {
         await v.play();
         return true;
@@ -270,7 +360,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
       const target = findMostVisible();
 
-      // current fell out of view? pause it
       if (
         currentPlayingIndex !== null &&
         (sectionVisibility[currentPlayingIndex] || 0) < 0.45
@@ -280,14 +369,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }
 
       if (target !== -1 && target !== currentPlayingIndex) {
-        // pause all others
         videoRefs.current.forEach((v, idx) => {
           if (v && idx !== target && !v.paused) pauseVideo(idx);
         });
 
         const ok = await playVideo(target);
-
-        // if autoplay still blocked, show first frame but don't steal focus
         if (ok) {
           currentPlayingIndex = target;
           setActiveIndex(target);
@@ -295,7 +381,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const v = videoRefs.current[target];
           if (v && v.currentTime === 0) {
             try {
-              v.currentTime = Math.max(0.1, Number(spliks[target]?.trim_start ?? 0));
+              v.currentTime = Math.max(
+                0.1,
+                Number(spliks[target]?.trim_start ?? 0)
+              );
             } catch {}
           }
         }
@@ -318,10 +407,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       { root, threshold: thresholds, rootMargin: "10px" }
     );
 
-    const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
+    const sections = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-index]")
+    );
     sections.forEach((s) => io.observe(s));
 
-    // pause on tab hidden; resume when visible if still the active one
     const onVis = () => {
       if (document.hidden && currentPlayingIndex !== null) {
         pauseVideo(currentPlayingIndex);
@@ -334,7 +424,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     return () => {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVis);
-      // clean up listeners and pause everything
       videoRefs.current.forEach((v, i) => {
         if (!v) return;
         const h = timeupdateHandlers.current[i];
@@ -440,13 +529,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   return (
     <div
-      key={pathname} // remount on route, guarantees fresh scroll state
+      key={pathname}
       ref={containerRef}
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
       {spliks.map((s, i) => {
         const isMuted = muted[i] ?? true;
-        const shouldPreload = Math.abs(i - activeIndex) <= 1; // active, prev, next only
+        const shouldPreload = Math.abs(i - activeIndex) <= 1;
 
         return (
           <section
@@ -478,7 +567,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
               {/* video */}
               <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-                {/* top mask */}
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
                 <video
@@ -507,7 +595,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     }
                   }}
                   onError={() => {
-                    // one-shot retry with tiny time fragment to help Safari
                     const v = videoRefs.current[i];
                     if (!v) return;
                     if (!errorRetried.current[i]) {
@@ -536,14 +623,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   }}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 >
-                  {/* typed source so browsers pick the right decoder quickly */}
                   <source src={s.video_url} type={s.mime_type || mimeFromUrl(s.video_url)} />
                 </video>
 
-                {/* invisible tap layer (assists snapping/centering only) */}
                 <div className="absolute inset-0" onClick={() => scrollTo(i)} />
 
-                {/* mute toggle */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -594,7 +678,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </Button>
                 </div>
 
-                {/* caption */}
                 {s.description && (
                   <p className="text-sm">
                     <span className="font-semibold mr-2">{displayName(s)}</span>
