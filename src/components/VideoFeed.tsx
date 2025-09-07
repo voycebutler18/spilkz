@@ -53,12 +53,6 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
-// Detect if device is mobile
-const isMobile = () => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-         (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
-};
-
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
@@ -67,7 +61,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isMobileDevice] = useState(isMobile());
 
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
@@ -76,48 +69,30 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
 
-  // autoplay state - mobile defaults to unmuted, desktop to muted
+  // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+
+  // GLOBAL sound preference: default ON (persist)
+  const [soundOn, setSoundOn] = useState<boolean>(() => {
+    const saved = localStorage.getItem("feedSoundOn");
+    return saved ? saved === "true" : true;
+  });
+
+  // per-video mute state (we still keep this in case autoplay with sound is blocked on a specific video)
   const [muted, setMuted] = useState<Record<number, boolean>>({});
-  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+
+  // mark once the user has interacted (unlocks sound on iOS/Android if needed)
+  const userInteractedRef = useRef(false);
 
   /* --------- ALWAYS start at top on route change + on load --------- */
   useLayoutEffect(() => {
-    try {
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    } catch {}
+    try { window.scrollTo({ top: 0, left: 0, behavior: "auto" }); } catch {}
     if (containerRef.current) {
       containerRef.current.scrollTo({ top: 0, left: 0, behavior: "auto" });
     }
   }, [pathname]);
-
-  // Add user interaction detection
-  useEffect(() => {
-    const handleFirstInteraction = () => {
-      setHasUserInteracted(true);
-      // Try to unmute current video if on mobile
-      if (isMobileDevice) {
-        const currentVideo = videoRefs.current[activeIndex];
-        if (currentVideo) {
-          currentVideo.muted = false;
-          setMuted(prev => ({ ...prev, [activeIndex]: false }));
-        }
-      }
-    };
-
-    const events = ['touchstart', 'click', 'scroll', 'keydown'];
-    events.forEach(event => {
-      document.addEventListener(event, handleFirstInteraction, { once: true });
-    });
-
-    return () => {
-      events.forEach(event => {
-        document.removeEventListener(event, handleFirstInteraction);
-      });
-    };
-  }, [activeIndex, isMobileDevice]);
 
   useEffect(() => {
     const load = async () => {
@@ -151,7 +126,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (containerRef.current) containerRef.current.scrollTop = 0;
   }, [spliks.length]);
 
-  /* ========== ENHANCED AUTOPLAY MANAGER WITH MOBILE SOUND ========== */
+  /* ========== AUTOPLAY MANAGER (tries with sound, falls back to muted) ========== */
   const thresholds = useMemo(() => Array.from({ length: 21 }, (_, i) => i / 20), []);
 
   useEffect(() => {
@@ -162,21 +137,36 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     let currentPlayingIndex: number | null = null;
     let isProcessing = false;
 
-    const setupVideo = (video: HTMLVideoElement, index: number) => {
+    const setupVideoBase = (video: HTMLVideoElement) => {
+      // Prepare for mobile inline playback
       video.playsInline = true;
-      // For mobile: start unmuted after user interaction, for desktop: start muted
-      const shouldBeMuted = isMobileDevice ? !hasUserInteracted : (muted[index] ?? true);
-      video.muted = shouldBeMuted;
       video.preload = "metadata";
       video.setAttribute("webkit-playsinline", "true");
-      
-      if (shouldBeMuted) {
-        video.setAttribute("muted", "true");
-      } else {
-        video.removeAttribute("muted");
-      }
-      
-      video.load();
+      video.disablePictureInPicture = true as any;
+      video.controls = false;
+    };
+
+    const wantSound = () => soundOn && userInteractedRef.current;
+
+    const applyMuteState = (video: HTMLVideoElement, index: number) => {
+      const shouldPlayWithSound = wantSound();
+      const shouldBeMuted = muted[index] ?? !shouldPlayWithSound;
+      video.muted = shouldBeMuted;
+      if (shouldBeMuted) video.setAttribute("muted", "true");
+      else video.removeAttribute("muted");
+      return shouldBeMuted;
+    };
+
+    const ensure3sLoop = (video: HTMLVideoElement, startAt: number) => {
+      const onTimeUpdate = () => {
+        if (video.currentTime - startAt >= 3) {
+          video.currentTime = startAt;
+        }
+      };
+      // replace any previous handler
+      video.onended = null;
+      video.removeEventListener("timeupdate", onTimeUpdate);
+      video.addEventListener("timeupdate", onTimeUpdate);
     };
 
     const findMostVisibleSection = (): number | null => {
@@ -188,6 +178,40 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return most && most.r >= 0.6 ? most.i : null;
     };
 
+    const tryPlay = async (video: HTMLVideoElement, index: number) => {
+      // choose mute based on global pref + interaction
+      const wasMuted = applyMuteState(video, index);
+
+      // ensure some data available
+      if (video.readyState < 2) {
+        video.load();
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      if (video.currentTime === 0 && (video.duration || 0) > 0) {
+        try { video.currentTime = 0.1; } catch {}
+      }
+
+      try {
+        await video.play();
+        return true;
+      } catch {
+        // If we tried with sound but got blocked, force muted and retry once
+        if (!wasMuted) {
+          video.muted = true;
+          video.setAttribute("muted", "true");
+          setMuted((m) => ({ ...m, [index]: true }));
+          try {
+            await video.play();
+            return true;
+          } catch {
+            // Give up, at least first frame is shown
+            return false;
+          }
+        }
+        return false;
+      }
+    };
+
     const handleVideoPlayback = async () => {
       if (isProcessing) return;
       isProcessing = true;
@@ -195,6 +219,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       try {
         const targetIndex = findMostVisibleSection();
 
+        // If current video fell below 45% visibility, pause it
         if (currentPlayingIndex !== null && (sectionVisibility[currentPlayingIndex] || 0) < 0.45) {
           const cv = videoRefs.current[currentPlayingIndex];
           if (cv && !cv.paused) cv.pause();
@@ -202,62 +227,25 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
 
         if (targetIndex !== null && targetIndex !== currentPlayingIndex) {
+          // Pause others
           videoRefs.current.forEach((v, i) => {
             if (v && i !== targetIndex && !v.paused) v.pause();
           });
 
           const v = videoRefs.current[targetIndex];
           if (v) {
-            setupVideo(v, targetIndex);
-            
-            // Set mute state based on device and user preference
-            if (muted.hasOwnProperty(targetIndex)) {
-              v.muted = muted[targetIndex];
-            } else {
-              // Default: mobile unmuted (after interaction), desktop muted
-              const shouldBeMuted = isMobileDevice ? !hasUserInteracted : true;
-              v.muted = shouldBeMuted;
-              setMuted(prev => ({ ...prev, [targetIndex]: shouldBeMuted }));
-            }
-
-            if (v.readyState < 2) {
-              v.load();
-              await new Promise((r) => setTimeout(r, 80));
-            }
-            if (v.currentTime === 0 && (v.duration || 0) > 0) v.currentTime = 0.1;
+            setupVideoBase(v);
 
             const startAt = Number(spliks[targetIndex]?.trim_start ?? 0);
-            const onTimeUpdate = () => {
-              if (v.currentTime - startAt >= 3) v.currentTime = startAt;
-            };
-            v.removeEventListener("timeupdate", onTimeUpdate);
-            v.addEventListener("timeupdate", onTimeUpdate);
-
+            ensure3sLoop(v, startAt);
             if (startAt > 0) {
-              try {
-                v.currentTime = startAt;
-              } catch {}
+              try { v.currentTime = startAt; } catch {}
             }
 
-            try {
-              await v.play();
+            const ok = await tryPlay(v, targetIndex);
+            if (ok) {
               currentPlayingIndex = targetIndex;
               setActiveIndex(targetIndex);
-            } catch (error) {
-              console.log('Autoplay failed, trying with muted:', error);
-              if (!v.muted) {
-                v.muted = true;
-                setMuted((m) => ({ ...m, [targetIndex]: true }));
-                try {
-                  await v.play();
-                  currentPlayingIndex = targetIndex;
-                  setActiveIndex(targetIndex);
-                } catch {
-                  if (v.currentTime === 0) v.currentTime = 0.1;
-                }
-              } else {
-                if (v.currentTime === 0) v.currentTime = 0.1;
-              }
             }
           }
         } else if (targetIndex === null && currentPlayingIndex !== null) {
@@ -282,10 +270,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     );
 
     const initializeVideos = () => {
-      videoRefs.current.forEach((v, index) => {
-        if (v && !v.hasAttribute("data-mobile-initialized")) {
-          setupVideo(v, index);
-          v.setAttribute("data-mobile-initialized", "true");
+      videoRefs.current.forEach((v) => {
+        if (v && !v.hasAttribute("data-initialized")) {
+          setupVideoBase(v);
+          // preload the first and next video a bit harder for snappier starts
+          const idx = Number(v.dataset.index || -1);
+          if (idx === activeIndex || idx === activeIndex + 1) {
+            v.preload = "auto";
+          } else {
+            v.preload = "metadata";
+          }
+          v.setAttribute("data-initialized", "true");
         }
       });
     };
@@ -293,7 +288,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const sections = Array.from(root.querySelectorAll<HTMLElement>("[data-index]"));
     sections.forEach((s) => intersectionObserver.observe(s));
 
-    // kick off immediately
+    // Initialize right away and try to start something immediately
     initializeVideos();
     handleVideoPlayback();
     requestAnimationFrame(handleVideoPlayback);
@@ -306,44 +301,45 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       mutationObserver.disconnect();
       videoRefs.current.forEach((v) => v && !v.paused && v.pause());
     };
-  }, [spliks.length, thresholds, muted, spliks, hasUserInteracted, isMobileDevice]);
+  }, [spliks.length, thresholds, spliks, soundOn, activeIndex]);
 
   /* Try to start the very first video as soon as data + DOM are ready */
   useEffect(() => {
     if (loading || !spliks.length) return;
     const v = videoRefs.current[0];
     if (!v) return;
-    
-    // prepare + start
+
+    // prepare + start (try with sound; fallback muted)
     v.playsInline = true;
-    const shouldBeMuted = isMobileDevice ? !hasUserInteracted : true;
-    v.muted = shouldBeMuted;
-    
-    if (shouldBeMuted) {
-      v.setAttribute("muted", "true");
-    } else {
-      v.removeAttribute("muted");
-    }
-    
+    v.preload = "auto";
     v.setAttribute("webkit-playsinline", "true");
-    
+    v.controls = false;
+    v.disablePictureInPicture = true as any;
+
+    const wantSoundFirst = soundOn && userInteractedRef.current;
+    v.muted = !wantSoundFirst;
+    if (!wantSoundFirst) v.setAttribute("muted", "true");
+    else v.removeAttribute("muted");
+
     const startAt = Number(spliks[0]?.trim_start ?? 0);
     if (startAt > 0) {
-      try {
-        v.currentTime = startAt;
-      } catch {}
+      try { v.currentTime = startAt; } catch {}
     }
-    
-    // Set initial mute state
-    setMuted(prev => ({ ...prev, 0: shouldBeMuted }));
-    
-    // small rAF ensures layout settled
+
     requestAnimationFrame(() => {
       v.play().catch(() => {
-        // will be started by observer fallback if this fails
+        // fallback: force muted and retry once
+        v.muted = true;
+        v.setAttribute("muted", "true");
+        v.play().catch(() => {});
       });
     });
-  }, [loading, spliks, hasUserInteracted, isMobileDevice]);
+  }, [loading, spliks, soundOn]);
+
+  /* Any pointer on the feed counts as interaction (unlocks audio on mobile) */
+  const markInteracted = () => {
+    if (!userInteractedRef.current) userInteractedRef.current = true;
+  };
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
@@ -352,17 +348,25 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (child) child.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  const setGlobalSound = (on: boolean) => {
+    setSoundOn(on);
+    localStorage.setItem("feedSoundOn", on ? "true" : "false");
+  };
+
   const toggleMute = (i: number) => {
+    markInteracted();
     const v = videoRefs.current[i];
     if (!v) return;
-    const next = !(muted[i] ?? true);
-    v.muted = next;
-    if (next) {
-      v.setAttribute("muted", "true");
-    } else {
-      v.removeAttribute("muted");
-    }
-    setMuted((m) => ({ ...m, [i]: next }));
+
+    const nextMuted = !(muted[i] ?? ! (soundOn && userInteractedRef.current));
+    v.muted = nextMuted;
+    if (nextMuted) v.setAttribute("muted", "true");
+    else v.removeAttribute("muted");
+
+    setMuted((m) => ({ ...m, [i]: nextMuted }));
+
+    // Also set global preference so the next videos follow it
+    setGlobalSound(!nextMuted);
   };
 
   /* ---------------- social actions ---------------- */
@@ -442,10 +446,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       key={pathname}
       ref={containerRef}
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
+      onPointerDown={markInteracted}
     >
       {spliks.map((s, i) => {
-        const isVideoMuted = muted[i] ?? (isMobileDevice ? !hasUserInteracted : true);
-        
         return (
           <section
             key={s.id}
@@ -479,53 +482,45 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
                 <video
-                  ref={(el) => (videoRefs.current[i] = el)}
+                  ref={(el) => {
+                    videoRefs.current[i] = el;
+                    if (el) el.dataset.index = String(i);
+                  }}
                   src={s.video_url}
                   poster={s.thumbnail_url ?? undefined}
                   className="w-full h-full object-cover"
-                  // autoplay on the first item to guarantee instant start on load
-                  autoPlay={i === 0}
                   playsInline
-                  muted={isVideoMuted}
-                  preload={i === 0 ? "auto" : "metadata"}
-                  disablePictureInPicture
+                  // we do NOT set muted here; it's applied dynamically before play()
+                  preload={i <= 1 ? "auto" : "metadata"}
                   controls={false}
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
                   onLoadedData={() => {
                     const v = videoRefs.current[i];
-                    if (v && v.currentTime === 0) v.currentTime = 0.1;
+                    if (v && v.currentTime === 0) {
+                      try { v.currentTime = 0.1; } catch {}
+                    }
                   }}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 />
 
-                {/* invisible tap layer (kept for snap assist) */}
+                {/* invisible tap layer to assist snapping / interaction */}
                 <div className="absolute inset-0" onClick={() => scrollTo(i)} />
 
-                {/* Enhanced mute toggle - more prominent on mobile */}
+                {/* clear mute/unmute button (mobile + desktop) */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleMute(i);
                   }}
-                  className={`absolute bottom-3 right-3 rounded-full p-3 z-20 transition-all duration-200 ${
-                    isMobileDevice 
-                      ? 'bg-black/70 border-2 border-white/30' 
-                      : 'bg-black/50'
-                  }`}
+                  className="absolute bottom-3 right-3 bg-black/60 hover:bg-black/70 rounded-full p-2 z-20"
+                  aria-label={muted[i] ? "Unmute" : "Mute"}
                 >
-                  {isVideoMuted ? (
-                    <VolumeX className={`text-white ${isMobileDevice ? 'h-5 w-5' : 'h-4 w-4'}`} />
+                  {muted[i] ?? !(soundOn && userInteractedRef.current) ? (
+                    <VolumeX className="h-4 w-4 text-white" />
                   ) : (
-                    <Volume2 className={`text-white ${isMobileDevice ? 'h-5 w-5' : 'h-4 w-4'}`} />
+                    <Volume2 className="h-4 w-4 text-white" />
                   )}
                 </button>
-
-                {/* Mobile-specific sound indicator */}
-                {isMobileDevice && !hasUserInteracted && (
-                  <div className="absolute top-3 left-3 bg-black/70 px-3 py-1 rounded-full z-20">
-                    <p className="text-white text-xs">Tap anywhere to enable sound</p>
-                  </div>
-                )}
               </div>
 
               {/* actions */}
@@ -563,6 +558,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </Button>
                 </div>
 
+                {/* caption */}
                 {s.description && (
                   <p className="text-sm">
                     <span className="font-semibold mr-2">{nameFor(s)}</span>
