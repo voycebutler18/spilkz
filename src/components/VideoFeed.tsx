@@ -1,4 +1,3 @@
-
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -152,8 +151,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     v.setAttribute("x5-playsinline", "true"); // some Android browsers
     v.setAttribute("x5-video-player-type", "h5");
     v.controls = false;
-    v.disablePictureInPicture = true;
-    v.disableRemotePlayback = true;
+    (v as any).disablePictureInPicture = true;
+    (v as any).disableRemotePlayback = true;
     v.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
     v.preload = "metadata";
     if (poster) v.poster = poster || "";
@@ -476,11 +475,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   src={s.video_url}
                   poster={s.thumbnail_url ?? undefined}
                   className="w-full h-full object-cover"
+                  autoPlay={i === 0}            /* start first video immediately */
                   playsInline
                   muted={isMuted}
                   // @ts-expect-error vendor attribute
                   webkit-playsinline="true"
-                  preload="metadata"
+                  preload={i === 0 ? "auto" : "metadata"}
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
                   onLoadedData={() => {
                     const v = videoRefs.current[i];
@@ -493,21 +493,25 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                 />
 
-                {/* invisible tap layer (only assists snapping/centering) */}
-                <div className="absolute inset-0" onClick={() => scrollTo(i)} />
+                {/* tap layer — lower z-index so it NEVER hides the mute button */}
+                <div
+                  className="absolute inset-0 z-20"   /* <— lower than the button */
+                  onClick={() => scrollTo(i)}
+                />
 
-                {/* mute toggle */}
+                {/* mute toggle — high z-index + pointer-events enabled */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     toggleMute(i);
                   }}
-                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
+                  className="absolute bottom-3 right-3 z-50 pointer-events-auto bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
+                  aria-label={isMuted ? "Unmute" : "Mute"}
                 >
                   {isMuted ? (
-                    <VolumeX className="h-4 w-4 text-white" />
+                    <VolumeX className="h-5 w-5 text-white" />
                   ) : (
-                    <Volume2 className="h-4 w-4 text-white" />
+                    <Volume2 className="h-5 w-5 text-white" />
                   )}
                 </button>
               </div>
