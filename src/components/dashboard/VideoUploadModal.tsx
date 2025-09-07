@@ -32,7 +32,6 @@ import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 
-// Optional mood picker (UI only; stored as tag in description)
 import {
   Select,
   SelectTrigger,
@@ -63,7 +62,6 @@ const MAX_VIDEO_DURATION = 3; // hard cap at save time (server rule)
 const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
 const MOBILE_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
 
-// Optional mood choices (not a DB column)
 const MOOD_OPTIONS = [
   { value: "happy", label: "Happy" },
   { value: "chill", label: "Chill" },
@@ -97,10 +95,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
 
-  // Category toggle (lights up)
   const [isFood, setIsFood] = useState(false);
-
-  // Optional mood (UI only; stored in description as a tag)
   const [mood, setMood] = useState<string>("");
 
   const [uploading, setUploading] = useState(false);
@@ -115,7 +110,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
-  // UNLIMITED trim range while editing (two independent thumbs)
   const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]);
 
   const [showTrimmer, setShowTrimmer] = useState(false);
@@ -123,7 +117,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
 
-  // ffmpeg/transcode state
   const [transcoding, setTranscoding] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
   const ffmpegRef = useRef<FFmpeg | null>(null);
@@ -133,7 +126,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const animationRef = useRef<number>();
   const { toast } = useToast();
 
-  const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi";
+  const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi,.mkv";
   const maxFileSize = isMobile ? MOBILE_MAX_SIZE : DESKTOP_MAX_SIZE;
 
   const isMOV = (f: File | null) =>
@@ -152,6 +145,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         return "video/x-flv";
       case "avi":
         return "video/x-msvideo";
+      case "mkv":
+        return "video/x-matroska";
       default:
         return "video/mp4";
     }
@@ -185,7 +180,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     return ffmpeg;
   }, []);
 
-  // FASTER proxy: 720p cap, ultrafast, higher CRF, mono 96k
+  // 720p cap, ultrafast, higher CRF, mono 96k
   const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
     setTranscoding(true);
     setTranscodeProgress(1);
@@ -234,11 +229,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         "video/x-flv",
         "video/webm",
         "video/x-msvideo",
+        "video/x-matroska",
       ];
       if (!validTypes.includes(fileType)) {
         toast({
           title: "Invalid file type",
-          description: "Please upload a video file (MP4, MOV, FLV, WebM, AVI)",
+          description: "Please upload a video file (MP4, MOV, FLV, WebM, AVI, MKV)",
           variant: "destructive",
         });
         setProcessingVideo(false);
@@ -296,11 +292,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 return;
               }
               setOriginalDuration(duration);
-
-              // Show the trimmer only if the source is longer than 3s
               setShowTrimmer(duration > MAX_VIDEO_DURATION);
-
-              // Initialize the range to [0, min(3, duration)], but we **DON'T** lock it
               const initialEnd = Math.min(MAX_VIDEO_DURATION, duration);
               setTrimRange([0, initialEnd]);
               finish(true);
@@ -368,7 +360,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     if (!videoRef.current || !isPlaying) return;
     const el = videoRef.current;
     const tick = () => {
-      // Keep looping within the chosen range while previewing
       if (el.currentTime >= trimRange[1] || el.currentTime < trimRange[0]) {
         el.currentTime = trimRange[0];
       }
@@ -414,7 +405,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     setIsMuted(m);
   };
 
-  // Move the **scrubber** (middle single-thumb) for preview
   const handleSeek = (value: number[]) => {
     if (!videoRef.current) return;
     const [pos] = value;
@@ -423,19 +413,16 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     setCurrentTime(newTime);
   };
 
-  // Move the **two trim handles** freely (UNLIMITED range while editing)
   const handleTrimChange = (value: number[]) => {
     if (!value || value.length < 2) return;
     let [start, end] = value as [number, number];
 
-    // Keep handles inside the video duration
     start = Math.max(0, Math.min(start, originalDuration));
     end = Math.max(0, Math.min(end, originalDuration));
-    if (end < start) [start, end] = [end, start]; // normalize if crossed
+    if (end < start) [start, end] = [end, start];
 
     setTrimRange([start, end]);
 
-    // If the video is playing, keep the currentTime inside the new range
     if (videoRef.current) {
       if (videoRef.current.currentTime < start || videoRef.current.currentTime > end) {
         videoRef.current.currentTime = start;
@@ -445,7 +432,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   };
 
   /**
-   * Upload with real-time progress using Supabase Signed Upload URL + XHR.
+   * Upload with progress via Signed Upload URL.
+   * 7A: we add Cache-Control: 31536000, immutable so files are edge/browser cached hard.
    */
   const uploadWithProgress = async (
     bucket: string,
@@ -466,7 +454,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("PUT", data.signedUrl, true);
+
+      // Content-Type (already handled by SDK uploads; do it here too for signed URL)
       xhr.setRequestHeader("content-type", (blob as any).type || "application/octet-stream");
+      // 7A: long-lived immutable caching right on the object
+      xhr.setRequestHeader("cache-control", "31536000, immutable");
+      // NOTE: do NOT set x-upsert unless you want to allow overwrites
 
       xhr.upload.onprogress = (event) => {
         if (!event.lengthComputable) return;
@@ -480,7 +473,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           setUploadSpeedMBps(MBps);
 
           const remainingBytes = totalBytes - loaded;
-          const etaSec = remainingBytes / (MBps * 1024 * 1024);
+          const etaSec = MBps > 0 ? remainingBytes / (MBps * 1024 * 1024) : 0;
           const m = Math.floor(etaSec / 60);
           const s = Math.max(0, Math.ceil(etaSec % 60));
           setUploadETA(`${m > 0 ? `${m}m ` : ""}${s}s`);
@@ -500,7 +493,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     return { publicUrl: pub.publicUrl };
   };
 
-  // ✅ UPDATED: deterministic path + save video_path in DB
+  // deterministic path + save video_path in DB
   const handleUpload = async () => {
     if (!file || !title) {
       toast({
@@ -523,18 +516,15 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     setUploadProgress(1);
 
     try {
-      // 1) Build deterministic STORAGE PATH (powers per-clip URLs later)
       const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
-      const videoPath = `${currentUser.id}/${Date.now()}.${ext}`; // e.g. "user-uuid/1725720800123.mp4"
+      const videoPath = `${currentUser.id}/${Date.now()}.${ext}`;
 
-      // 2) Upload the file to the 'spliks' bucket at that exact path
+      // Upload with progress + immutable caching
       const { publicUrl } = await uploadWithProgress("spliks", videoPath, file);
 
-      // 3) Enforce trim metadata (existing behavior)
       const selectedStart = Math.max(0, Math.min(trimRange[0], originalDuration));
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
 
-      // Build description + optional mood tag (existing behavior)
       const baseDesc =
         (description || "").trim() ||
         (showTrimmer
@@ -543,7 +533,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
-      // 4) INSERT: SAVE video_path (KEY)
       const payload: any = {
         user_id: currentUser.id,
         title,
@@ -556,10 +545,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         trim_end: enforcedEnd,
         is_food: isFood,
 
-        // NEW: the storage path we just used
+        // KEY: storage path
         video_path: videoPath,
 
-        // Keep this for now so existing UI keeps working until Step 4 view
+        // Legacy/url field your UI may still read (Step 4 view will supersede)
         video_url: publicUrl,
       };
 
@@ -630,7 +619,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* MP4 preferred notice */}
           <Alert className="border-primary/20 bg-primary/5">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-primary" />
@@ -668,7 +656,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
               <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
               <p className="text-xs text-muted-foreground mb-2">
-                Supported: MP4 (preferred), MOV, FLV, WebM, AVI (max {formatBytes(maxFileSize)})
+                Supported: MP4 (preferred), MOV, FLV, WebM, AVI, MKV (max {formatBytes(maxFileSize)})
               </p>
               <p className="text-xs text-primary font-medium">Videos will be trimmed to exactly 3 seconds on save</p>
               <input
@@ -681,7 +669,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Video Error Alert */}
               {videoError && (
                 <Alert className="border-yellow-500/20 bg-yellow-500/5">
                   <AlertCircle className="h-4 w-4 text-yellow-600" />
@@ -691,7 +678,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </Alert>
               )}
 
-              {/* MOV transcode progress */}
               {transcoding && (
                 <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
@@ -704,7 +690,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               )}
 
-              {/* Preview area */}
               <div className="flex justify-center">
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
                   <div className="relative" style={{ paddingBottom: "177.78%" }}>
@@ -749,7 +734,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                               </div>
                             </button>
 
-                            {/* Bottom controls */}
                             <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2">
                               <div className="flex justify-between text-white text-xs font-medium">
                                 <span>{formatTime(currentTime - trimRange[0])}</span>
@@ -759,7 +743,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                                 </span>
                               </div>
 
-                              {/* Scrubber (single thumb) */}
                               <Slider
                                 value={[currentTime]}
                                 min={trimRange[0]}
@@ -781,7 +764,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               </div>
 
-              {/* Trimmer */}
               {videoPreview && showTrimmer && (
                 <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
@@ -798,7 +780,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       <span>End: {trimRange[1].toFixed(1)}s</span>
                     </div>
 
-                    {/* Two-thumb range slider – NO 3s restriction */}
                     <Slider
                       value={trimRange}
                       min={0}
@@ -859,7 +840,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               )}
 
-              {/* Title / Description / Category */}
               <div className="space-y-3">
                 <div>
                   <Label htmlFor="title">Title</Label>
@@ -883,7 +863,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   />
                 </div>
 
-                {/* Mood (optional) */}
                 <div>
                   <Label htmlFor="mood">Mood (optional)</Label>
                   <Select value={mood} onValueChange={setMood} disabled={uploading}>
@@ -899,11 +878,10 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                     </SelectContent>
                   </Select>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    If chosen, we’ll tag the description with <code>#mood=&lt;value&gt;</code> so viewers can see it.
+                    If chosen, we’ll tag the description with <code>#mood=&lt;value&gt;</code>.
                   </p>
                 </div>
 
-                {/* Food toggle as a lighting button */}
                 <div className="mt-2 flex items-center justify-between rounded-md border p-3">
                   <div className="flex items-start gap-2">
                     <Utensils className="h-4 w-4 text-primary mt-0.5" />
@@ -928,7 +906,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               </div>
 
-              {/* Upload progress with speed & ETA */}
               {uploading && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs">
@@ -946,7 +923,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 </div>
               )}
 
-              {/* Actions */}
               <div className="flex gap-3 justify-end">
                 <Button
                   variant="outline"
