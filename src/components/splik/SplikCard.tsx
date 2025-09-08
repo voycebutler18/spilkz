@@ -44,7 +44,7 @@ interface SplikCardProps {
   onReact?: () => void;
   onShare?: () => void;
 
-  /** Optional: Home passes these for the rolling 5-window loader. Other pages can ignore. */
+  /** Optional: Home can pass these for rolling window loading; other pages can ignore. */
   index?: number;
   shouldLoad?: boolean;                 // default = true (back-compat)
   onPrimaryVisible?: (index: number) => void;
@@ -67,8 +67,7 @@ const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c
 export default function SplikCard(props: SplikCardProps) {
   const { splik, onSplik, onReact, onShare } = props;
   const idx = props.index ?? 0;
-  // Backwards compatible: if a page doesn't pass shouldLoad, default to true
-  const load = props.shouldLoad ?? true;
+  const load = props.shouldLoad ?? true; // ← back-compat for pages that don’t pass it
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
@@ -196,7 +195,6 @@ export default function SplikCard(props: SplikCardProps) {
     if (load) {
       primedRef.current = false;
       const v = videoRef.current;
-      // kick metadata read so poster -> video transition is snappy
       try { v?.load(); } catch {}
     } else {
       pauseIfCurrent(videoRef.current);
@@ -421,7 +419,8 @@ export default function SplikCard(props: SplikCardProps) {
 
         <video
           ref={videoRef}
-          src={load ? splik.video_url : undefined}         {/* attach src only when shouldLoad=true */}
+          /* attach src only when shouldLoad=true */
+          src={load ? splik.video_url : undefined}
           poster={splik.thumbnail_url || undefined}
           className="block w-full h-full object-cover"
           autoPlay={false}
@@ -530,12 +529,12 @@ export default function SplikCard(props: SplikCardProps) {
             <span className="text-xs font-medium">{(likesCount ?? 0).toLocaleString()}</span>
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={handleComment} className="flex items-center space-x-2 flex-1 hover:text-blue-500">
+          <Button variant="ghost" size="sm" onClick={() => { setShowCommentsModal(true); onReact?.(); }} className="flex items-center space-x-2 flex-1 hover:text-blue-500">
             <MessageCircle className="h-4 w-4" />
             <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={handleShare} className="flex items-center space-x-2 flex-1 hover:text-green-500">
+          <Button variant="ghost" size="sm" onClick={() => { setShowShareModal(true); onShare?.(); }} className="flex items-center space-x-2 flex-1 hover:text-green-500">
             <Share2 className="h-4 w-4" />
             <span className="text-xs font-medium">Share</span>
           </Button>
@@ -543,7 +542,31 @@ export default function SplikCard(props: SplikCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={toggleFavorite}
+            onClick={async () => {
+              if (saving) return;
+              const { data: { user } } = await supabase.auth.getUser();
+              if (!user) {
+                toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
+                return;
+              }
+              setSaving(true);
+              const next = !isSaved;
+              setIsSaved(next);
+              try {
+                if (next) {
+                  await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
+                  toast({ title: "Added to favorites", description: "Video saved to your favorites" });
+                } else {
+                  await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
+                  toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
+                }
+              } catch {
+                setIsSaved(!next);
+                toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
+              } finally {
+                setSaving(false);
+              }
+            }}
             disabled={saving}
             className={cn(
               "flex items-center space-x-2 transition-colors flex-1",
@@ -556,7 +579,7 @@ export default function SplikCard(props: SplikCardProps) {
           </Button>
         </div>
 
-        {/* DESCRIPTION (now visible on all pages that use this card) */}
+        {/* DESCRIPTION (visible on all pages using this card) */}
         {splik.description && (
           <p className="mt-2 text-sm">{splik.description}</p>
         )}
