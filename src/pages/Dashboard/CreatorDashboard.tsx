@@ -1,3 +1,4 @@
+// src/components/dashboard/CreatorDashboard.tsx
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,7 +18,14 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
+import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
@@ -32,12 +40,13 @@ import {
   Trash2,
   Plus,
   Eye,
-  // NEW: controls for dashboard video manual play
   Volume2,
   VolumeX,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatDistanceToNow } from "date-fns";
 
+/* ----------------------------- Types ----------------------------- */
 interface Profile {
   id: string;
   username: string | null;
@@ -62,8 +71,7 @@ interface SplikRow {
   likes_count?: number | null;
   comments_count?: number | null;
   views_count?: number | null;
-  // ✅ honor the chosen clip start in the dashboard loop
-  trim_start?: number | null;
+  trim_start?: number | null; // ✅ ensure 3s loop starts where the creator set it
   trim_end?: number | null;
   profile?: {
     username?: string | null;
@@ -79,17 +87,171 @@ interface DashboardStats {
   avgReactionsPerVideo: number;
 }
 
-/* ----------------------------- Video Management (Manual Play) ----------------------------- */
+interface CommentRow {
+  id: string;
+  user_id: string;
+  splik_id: string;
+  body: string;
+  created_at: string;
+  // Optional denormalized/user-joined fields if you store them
+  user_username?: string | null;
+  user_display_name?: string | null;
+  user_avatar_url?: string | null;
+}
+
+/* ----------------------------- Comments Manager ----------------------------- */
+function CommentsManager({
+  open,
+  onClose,
+  splik,
+  onCountChange,
+}: {
+  open: boolean;
+  onClose: () => void;
+  splik: SplikRow;
+  onCountChange?: (delta: number) => void; // update dashboard count after delete
+}) {
+  const [loading, setLoading] = useState(true);
+  const [comments, setComments] = useState<CommentRow[]>([]);
+  const unsubRef = useRef<() => void>();
+
+  const fetchComments = async () => {
+    try {
+      setLoading(true);
+      // If you have a "comments" view that joins user fields, use that.
+      // Fallback: raw comments, and you can display user_id only.
+      const { data, error } = await supabase
+        .from("comments")
+        .select("id, user_id, splik_id, body, created_at")
+        .eq("splik_id", splik.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setComments((data || []) as CommentRow[]);
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to load comments");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    fetchComments();
+
+    // Realtime: reflect new/deleted comments live
+    const ch = supabase
+      .channel(`comments-${splik.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
+        (payload) => {
+          const row = payload.new as CommentRow;
+          setComments((prev) => [row, ...prev]);
+          onCountChange?.(1);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
+        (payload) => {
+          const deletedId = (payload.old as any)?.id as string;
+          setComments((prev) => prev.filter((c) => c.id !== deletedId));
+          onCountChange?.(-1);
+        }
+      )
+      .subscribe();
+
+    unsubRef.current = () => supabase.removeChannel(ch);
+
+    return () => {
+      if (unsubRef.current) unsubRef.current();
+      unsubRef.current = undefined;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, splik.id]);
+
+  const handleDelete = async (commentId: string) => {
+    try {
+      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
+      if (error) throw error;
+      // Realtime will update list & count via channel
+      toast.success("Comment deleted");
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to delete comment");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : null)}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Comments — {splik.title || splik.id.slice(0, 6)}</DialogTitle>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>
+        ) : comments.length === 0 ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">No comments yet</div>
+        ) : (
+          <div className="max-h-[60vh] overflow-y-auto space-y-3">
+            {comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-3 rounded-lg border p-3">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={c.user_avatar_url || undefined} />
+                  <AvatarFallback>
+                    {(c.user_display_name?.[0] || c.user_username?.[0] || "U").toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">
+                        {c.user_display_name || c.user_username || c.user_id}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(c.created_at), { addSuffix: true })}
+                      </div>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-8 px-2"
+                      onClick={() => handleDelete(c.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <p className="text-sm mt-2 whitespace-pre-wrap break-words">{c.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ----------------------------- Video Management Grid (Manual Play) ----------------------------- */
 const VideoManagementGrid = ({
   spliks,
   onDelete,
+  onCommentCountAdjust,
 }: {
   spliks: SplikRow[];
   onDelete: (id: string) => void;
+  onCommentCountAdjust: (splikId: string, delta: number) => void;
 }) => {
   const [selectedVideos, setSelectedVideos] = useState(new Set<string>());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [hoveredVideo, setHoveredVideo] = useState<string | null>(null);
+
+  const [commentsFor, setCommentsFor] = useState<SplikRow | null>(null);
 
   const handleBulkDelete = () => {
     selectedVideos.forEach((id) => onDelete(id));
@@ -109,29 +271,26 @@ const VideoManagementGrid = ({
     const [isPlaying, setIsPlaying] = useState(false);
     const [isMuted, setIsMuted] = useState(true);
 
-    // 3s loop starting at trim_start (or 0)
     const start = Math.max(0, Number(s.trim_start ?? 0));
-    const loopLen = 3;
-    const loopEnd = start + loopLen;
+    const loopEnd = start + 3;
 
     useEffect(() => {
       const v = videoRef.current;
       if (!v) return;
 
-      // iOS-friendly inline setup (no autoplay)
       v.playsInline = true;
       v.setAttribute("playsinline", "true");
-      // @ts-expect-error vendor
+      // @ts-expect-error
       v.setAttribute("webkit-playsinline", "true");
       v.muted = true;
       v.setAttribute("muted", "true");
       v.controls = false;
       v.preload = "metadata";
       v.disablePictureInPicture = true;
-      // @ts-expect-error vendor
+      // @ts-expect-error
       v.disableRemotePlayback = true;
 
-      const onLoadedMeta = () => {
+      const onLoaded = () => {
         try {
           v.currentTime = start;
         } catch {}
@@ -144,10 +303,10 @@ const VideoManagementGrid = ({
         }
       };
 
-      v.addEventListener("loadedmetadata", onLoadedMeta);
+      v.addEventListener("loadedmetadata", onLoaded);
       v.addEventListener("timeupdate", onTimeUpdate);
       return () => {
-        v.removeEventListener("loadedmetadata", onLoadedMeta);
+        v.removeEventListener("loadedmetadata", onLoaded);
         v.removeEventListener("timeupdate", onTimeUpdate);
         try {
           v.pause();
@@ -166,23 +325,23 @@ const VideoManagementGrid = ({
         setIsPlaying(false);
       } else {
         try {
-          // ensure we're inside the 3s window
           v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01));
         } catch {}
         v.muted = isMuted;
         if (isMuted) v.setAttribute("muted", "true");
         else v.removeAttribute("muted");
         try {
-          await v.play();
+          await v.play(); // ✅ manual user gesture → should always start
           setIsPlaying(true);
-        } catch {
+        } catch (e) {
+          console.error("Play failed:", e);
           setIsPlaying(false);
         }
       }
     };
 
     const toggleMute = (e: React.MouseEvent) => {
-      e.stopPropagation(); // don't toggle play
+      e.stopPropagation(); // don’t toggle play
       const v = videoRef.current;
       if (!v) return;
       const next = !isMuted;
@@ -199,49 +358,50 @@ const VideoManagementGrid = ({
         onMouseEnter={() => setHoveredVideo(s.id)}
         onMouseLeave={() => setHoveredVideo(null)}
       >
-        {/* Video area: manual play only */}
-        <div
-          className="relative aspect-[9/16] bg-black overflow-hidden cursor-pointer"
-          onClick={togglePlayPause}
-        >
+        {/* Video area (manual play only) */}
+        <div className="relative aspect-[9/16] bg-black overflow-hidden">
           {s.video_url ? (
-            <video
-              ref={videoRef}
-              src={s.video_url}
-              poster={s.thumbnail_url || undefined}
-              className="absolute inset-0 w-full h-full object-cover"
-              muted
-              playsInline
-              // @ts-expect-error vendor attr
-              webkit-playsinline="true"
-              preload="metadata"
-              controls={false}
-              controlsList="nodownload noplaybackrate noremoteplayback"
-            />
+            <>
+              <video
+                ref={videoRef}
+                src={s.video_url}
+                poster={s.thumbnail_url || undefined}
+                className="absolute inset-0 w-full h-full object-cover"
+                muted
+                playsInline
+                // @ts-expect-error vendor attr
+                webkit-playsinline="true"
+                preload="metadata"
+                controls={false}
+                controlsList="nodownload noplaybackrate noremoteplayback"
+                onClick={togglePlayPause} // ✅ tap anywhere to play/pause
+              />
+              {/* Visible PLAY/PAUSE button in the middle that actually works */}
+              <button
+                aria-label={isPlaying ? "Pause" : "Play"}
+                onClick={togglePlayPause}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <div className="bg-black/45 rounded-full p-4">
+                  {isPlaying ? (
+                    <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </div>
+              </button>
+            </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
               <Video className="h-12 w-12 text-gray-600" />
             </div>
           )}
 
-          {/* Big play/pause hint — doesn't block clicks */}
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="bg-black/45 rounded-full p-4">
-              {isPlaying ? (
-                // pause icon
-                <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-                </svg>
-              ) : (
-                // play icon
-                <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              )}
-            </div>
-          </div>
-
-          {/* Selection checkbox (stops click from toggling play) */}
+          {/* Top-left: Select checkbox (doesn't cancel play) */}
           <div
             className={`absolute top-3 left-3 transition-opacity duration-200 ${
               hoveredVideo === s.id || selectedVideos.has(s.id) ? "opacity-100" : "opacity-0"
@@ -261,7 +421,7 @@ const VideoManagementGrid = ({
             />
           </div>
 
-          {/* Delete button (stops click from toggling play) */}
+          {/* Top-right: Delete (doesn't cancel play) */}
           <div
             className={`absolute top-3 right-3 transition-opacity duration-200 ${
               hoveredVideo === s.id ? "opacity-100" : "opacity-0"
@@ -280,7 +440,7 @@ const VideoManagementGrid = ({
             </Button>
           </div>
 
-          {/* Mute/Unmute (doesn't block play/pause) */}
+          {/* Bottom-right: Mute toggle (doesn't cancel play) */}
           <button
             onClick={toggleMute}
             className="absolute bottom-3 right-3 z-10 bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
@@ -289,7 +449,7 @@ const VideoManagementGrid = ({
             {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
           </button>
 
-          {/* Stats overlay */}
+          {/* Bottom overlay: stats and open comments manager */}
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
             <div className="flex items-center justify-between text-white text-sm">
               <div className="flex items-center gap-3">
@@ -301,10 +461,16 @@ const VideoManagementGrid = ({
                   <Heart className="h-4 w-4" />
                   <span>{s.likes_count || 0}</span>
                 </div>
-                <div className="flex items-center gap-1">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCommentsFor(s);
+                  }}
+                  className="flex items-center gap-1 hover:opacity-80"
+                >
                   <MessageCircle className="h-4 w-4" />
                   <span>{s.comments_count || 0}</span>
-                </div>
+                </button>
               </div>
             </div>
           </div>
@@ -317,7 +483,29 @@ const VideoManagementGrid = ({
           </h4>
           {s.description && <p className="text-sm text-gray-400 line-clamp-2 mb-2">{s.description}</p>}
           <p className="text-xs text-gray-500">{new Date(s.created_at).toLocaleDateString()}</p>
+          {/* Manage comments button (optional second entry point) */}
+          <div className="mt-3">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCommentsFor(s)}
+              className="gap-2"
+            >
+              <MessageCircle className="h-4 w-4" />
+              Manage comments
+            </Button>
+          </div>
         </div>
+
+        {/* Comments Manager Modal for this card */}
+        {commentsFor?.id === s.id && (
+          <CommentsManager
+            open={!!commentsFor}
+            onClose={() => setCommentsFor(null)}
+            splik={s}
+            onCountChange={(delta) => onCommentCountAdjust(s.id, delta)}
+          />
+        )}
       </div>
     );
   }
@@ -430,6 +618,7 @@ const CreatorDashboard = () => {
 
   const channelCleanup = useRef<null | (() => void)>(null);
 
+  /* ------------------------ Auth + initial load ------------------------ */
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
@@ -468,6 +657,7 @@ const CreatorDashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ---------------------------- Realtime ---------------------------- */
   const setupRealtime = (uid: string) => {
     if (channelCleanup.current) {
       try {
@@ -507,6 +697,21 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
+        { event: "INSERT", schema: "public", table: "comments" },
+        (_payload) => {
+          // some video got a new comment — bump its count if we have it
+          // (exact per-video bump handled in CommentsManager realtime too)
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "comments" },
+        (_payload) => {
+          // handled locally in CommentsManager for active video
+        }
+      )
+      .on(
+        "postgres_changes",
         { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${uid}` },
         (payload) => {
           const p = payload.new as Profile;
@@ -519,6 +724,7 @@ const CreatorDashboard = () => {
     channelCleanup.current = () => supabase.removeChannel(ch);
   };
 
+  /* ----------------------------- Fetchers ----------------------------- */
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
@@ -546,7 +752,6 @@ const CreatorDashboard = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      // attach lightweight profile once for convenience
       let prof: Profile | null = null;
       try {
         const { data } = await supabase
@@ -557,7 +762,7 @@ const CreatorDashboard = () => {
         prof = (data as any) || null;
       } catch {}
 
-      const merged: SplikRow[] = rows?.map((r) => ({ ...(r as SplikRow), profile: prof })) ?? [];
+      const merged: SplikRow[] = (rows || []).map((r: any) => ({ ...(r as SplikRow), profile: prof }));
       setSpliks(merged);
       recomputeStatsFromList(merged);
     } catch (e) {
@@ -565,6 +770,7 @@ const CreatorDashboard = () => {
     }
   };
 
+  /* ------------------------- Stats helpers ------------------------- */
   const updateStatsFromProfile = (p: Profile) => {
     setStats((prev) => ({
       ...prev,
@@ -593,21 +799,31 @@ const CreatorDashboard = () => {
     });
   };
 
+  /* ------------------------- Comments count adjust ------------------------- */
+  const handleCommentCountAdjust = (splikId: string, delta: number) => {
+    setSpliks((prev) =>
+      prev.map((s) =>
+        s.id === splikId ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) + delta) } : s
+      )
+    );
+  };
+
+  /* ------------------------- Delete video ------------------------- */
   const handleDeleteVideo = async (videoId: string) => {
     if (!currentUserId) return;
 
     try {
       const { error } = await supabase.from("spliks").delete().eq("id", videoId).eq("user_id", currentUserId);
       if (error) throw error;
-
       toast.success("Video deleted successfully");
-      // Realtime will update list
+      // Realtime will handle UI update
     } catch (error) {
       console.error("Error deleting video:", error);
       toast.error("Failed to delete video");
     }
   };
 
+  /* ------------------------- Profile update ------------------------- */
   const handleProfileUpdate = async () => {
     if (!currentUserId) return;
     try {
@@ -649,6 +865,7 @@ const CreatorDashboard = () => {
     }
   };
 
+  /* ------------------------------ UI ------------------------------ */
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-950">
@@ -685,7 +902,7 @@ const CreatorDashboard = () => {
             {/* Actions */}
             <div className="flex items-center gap-3">
               <Button
-                onClick={() => navigate("/upload")} // open your upload route or modal
+                onClick={() => setUploadModalOpen(true)}
                 className="bg-blue-600 hover:bg-blue-700 gap-2"
               >
                 <Plus className="h-4 w-4" />
@@ -785,16 +1002,20 @@ const CreatorDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* My Videos Tab */}
+          {/* My Videos */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
-              <VideoManagementGrid spliks={spliks} onDelete={handleDeleteVideo} />
+              <VideoManagementGrid
+                spliks={spliks}
+                onDelete={handleDeleteVideo}
+                onCommentCountAdjust={handleCommentCountAdjust}
+              />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
                 <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
                 <h3 className="text-xl font-semibold text-white mb-2">No videos yet</h3>
                 <p className="text-gray-400 mb-6">Start building your content library</p>
-                <Button onClick={() => navigate("/upload")} className="bg-blue-600 hover:bg-blue-700 gap-2">
+                <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
                   <Plus className="h-4 w-4" />
                   Upload Your First Video
                 </Button>
@@ -802,7 +1023,7 @@ const CreatorDashboard = () => {
             )}
           </TabsContent>
 
-          {/* Analytics Tab */}
+          {/* Analytics */}
           <TabsContent value="analytics" className="mt-8">
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
@@ -825,7 +1046,7 @@ const CreatorDashboard = () => {
             </Card>
           </TabsContent>
 
-          {/* Profile Settings Tab */}
+          {/* Profile Settings */}
           <TabsContent value="profile" className="mt-8">
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
@@ -833,13 +1054,116 @@ const CreatorDashboard = () => {
                 <CardDescription className="text-gray-400">Manage your creator profile</CardDescription>
               </CardHeader>
               <CardContent>
-                {/** (unchanged — your profile edit UI) */}
-                {/* ...keep your existing profile settings content here... */}
+                {/* Keep your existing profile editing UI here.
+                    Below is a compact version to match your original structure. */}
+                <div className="space-y-6">
+                  <div>
+                    <p className="text-sm text-gray-400 mb-2">Profile Photo</p>
+                    <AvatarUploader
+                      value={formData.avatar_url || profile?.avatar_url}
+                      onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
+                    />
+                    <p className="text-xs text-gray-500 mt-2">
+                      JPG/PNG recommended. We'll compress for faster loading.
+                    </p>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="username" className="text-gray-300">Username</Label>
+                    <Input
+                      id="username"
+                      value={formData.username}
+                      onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                      placeholder="@username"
+                      className="bg-gray-800 border-gray-700 text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="display_name" className="text-gray-300">Display Name</Label>
+                    <Input
+                      id="display_name"
+                      value={formData.display_name}
+                      onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                      placeholder="Your display name"
+                      className="bg-gray-800 border-gray-700 text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="bio" className="text-gray-300">Bio</Label>
+                    <Textarea
+                      id="bio"
+                      value={formData.bio}
+                      onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                      placeholder="Tell us about yourself"
+                      rows={4}
+                      className="bg-gray-800 border-gray-700 text-white"
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button onClick={handleProfileUpdate} className="bg-blue-600 hover:bg-blue-700">
+                      Save Changes
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setEditingProfile(false)}
+                      className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+
+                  <div className="border-t border-gray-800 pt-6 space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
+                      <div>
+                        <p className="font-medium text-white text-sm">Followers List</p>
+                        <p className="text-xs text-gray-400">
+                          {profile?.followers_private
+                            ? "Private — Only you can see your followers"
+                            : "Public — Anyone can see your followers"}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={profile?.followers_private || false}
+                        onCheckedChange={() => togglePrivacy("followers_private")}
+                        className="data-[state=checked]:bg-blue-600"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
+                      <div>
+                        <p className="font-medium text-white text-sm">Following List</p>
+                        <p className="text-xs text-gray-400">
+                          {profile?.following_private
+                            ? "Private — Only you can see who you follow"
+                            : "Public — Anyone can see who you follow"}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={profile?.following_private || false}
+                        onCheckedChange={() => togglePrivacy("following_private")}
+                        className="data-[state=checked]:bg-blue-600"
+                      />
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Upload modal */}
+      <VideoUploadModal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onUploadComplete={() => {
+          if (currentUserId) fetchSpliks(currentUserId);
+          setUploadModalOpen(false);
+        }}
+      />
     </div>
   );
 };
