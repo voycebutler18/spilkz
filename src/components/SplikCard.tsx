@@ -1,4 +1,4 @@
-// src/components/SplikCard.tsx
+// src/components/splik/SplikCard.tsx
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -67,8 +67,10 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
 
-  const [isSaved, setIsSaved] = useState(false);      // ✅ saved indicator
-  const [saving, setSaving] = useState(false);        // in-flight guard
+  const [isSaved, setIsSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [likePending, setLikePending] = useState(false);     // ← debounce / idempotent guard
 
   const [showShareModal, setShowShareModal] = useState(false);
   const [showCommentsModal, setShowCommentsModal] = useState(false);
@@ -79,7 +81,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
-  const initialSavedSet = useRef(false);             // ✅ prevents race from initial fetch
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -179,14 +180,13 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
         if (!mounted) return;
         setIsLiked(!!likeRow);
 
-        // saved state (initial)
+        // saved state
         const { data: favRow } = await supabase
           .from("favorites").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
         if (!mounted) return;
-        initialSavedSet.current = true;
         setIsSaved(!!favRow);
 
-        // realtime for favorites (keeps button synced even if something else changes it)
+        // realtime for favorites
         const favChannel = supabase
           .channel(`fav-${user.id}-${splik.id}`)
           .on(
@@ -201,7 +201,7 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
           )
           .subscribe();
 
-        // realtime for splik counters
+        // realtime for counters
         const countersChannel = supabase
           .channel(`splik-${splik.id}`)
           .on(
@@ -228,31 +228,67 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
     return () => { mounted = false; };
   }, [splik.id]);
 
-  /* ---------- actions ---------- */
-  const handleSplik = async () => {
+  /* ---------- LIKE: idempotent + snap-to-DB ---------- */
+  const handleSplik = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (likePending) return;
+
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
       return;
     }
-    const next = !isLiked;
-    setIsLiked(next);
-    setLikesCount((p) => (next ? p + 1 : Math.max(0, p - 1)));
+
+    setLikePending(true);
+    const wantLike = !isLiked;
+
+    // optimistic UI
+    setIsLiked(wantLike);
+    setLikesCount((p) => Math.max(0, p + (wantLike ? 1 : -1)));
+
     try {
-      if (next) await supabase.from("likes").insert({ user_id: user.id, splik_id: splik.id });
-      else await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splik.id);
+      if (wantLike) {
+        // idempotent insert (won't double-add)
+        const { error } = await supabase
+          .from("likes")
+          .upsert(
+            { user_id: user.id, splik_id: splik.id },
+            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
+          );
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("likes")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("splik_id", splik.id);
+        if (error) throw error;
+      }
+
+      // snap to the real count (prevents “2” on one click)
+      const { count } = await supabase
+        .from("likes")
+        .select("*", { count: "exact", head: true })
+        .eq("splik_id", splik.id);
+
+      if (typeof count === "number") setLikesCount(count);
+
       onSplik?.();
     } catch {
-      setIsLiked(!next);
-      setLikesCount((p) => (!next ? p + 1 : Math.max(0, p - 1)));
+      // revert optimistic
+      setIsLiked((prev) => !prev);
+      setLikesCount((p) => Math.max(0, p + (wantLike ? -1 : 1)));
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+    } finally {
+      setLikePending(false);
     }
   };
 
   const handleComment = () => { setShowCommentsModal(true); onReact?.(); };
+
   const handleShare = () => { setShowShareModal(true); onShare?.(); };
 
-  // ✅ robust favorites with optimistic UI + race protection + realtime
+  // favorites
   const toggleFavorite = async () => {
     if (saving) return;
     const { data: { user } } = await supabase.auth.getUser();
@@ -260,10 +296,9 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
       toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
       return;
     }
-
     setSaving(true);
     const next = !isSaved;
-    setIsSaved(next); // optimistic
+    setIsSaved(next);
     try {
       if (next) {
         await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
@@ -273,7 +308,7 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
         toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
       }
     } catch {
-      setIsSaved(!next); // revert
+      setIsSaved(!next);
       toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     } finally {
       setSaving(false);
@@ -457,6 +492,7 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
             variant="ghost"
             size="sm"
             onClick={handleSplik}
+            disabled={likePending}
             className={cn("flex items-center space-x-2 transition-colors flex-1",
               isLiked && "text-red-500 hover:text-red-600")}
             aria-pressed={isLiked}
@@ -475,7 +511,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
             <span className="text-xs font-medium">Share</span>
           </Button>
 
-          {/* ✅ Save indicator */}
           <Button
             variant="ghost"
             size="sm"
