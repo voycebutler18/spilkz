@@ -542,7 +542,7 @@ export default function MessageThread() {
                   <Paperclip className="w-4 h-4" />
                 </Button>
 
-                {/* INPUT — guaranteed visible text while typing */}
+                {/* FIXED INPUT — guaranteed visible text while typing */}
                 <div className="flex-1 relative">
                   <Input
                     ref={inputRef}
@@ -556,13 +556,18 @@ export default function MessageThread() {
                       }
                     }}
                     className="
-                      bg-white text-black placeholder-slate-500 border-slate-300
-                      dark:bg-slate-700/60 dark:text-white dark:placeholder-slate-400 dark:border-slate-600/50
-                      rounded-xl pr-12 h-10 caret-purple-500
+                      bg-white text-slate-900 placeholder-slate-500 border-slate-300
+                      dark:bg-slate-700 dark:text-white dark:placeholder-slate-400 dark:border-slate-600/50
+                      rounded-xl pr-12 h-10
                       focus-visible:ring-2 focus-visible:ring-purple-500/60 focus-visible:border-purple-500/60
+                      focus:text-slate-900 dark:focus:text-white
                     "
-                    // Prevent Safari/WebKit from inheriting transparent text from parents
-                    style={{ WebkitTextFillColor: "currentColor", minHeight: "40px" }}
+                    style={{ 
+                      color: 'inherit',
+                      WebkitTextFillColor: 'unset',
+                      minHeight: "40px",
+                      opacity: 1
+                    }}
                     autoComplete="off"
                     autoCorrect="on"
                     spellCheck
