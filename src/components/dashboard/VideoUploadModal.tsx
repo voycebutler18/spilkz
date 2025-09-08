@@ -19,7 +19,6 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 
-// ffmpeg v0.12+ API
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 
@@ -37,9 +36,9 @@ interface VideoUploadModalProps {
   onUploadComplete: () => void;
 }
 
-const MAX_VIDEO_DURATION = 3;
-const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024; // 1GB
-const MOBILE_MAX_SIZE = 1024 * 1024 * 1024;  // 1GB
+const MAX_VIDEO_DURATION = 3; // hard cap
+const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024;
+const MOBILE_MAX_SIZE = 1024 * 1024 * 1024;
 
 const MOOD_OPTIONS = [
   { value: "happy", label: "Happy" },
@@ -69,7 +68,7 @@ const formatBytes = (bytes: number) => {
   return `${value.toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
 };
 
-/* Make a poster image (JPEG) from a video Blob/File */
+/** Make a poster JPEG from a video Blob/File */
 async function makePosterFromVideoSource(source: Blob | File, atSeconds = 1): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
@@ -129,7 +128,7 @@ async function makePosterFromVideoSource(source: Blob | File, atSeconds = 1): Pr
   });
 }
 
-/* Upload a Blob via a signed URL */
+/** Upload a Blob via a signed URL */
 async function uploadBlob(bucket: string, path: string, blob: Blob): Promise<{ publicUrl: string }> {
   const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path);
   if (error || !data?.signedUrl) throw error || new Error("Failed to create signed upload URL.");
@@ -154,15 +153,14 @@ const blobToDataUrl = (blob: Blob) =>
     r.readAsDataURL(blob);
   });
 
-const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
+export default function VideoUploadModal({ open, onClose, onUploadComplete }: VideoUploadModalProps) {
   const [file, setFile] = useState<File | null>(null);
 
-  /** NEW: the exact video we will upload (mp4 after MOV transcode) */
+  // The exact video we will upload (mp4 after MOV transcode)
   const [uploadSource, setUploadSource] = useState<Blob | File | null>(null);
   const [uploadExt, setUploadExt] = useState<string>("mp4");
   const [uploadMime, setUploadMime] = useState<string>("video/mp4");
-
-  /** We use this for cover capture (same as uploadSource) */
+  // Used for cover frame extraction
   const [frameSource, setFrameSource] = useState<Blob | File | null>(null);
 
   const [title, setTitle] = useState("");
@@ -183,7 +181,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
+  // Always a 3s window: [start, end] but we clamp to <= 3s in handler
   const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]);
+
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -340,9 +340,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             if (!isFinite(duration) || duration <= 0) return finish(false, new Error("Invalid video duration"));
             setOriginalDuration(duration);
             setShowTrimmer(duration > MAX_VIDEO_DURATION);
-            const initialEnd = Math.min(MAX_VIDEO_DURATION, duration);
-            setTrimRange([0, initialEnd]);
-            setCoverTime(Math.min(duration, Math.max(0, initialEnd / 2)));
+            const end = Math.min(MAX_VIDEO_DURATION, duration);
+            setTrimRange([0, end]); // initial window is 0..min(3,duration)
+            setCoverTime(Math.min(duration, end / 2));
             finish(true);
           };
           probe.onerror = () => finish(false, new Error("Failed to read preview metadata."));
@@ -353,10 +353,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (isMOV(selectedFile)) {
         toast({
           title: "Converting MOV → MP4",
-          description: "We’ll also upload the MP4 so it plays everywhere.",
+          description: "We’ll upload MP4 so it plays everywhere.",
         });
         const mp4Blob = await transcodeMovToMp4(selectedFile);
-        // This is the video we’ll upload and use for cover capture
         setUploadSource(mp4Blob);
         setUploadExt("mp4");
         setUploadMime("video/mp4");
@@ -413,6 +412,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     if (!videoRef.current || !isPlaying) return;
     const el = videoRef.current;
     const tick = () => {
+      // keep playback inside the 3s window
       if (el.currentTime >= trimRange[1] || el.currentTime < trimRange[0]) {
         el.currentTime = trimRange[0];
       }
@@ -424,13 +424,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [isPlaying, trimRange]);
-
-  useEffect(() => {
-    const mid = (trimRange[0] + trimRange[1]) / 2;
-    setCoverTime((prev) =>
-      Math.min(trimRange[1] - 0.05, Math.max(trimRange[0] + 0.05, prev ?? mid))
-    );
-  }, [trimRange[0], trimRange[1]]);
 
   const togglePlayPause = () => {
     if (!videoRef.current || !videoReady || videoError) return;
@@ -468,22 +461,49 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const handleSeek = (value: number[]) => {
     if (!videoRef.current) return;
     const [pos] = value;
+    // Seek stays inside the enforced 3s window
     const newTime = Math.max(trimRange[0], Math.min(pos, trimRange[1]));
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
   };
 
+  /** Enforce a MAX 3s window even if the user drags beyond */
   const handleTrimChange = (value: number[]) => {
     if (!value || value.length < 2) return;
     let [start, end] = value as [number, number];
+
+    // clamp into the media duration
     start = Math.max(0, Math.min(start, originalDuration));
     end = Math.max(0, Math.min(end, originalDuration));
-    if (end < start) [start, end] = [end, start];
+
+    // identify which thumb moved (compare to previous)
+    const [prevStart, prevEnd] = trimRange;
+    const movedStart = Math.abs(start - prevStart) > Math.abs(end - prevEnd);
+
+    // enforce 3s window max
+    const maxEndFromStart = Math.min(start + MAX_VIDEO_DURATION, originalDuration);
+    const minStartFromEnd = Math.max(end - MAX_VIDEO_DURATION, 0);
+
+    if (end - start > MAX_VIDEO_DURATION) {
+      if (movedStart) {
+        // user dragged start → snap end to start+3
+        end = maxEndFromStart;
+      } else {
+        // user dragged end → snap start to end-3
+        start = minStartFromEnd;
+      }
+    }
+
     setTrimRange([start, end]);
-    const mid = start + Math.min(end - start, MAX_VIDEO_DURATION) / 2;
+
+    // keep cover in the middle of the SAVED 3s window
+    const savedEnd = Math.min(start + MAX_VIDEO_DURATION, end, originalDuration);
+    const mid = start + Math.min(savedEnd - start, MAX_VIDEO_DURATION) / 2;
     setCoverTime(Math.min(originalDuration, Math.max(0, mid)));
+
+    // keep the player cursor inside the window
     if (videoRef.current) {
-      if (videoRef.current.currentTime < start || videoRef.current.currentTime > end) {
+      if (videoRef.current.currentTime < start || videoRef.current.currentTime > savedEnd) {
         videoRef.current.currentTime = start;
         setCurrentTime(start);
       }
@@ -544,14 +564,16 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     if (!frameSource) return;
     try {
       setCapturingCover(true);
-      const safe = Math.min(trimRange[1] - 0.05, Math.max(trimRange[0] + 0.05, coverTime));
+      const safeStart = trimRange[0];
+      const safeEnd = Math.min(trimRange[0] + MAX_VIDEO_DURATION, trimRange[1], originalDuration);
+      const safe = Math.min(safeEnd - 0.05, Math.max(safeStart + 0.05, coverTime));
       const blob = await makePosterFromVideoSource(frameSource, safe);
       setCoverPreview(await blobToDataUrl(blob));
       toast({ title: "Cover updated", description: "We’ll use this frame for link previews." });
     } finally {
       setCapturingCover(false);
     }
-  }, [frameSource, coverTime, trimRange, toast]);
+  }, [frameSource, coverTime, trimRange, originalDuration, toast]);
 
   const handleUpload = async () => {
     if (!uploadSource || !title) {
@@ -572,10 +594,14 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const ext = uploadExt || "mp4";
       const videoPath = `${user.id}/${Date.now()}.${ext}`;
 
-      // IMPORTANT: upload the (possibly transcoded) source
+      // Upload the (possibly transcoded) source
       const { publicUrl } = await uploadWithProgress("spliks", videoPath, uploadSource);
 
-      const selectedStart = Math.max(0, Math.min(trimRange[0], originalDuration));
+      // HARD CAP: always save exactly 3s window
+      const selectedStart = Math.min(
+        Math.max(0, trimRange[0]),
+        Math.max(0, originalDuration - 0.05)
+      );
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
 
       const baseDesc =
@@ -584,7 +610,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
-      // Poster from the same (possibly-transcoded) source, clamped to trim window
+      // Poster inside the saved 3s window
       let thumbnail_url: string | null = null;
       let savedCoverTime = coverTime;
       try {
@@ -602,12 +628,12 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         user_id: user.id,
         title,
         description: finalDescription.trim(),
-        duration: MAX_VIDEO_DURATION,
+        duration: MAX_VIDEO_DURATION, // always 3
         file_size: (uploadSource as Blob).size ?? file?.size ?? null,
         mime_type: uploadMime || "video/mp4",
         status: "active",
         trim_start: selectedStart,
-        trim_end: enforcedEnd,
+        trim_end: enforcedEnd,          // <= start + 3s
         is_food: isFood,
         video_path: videoPath,
         video_url: publicUrl,
@@ -619,7 +645,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (dbError) throw dbError;
 
       setUploadProgress(100);
-      toast({ title: "Upload successful!", description: "Your 3-second Splik is live." });
+      toast({ title: "Upload successful!", description: "Saved as a 3-second Splik." });
 
       // Reset
       setFile(null);
@@ -674,7 +700,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader className="sticky top-0 bg-background z-10 pb-2">
           <DialogTitle>Upload Your 3-Second Splik</DialogTitle>
-          <DialogDescription>Share your perfect 3-second moment with the world</DialogDescription>
+          <DialogDescription>Pick any moment; we always save a 3.0s clip.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -682,7 +708,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-primary" />
               <AlertDescription className="text-sm">
-                <strong>Tip:</strong> MP4 uploads & plays everywhere. MOVs will be converted automatically.
+                <strong>Tip:</strong> MP4 uploads & plays everywhere. MOVs convert automatically.
               </AlertDescription>
             </div>
           </Alert>
@@ -692,7 +718,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               <div className="flex items-center gap-2">
                 <Smartphone className="h-4 w-4" />
                 <AlertDescription className="text-xs">
-                  On mobile, we’ll show a live conversion status if you upload a MOV.
+                  On mobile, you’ll see a conversion status if you upload a MOV.
                 </AlertDescription>
               </div>
             </Alert>
@@ -702,7 +728,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
               <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Processing your video…</h3>
-              <p className="text-sm text-muted-foreground">Preparing for 3-second clip</p>
+              <p className="text-sm text-muted-foreground">Preparing the 3-second clip</p>
             </div>
           ) : !file ? (
             <div
@@ -717,11 +743,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
               <p className="text-xs text-muted-foreground mb-2">
                 Supported: MP4 (preferred), MOV, FLV, WebM, AVI, MKV (max {formatBytes(maxFileSize)})
               </p>
-              <p className="text-xs text-primary font-medium">Videos will be trimmed to exactly 3 seconds on save</p>
+              <p className="text-xs text-primary font-medium">Saved length is always 3.0s</p>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".mp4,.mov,.flv,.webm,.avi,.mkv"
+                accept={acceptedFormats}
                 onChange={handleFileSelect}
                 className="hidden"
               />
@@ -743,7 +769,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   <p className="text-sm font-medium">
                     Converting MOV to MP4 for preview & upload… {transcodeProgress}%
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">Your video will play everywhere.</p>
                 </div>
               )}
 
@@ -790,10 +815,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                             <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2">
                               <div className="flex justify-between text-white text-xs font-medium">
                                 <span>{formatTime(currentTime - trimRange[0])}</span>
-                                <span>
-                                  Duration: {(trimRange[1] - trimRange[0]).toFixed(1)}s{" "}
-                                  <span className="opacity-80">(saved as exactly 3.0s)</span>
-                                </span>
+                                <span>Saved length: <strong>3.0s</strong> (auto-capped)</span>
                               </div>
 
                               <Slider
@@ -821,51 +843,24 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                 <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Scissors className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-medium">Trim (unlimited while editing)</span>
+                    <span className="text-sm font-medium">Pick any spot (we’ll save 3s)</span>
                   </div>
 
                   <div className="space-y-3">
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Start: {trimRange[0].toFixed(1)}s</span>
-                      <span className="font-bold text-primary">Range: {(trimRange[1] - trimRange[0]).toFixed(1)}s</span>
-                      <span>End: {trimRange[1].toFixed(1)}s</span>
+                      <span>Start: {trimRange[0].toFixed(2)}s</span>
+                      <span className="font-bold text-primary">Saved: 3.00s</span>
+                      <span>End: {Math.min(trimRange[0] + 3, originalDuration).toFixed(2)}s</span>
                     </div>
 
                     <Slider
                       value={trimRange}
                       min={0}
                       max={Math.max(originalDuration, 3)}
-                      step={0.1}
+                      step={0.01}
                       onValueChange={handleTrimChange}
                       className="my-4 touch-none select-none"
                     />
-
-                    <div className="flex gap-2 flex-wrap">
-                      <Button size="sm" variant="outline" onClick={() => {
-                        setTrimRange([0, Math.min(3, originalDuration)]);
-                        if (videoRef.current) { videoRef.current.currentTime = 0; setCurrentTime(0); }
-                        setCoverTime(Math.min(originalDuration, 1.5));
-                      }}>First 3s</Button>
-
-                      {originalDuration > 6 && (
-                        <Button size="sm" variant="outline" onClick={() => {
-                          const midStart = Math.max(0, originalDuration / 2 - 1.5);
-                          const midEnd = Math.min(midStart + 3, originalDuration);
-                          setTrimRange([midStart, midEnd]);
-                          if (videoRef.current) { videoRef.current.currentTime = midStart; setCurrentTime(midStart); }
-                          setCoverTime(midStart + (Math.min(midEnd - midStart, 3) / 2));
-                        }}>Middle 3s</Button>
-                      )}
-
-                      {originalDuration > 3 && (
-                        <Button size="sm" variant="outline" onClick={() => {
-                          const lastStart = Math.max(0, originalDuration - 3);
-                          setTrimRange([lastStart, originalDuration]);
-                          if (videoRef.current) { videoRef.current.currentTime = lastStart; setCurrentTime(lastStart); }
-                          setCoverTime(lastStart + 1.5);
-                        }}>Last 3s</Button>
-                      )}
-                    </div>
                   </div>
                 </div>
               )}
@@ -897,7 +892,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       <Slider
                         value={[coverTime]}
                         min={trimRange[0]}
-                        max={trimRange[1]}
+                        max={Math.min(trimRange[0] + MAX_VIDEO_DURATION, originalDuration)}
                         step={0.01}
                         onValueChange={(v) => setCoverTime(v[0])}
                       />
@@ -909,8 +904,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            const mid = trimRange[0] + Math.min(trimRange[1] - trimRange[0], MAX_VIDEO_DURATION) / 2;
-                            setCoverTime(Math.min(trimRange[1] - 0.05, Math.max(trimRange[0] + 0.05, mid)));
+                            const mid = trimRange[0] + MAX_VIDEO_DURATION / 2;
+                            setCoverTime(Math.min(trimRange[0] + MAX_VIDEO_DURATION - 0.05, Math.max(trimRange[0] + 0.05, mid)));
                           }}
                         >
                           Middle of clip
@@ -1024,6 +1019,4 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       </DialogContent>
     </Dialog>
   );
-};
-
-export default VideoUploadModal;
+}
