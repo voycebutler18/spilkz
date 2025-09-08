@@ -602,21 +602,11 @@ export default function MessageThread() {
                         send();
                       }
                     }}
-                    className="
-                      bg-white text-black placeholder-gray-500 border-0
-                      rounded-full px-6 py-4 text-base font-medium
-                      shadow-inner focus:shadow-lg transition-all duration-200
-                      focus:ring-2 focus:ring-purple-500/50 focus:bg-white
-                    "
+                    className="w-full h-12 px-6 text-black bg-white border-0 rounded-full focus:ring-2 focus:ring-purple-500/50 placeholder-gray-500"
                     style={{ 
-                      backgroundColor: '#ffffff',
                       color: '#000000',
-                      minHeight: "48px",
-                      WebkitTextFillColor: '#000000'
+                      backgroundColor: '#ffffff',
                     }}
-                    autoComplete="off"
-                    autoCorrect="on"
-                    spellCheck
                   />
                 </div>
 
