@@ -3,15 +3,15 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, Compass, PlusCircle, MessageSquare, User } from "lucide-react";
 
 interface MobileTabBarProps {
-  onUploadClick: () => void;    // open your existing VideoUploadModal
+  onUploadClick: () => void;    // opens your existing Upload modal
   isAuthed?: boolean;
-  profilePath?: string;         // e.g. `/creator/${username}` or `/dashboard`
+  profilePath?: string;         // e.g. `/creator/:slug` or `/dashboard`
 }
 
-const itemCls =
+const item =
   "flex flex-col items-center justify-center flex-1 py-2 text-xs transition-colors";
 
-const iconCls = (active: boolean) =>
+const icon = (active: boolean) =>
   `h-6 w-6 ${active ? "text-primary" : "text-muted-foreground"}`;
 
 export default function MobileTabBar({
@@ -21,6 +21,11 @@ export default function MobileTabBar({
 }: MobileTabBarProps) {
   const nav = useNavigate();
   const { pathname } = useLocation();
+
+  const isProfile =
+    pathname.startsWith("/creator") ||
+    pathname.startsWith("/profile") ||
+    pathname.startsWith("/dashboard");
 
   return (
     <nav
@@ -32,19 +37,21 @@ export default function MobileTabBar({
       aria-label="Primary"
     >
       <div className="mx-auto max-w-[520px] grid grid-cols-5">
-        <NavLink to="/" className={({ isActive }) => `${itemCls}`}>
+        <NavLink to="/" className={item}>
           {({ isActive }) => (
             <>
-              <Home className={iconCls(isActive || pathname === "/")} />
-              <span className={isActive ? "text-primary" : "text-muted-foreground"}>Home</span>
+              <Home className={icon(isActive || pathname === "/")} />
+              <span className={isActive ? "text-primary" : "text-muted-foreground"}>
+                Home
+              </span>
             </>
           )}
         </NavLink>
 
-        <NavLink to="/explore" className={itemCls}>
+        <NavLink to="/explore" className={item}>
           {({ isActive }) => (
             <>
-              <Compass className={iconCls(isActive)} />
+              <Compass className={icon(isActive)} />
               <span className={isActive ? "text-primary" : "text-muted-foreground"}>
                 Discover
               </span>
@@ -52,9 +59,9 @@ export default function MobileTabBar({
           )}
         </NavLink>
 
-        {/* Upload is a button so we don't change routes */}
+        {/* Upload = button, not a route change */}
         <button
-          className={`${itemCls} text-primary`}
+          className={`${item} text-primary`}
           onClick={onUploadClick}
           aria-label="Upload"
         >
@@ -62,10 +69,10 @@ export default function MobileTabBar({
           <span>Upload</span>
         </button>
 
-        <NavLink to="/messages" className={itemCls}>
+        <NavLink to="/messages" className={item}>
           {({ isActive }) => (
             <>
-              <MessageSquare className={iconCls(isActive)} />
+              <MessageSquare className={icon(isActive)} />
               <span className={isActive ? "text-primary" : "text-muted-foreground"}>
                 Inbox
               </span>
@@ -74,12 +81,12 @@ export default function MobileTabBar({
         </NavLink>
 
         <button
-          className={itemCls}
+          className={item}
           onClick={() => nav(isAuthed ? profilePath : "/login")}
           aria-label="Profile"
         >
-          <User className={iconCls(pathname.startsWith("/creator") || pathname.startsWith("/dashboard"))} />
-          <span className={(pathname.startsWith("/creator") || pathname.startsWith("/dashboard")) ? "text-primary" : "text-muted-foreground"}>
+          <User className={icon(isProfile)} />
+          <span className={isProfile ? "text-primary" : "text-muted-foreground"}>
             Profile
           </span>
         </button>
