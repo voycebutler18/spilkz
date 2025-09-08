@@ -12,12 +12,17 @@ import { createHomeFeed, forceNewRotation } from "@/lib/feed";
 
 type SplikWithProfile = any;
 
+const INITIAL_VISIBLE = 18; // how many to mount initially (perf)
+const LOAD_MORE_STEP = 12;  // how many more each click
+
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [spliks, setSpliks] = useState<SplikWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -45,10 +50,13 @@ const Index = () => {
     if (showToast) setRefreshing(true);
     else setLoading(true);
 
+    // keep DOM light on every refresh
+    setVisibleCount(INITIAL_VISIBLE);
+
     try {
       if (forceNewShuffle) forceNewRotation();
 
-      // 1) all spliks
+      // 1) all spliks (recent first)
       const { data: allSpliks, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
@@ -75,23 +83,33 @@ const Index = () => {
         .order("boost_score", { ascending: false })
         .limit(15);
 
-      // 3) build feed
-      const rotatedFeed = createHomeFeed(allSpliks || [], boostedSpliks || [], {
+      // 3) build feed (shuffled by your helper)
+      let feed = createHomeFeed(allSpliks || [], boostedSpliks || [], {
         userId: user?.id,
         feedType: "home",
-        maxResults: 30,
-      });
+        maxResults: 60, // allow more variety for "load more"
+      }) as SplikWithProfile[];
 
-      // 4) track impressions
-      rotatedFeed
+      // 4) PIN newest at the very top, shuffle the rest
+      const newest = (allSpliks || [])[0];
+      if (newest) {
+        const idx = feed.findIndex((x: any) => x.id === newest.id);
+        if (idx > 0) {
+          const [item] = feed.splice(idx, 1);
+          feed = [item, ...feed];
+        }
+      }
+
+      // 5) track impressions for boosted items
+      feed
         .filter((s: any) => s.isBoosted)
         .forEach((s: any) =>
           supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
         );
 
-      // 5) attach profiles
+      // 6) attach profiles
       const withProfiles = await Promise.all(
-        rotatedFeed.map(async (s: any) => {
+        feed.map(async (s: any) => {
           const { data: profileData } = await supabase
             .from("profiles")
             .select("*")
@@ -223,14 +241,13 @@ const Index = () => {
           <div className="w-full px-2 sm:px-4">
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
               <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • New shuffle on each refresh
+                Showing {Math.min(visibleCount, spliks.length)} of {spliks.length} videos • Newest is pinned • Rest are shuffled
               </p>
             </div>
 
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {spliks.map((splik: any, index: number) => (
+              {spliks.slice(0, visibleCount).map((splik: any, index: number) => (
                 <div key={`${splik.id}-${index}`} className="relative">
-                  {/* No extra overlays here — SplikCard owns the promote UI */}
                   <SplikCard
                     splik={splik}
                     onSplik={() => handleSplik(splik.id)}
@@ -239,6 +256,19 @@ const Index = () => {
                   />
                 </div>
               ))}
+
+              {visibleCount < spliks.length && (
+                <div className="text-center py-6">
+                  <Button
+                    onClick={() => setVisibleCount((c) => Math.min(c + LOAD_MORE_STEP, spliks.length))}
+                    variant="outline"
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Load more
+                  </Button>
+                </div>
+              )}
 
               <div className="text-center py-6 border-t border-border/40">
                 <p className="text-sm text-muted-foreground mb-3">Want to see more?</p>
