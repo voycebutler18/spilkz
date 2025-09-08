@@ -53,12 +53,12 @@ export default function CombinedMessages() {
   const navigate = useNavigate();
   const [me, setMe] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  
+
   // Inbox state
   const [allMessages, setAllMessages] = useState<Msg[]>([]);
   const [profiles, setProfiles] = useState<Record<string, ProfileLite>>({});
   const [searchQuery, setSearchQuery] = useState("");
-  
+
   // Active chat state
   const [activeThreadMsgs, setActiveThreadMsgs] = useState<Msg[]>([]);
   const [text, setText] = useState("");
@@ -69,10 +69,18 @@ export default function CombinedMessages() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
 
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  // Refs
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // Scroll the messages container only (not the window)
+  const scrollThreadToBottom = (smooth = true) => {
+    const el = messagesRef.current;
+    if (!el) return;
+    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
+  };
 
   const commonEmojis = ["😀", "😂", "❤️", "👍", "👎", "😢", "😮", "😡", "🎉", "🔥", "💯", "😊"];
 
@@ -83,7 +91,7 @@ export default function CombinedMessages() {
 
   const activeThreadKey = useMemo(() => {
     if (!me || !otherId) return null;
-    return me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
+    return me < (otherId as string) ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
   // Load inbox messages
@@ -107,12 +115,10 @@ export default function CombinedMessages() {
       if (cancelled) return;
 
       setAllMessages((data as Msg[]) ?? []);
-      
+
       // Load partner profiles
       const partnerIds = Array.from(
-        new Set(
-          (data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id))
-        )
+        new Set((data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id)))
       );
       if (partnerIds.length) {
         const { data: ps } = await supabase
@@ -144,9 +150,10 @@ export default function CombinedMessages() {
         (payload) => {
           const newMsg = payload.new as Msg;
           setAllMessages((prev) => [newMsg, ...prev]);
-          // If it's for the active thread, add to thread messages too
+          // If it's for the active thread, add to thread messages too and keep at bottom
           if (activeThreadKey && newMsg.thread_key === activeThreadKey) {
             setActiveThreadMsgs((prev) => [...prev, newMsg]);
+            setTimeout(() => scrollThreadToBottom(true), 0);
           }
         }
       )
@@ -191,12 +198,12 @@ export default function CombinedMessages() {
         .select("*")
         .eq("thread_key", activeThreadKey)
         .order("created_at", { ascending: true });
-      
+
       if (error) {
         console.error(error);
         return;
       }
-      
+
       setActiveThreadMsgs((data as Msg[]) || []);
 
       // Mark as read
@@ -207,6 +214,9 @@ export default function CombinedMessages() {
         await supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", toMark);
         setUnreadCount(0);
       }
+
+      // ensure we're at the bottom when loading a thread
+      setTimeout(() => scrollThreadToBottom(false), 0);
     };
 
     loadActiveThread();
@@ -237,14 +247,23 @@ export default function CombinedMessages() {
     };
   }, [activeThreadKey, me, otherId]);
 
-  // Auto scroll and typing indicators
+  // Track whether user is scrolled up (so we don't auto-jump)
+  const handleScroll = () => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    setIsScrolledUp(!isAtBottom);
+  };
+
+  // Auto scroll only when not scrolled up
   useEffect(() => {
     if (!isScrolledUp) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollThreadToBottom(true);
       setUnreadCount(0);
     }
   }, [activeThreadMsgs.length, isScrolledUp]);
 
+  // Typing broadcast
   useEffect(() => {
     if (!me || !otherId || !activeThreadKey) return;
     const ch = supabase.channel(`dm-${activeThreadKey}`);
@@ -255,6 +274,7 @@ export default function CombinedMessages() {
     return () => {
       clearTimeout(start);
       clearTimeout(stop);
+      supabase.removeChannel(ch);
     };
   }, [text, me, otherId, activeThreadKey]);
 
@@ -307,6 +327,8 @@ export default function CombinedMessages() {
     };
     setActiveThreadMsgs((prev) => [...prev, optimistic]);
     setText("");
+    // keep the view pinned to the bottom after send
+    setTimeout(() => scrollThreadToBottom(false), 0);
 
     const { error } = await supabase.from("messages").insert({
       sender_id: me,
@@ -326,7 +348,10 @@ export default function CombinedMessages() {
       .select("*")
       .eq("thread_key", activeThreadKey)
       .order("created_at", { ascending: true });
-    if (latest) setActiveThreadMsgs(latest as Msg[]);
+    if (latest) {
+      setActiveThreadMsgs(latest as Msg[]);
+      setTimeout(() => scrollThreadToBottom(false), 0);
+    }
   };
 
   const selectThread = (partnerId: string) => {
@@ -429,7 +454,7 @@ export default function CombinedMessages() {
                   Dashboard
                 </Button>
               </div>
-              
+
               {/* Search */}
               <div className="relative">
                 <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -493,9 +518,7 @@ export default function CombinedMessages() {
                             )}
                           </div>
                         </div>
-                        <div className="text-sm text-slate-400 truncate">
-                          {last || "(no message)"}
-                        </div>
+                        <div className="text-sm text-slate-400 truncate">{last || "(no message)"}</div>
                       </div>
                     </div>
                   );
@@ -537,9 +560,7 @@ export default function CombinedMessages() {
                           />
                           <span className="text-slate-400">
                             {otherOnline ? "Online" : "Offline"}
-                            {otherTyping && (
-                              <span className="ml-2 text-purple-400 animate-pulse">typing...</span>
-                            )}
+                            {otherTyping && <span className="ml-2 text-purple-400 animate-pulse">typing...</span>}
                           </span>
                         </div>
                       </div>
@@ -585,7 +606,9 @@ export default function CombinedMessages() {
                 {/* Messages Area */}
                 <div
                   ref={messagesRef}
+                  onScroll={handleScroll}
                   className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
+                  style={{ overscrollBehaviorY: "contain" }} // prevent scroll chaining to body
                 >
                   {activeThreadMsgs.map((m, index) => {
                     const mine = m.sender_id === me;
@@ -599,19 +622,14 @@ export default function CombinedMessages() {
                         <div className={`flex items-end gap-2 max-w-[80%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
                           {!mine && (
                             <div className={`w-6 h-6 flex-shrink-0 ${showAvatar ? "" : "invisible"}`}>
-                              {showAvatar && (
-                                otherProfile?.avatar_url ? (
-                                  <img
-                                    src={otherProfile.avatar_url}
-                                    alt={nameFor(m.sender_id)}
-                                    className="w-6 h-6 rounded-full"
-                                  />
+                              {showAvatar &&
+                                (otherProfile?.avatar_url ? (
+                                  <img src={otherProfile.avatar_url} alt={nameFor(m.sender_id)} className="w-6 h-6 rounded-full" />
                                 ) : (
                                   <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
                                     {nameFor(m.sender_id).charAt(0).toUpperCase()}
                                   </div>
-                                )
-                              )}
+                                ))}
                             </div>
                           )}
 
@@ -661,8 +679,6 @@ export default function CombinedMessages() {
                       </div>
                     </div>
                   )}
-
-                  <div ref={bottomRef} />
                 </div>
 
                 {/* Message Composer */}
