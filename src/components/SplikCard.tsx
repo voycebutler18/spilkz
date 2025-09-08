@@ -18,7 +18,7 @@ import BoostModal from "@/components/BoostModal";
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 
-// shadcn dropdown (this import must exist, otherwise you'll get "DropdownMenu is not defined")
+// shadcn dropdown
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,7 @@ type Splik = {
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
+  poster_url?: string | null; // ✅ NEW
   likes_count?: number | null;
   comments_count?: number | null;
   mood?: string | null;
@@ -346,7 +347,7 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
         <video
           ref={videoRef}
           src={splik.video_url}
-          poster={splik.thumbnail_url || undefined}
+          poster={splik.thumbnail_url || splik.poster_url || undefined} {/* ✅ use generated still */}
           className="block w-full h-full object-cover"
           autoPlay={false}
           loop={false}
@@ -498,6 +499,8 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || "Check out this video"}
+        // shareUrl is OPTIONAL; uncomment if your ShareModal supports it:
+        // shareUrl={`${window.location.origin.replace(/\/$/,'')}/v/${splik.id}`}
       />
       <CommentsModal
         isOpen={showCommentsModal}
