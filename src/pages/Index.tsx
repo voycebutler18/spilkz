@@ -12,8 +12,9 @@ import { createHomeFeed, forceNewRotation } from "@/lib/feed";
 
 type SplikWithProfile = any;
 
-const INITIAL_VISIBLE = 18; // how many to mount initially (perf)
-const LOAD_MORE_STEP = 12;  // how many more each click
+// Rolling window: keep 5 videos “live” at any time
+const LOAD_WINDOW = 5;
+const HALF = Math.floor(LOAD_WINDOW / 2);
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -21,12 +22,11 @@ const Index = () => {
   const [spliks, setSpliks] = useState<SplikWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+  const [activeIndex, setActiveIndex] = useState(0); // who’s mostly visible
 
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // set a static title without Helmet
   useEffect(() => {
     document.title = "Splikz - Short Video Platform";
   }, []);
@@ -49,9 +49,6 @@ const Index = () => {
   const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
     if (showToast) setRefreshing(true);
     else setLoading(true);
-
-    // keep DOM light on every refresh
-    setVisibleCount(INITIAL_VISIBLE);
 
     try {
       if (forceNewShuffle) forceNewRotation();
@@ -87,10 +84,10 @@ const Index = () => {
       let feed = createHomeFeed(allSpliks || [], boostedSpliks || [], {
         userId: user?.id,
         feedType: "home",
-        maxResults: 60, // allow more variety for "load more"
+        maxResults: 60,
       }) as SplikWithProfile[];
 
-      // 4) PIN newest at the very top, shuffle the rest
+      // 4) PIN newest at the very top
       const newest = (allSpliks || [])[0];
       if (newest) {
         const idx = feed.findIndex((x: any) => x.id === newest.id);
@@ -100,7 +97,7 @@ const Index = () => {
         }
       }
 
-      // 5) track impressions for boosted items
+      // 5) impressions
       feed
         .filter((s: any) => s.isBoosted)
         .forEach((s: any) =>
@@ -120,6 +117,8 @@ const Index = () => {
       );
 
       setSpliks(withProfiles);
+      setActiveIndex(0); // reset window to the first item
+
       if (showToast) {
         toast({
           title: forceNewShuffle ? "Feed reshuffled!" : "Feed refreshed!",
@@ -182,6 +181,15 @@ const Index = () => {
     }
   };
 
+  // compute which indices should have a real <video src=...> attached
+  const shouldLoadIndex = (i: number) => {
+    if (!spliks.length) return false;
+    if (activeIndex <= HALF) return i <= Math.min(spliks.length - 1, LOAD_WINDOW - 1);
+    const start = Math.max(0, activeIndex - HALF);
+    const end = Math.min(spliks.length - 1, activeIndex + HALF);
+    return i >= start && i <= end;
+  };
+
   return (
     <div className="w-full">
       {/* top controls */}
@@ -241,14 +249,17 @@ const Index = () => {
           <div className="w-full px-2 sm:px-4">
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
               <p className="text-xs text-center text-muted-foreground">
-                Showing {Math.min(visibleCount, spliks.length)} of {spliks.length} videos • Newest is pinned • Rest are shuffled
+                Showing {spliks.length} videos • Newest is pinned • Rest are shuffled
               </p>
             </div>
 
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {spliks.slice(0, visibleCount).map((splik: any, index: number) => (
+              {spliks.map((splik: any, index: number) => (
                 <div key={`${splik.id}-${index}`} className="relative">
                   <SplikCard
+                    index={index}
+                    shouldLoad={shouldLoadIndex(index)}
+                    onPrimaryVisible={(i) => setActiveIndex(i)}
                     splik={splik}
                     onSplik={() => handleSplik(splik.id)}
                     onReact={() => handleReact(splik.id)}
@@ -256,19 +267,6 @@ const Index = () => {
                   />
                 </div>
               ))}
-
-              {visibleCount < spliks.length && (
-                <div className="text-center py-6">
-                  <Button
-                    onClick={() => setVisibleCount((c) => Math.min(c + LOAD_MORE_STEP, spliks.length))}
-                    variant="outline"
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    Load more
-                  </Button>
-                </div>
-              )}
 
               <div className="text-center py-6 border-t border-border/40">
                 <p className="text-sm text-muted-foreground mb-3">Want to see more?</p>
