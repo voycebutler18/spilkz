@@ -75,6 +75,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  // guard to prevent double-firing while request in-flight
+  const [likePendingIds, setLikePendingIds] = useState<Set<string>>(new Set());
 
   // favorites UI
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
@@ -304,26 +306,85 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return;
     }
 
-    const isLiked = likedIds.has(splikId);
+    // prevent double-click / double-render races
+    if (likePendingIds.has(splikId)) return;
+    setLikePendingIds((prev) => new Set(prev).add(splikId));
+
+    const wasLiked = likedIds.has(splikId);
+
+    // optimistic toggle of heart state
     setLikedIds((prev) => {
       const ns = new Set(prev);
-      isLiked ? ns.delete(splikId) : ns.add(splikId);
+      wasLiked ? ns.delete(splikId) : ns.add(splikId);
       return ns;
     });
 
+    // optimistic counter change in local spliks
+    setSpliks((prev) =>
+      prev.map((s) =>
+        s.id === splikId
+          ? {
+              ...s,
+              likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? -1 : 1)),
+            }
+          : s
+      )
+    );
+
     try {
-      if (isLiked) {
-        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
+      if (wasLiked) {
+        const { error } = await supabase
+          .from("likes")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("splik_id", splikId);
+        if (error) throw error;
       } else {
-        await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
+        // idempotent like: respects unique (user_id,splik_id)
+        const { error } = await supabase
+          .from("likes")
+          .upsert(
+            { user_id: user.id, splik_id: splikId },
+            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
+          );
+        if (error) throw error;
+      }
+
+      // snap to the real count from DB so UI can’t drift
+      const { count } = await supabase
+        .from("likes")
+        .select("*", { head: true, count: "exact" })
+        .eq("splik_id", splikId);
+
+      if (typeof count === "number") {
+        setSpliks((prev) =>
+          prev.map((s) => (s.id === splikId ? { ...s, likes_count: count } : s))
+        );
       }
     } catch {
+      // revert local optimistic changes on error
       setLikedIds((prev) => {
         const ns = new Set(prev);
-        isLiked ? ns.add(splikId) : ns.delete(splikId);
+        wasLiked ? ns.add(splikId) : ns.delete(splikId);
         return ns;
       });
+      setSpliks((prev) =>
+        prev.map((s) =>
+          s.id === splikId
+            ? {
+                ...s,
+                likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? 1 : -1)),
+              }
+            : s
+        )
+      );
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+    } finally {
+      setLikePendingIds((prev) => {
+        const ns = new Set(prev);
+        ns.delete(splikId);
+        return ns;
+      });
     }
   };
 
@@ -406,7 +467,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         description:
           (error as any).code === "42501"
             ? "You don't have permission to post comments. (RLS policy)"
-            : (error.message || "Failed to post comment"),
+            : error.message || "Failed to post comment",
         variant: "destructive",
       });
       return;
@@ -549,8 +610,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => handleLike(s.id)}
+                      disabled={likePendingIds.has(s.id)}
                       className={likedIds.has(s.id) ? "text-red-500 hover:text-red-600" : "hover:text-red-500"}
                       aria-pressed={likedIds.has(s.id)}
+                      title={likedIds.has(s.id) ? "Unlike" : "Like"}
                     >
                       <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
                     </Button>
