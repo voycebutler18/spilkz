@@ -1,20 +1,13 @@
 // src/components/ui/VideoFeed.tsx
-import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Heart,
-  MessageCircle,
-  Share2,
-  Bookmark,
-  MoreVertical,
-  Volume2,
-  VolumeX,
-  Send,
+  Heart, MessageCircle, Share2, Bookmark, BookmarkCheck,
+  MoreVertical, Volume2, VolumeX, Send, Play, Pause
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,20 +16,20 @@ import { useToast } from "@/hooks/use-toast";
 /* ---------------- types ---------------- */
 interface Splik {
   id: string;
-  title: string | null;
+  title: string;
   description?: string | null;
   video_url: string;
-  thumb_url?: string | null;     // from view
+  thumbnail_url?: string | null;
   user_id: string;
-  username?: string | null;      // from view
   likes_count?: number | null;
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
-  trim_end?: number | null;
-  mime_type?: string | null;     // from view when present
-  file_size?: number | null;
-  liked_by_me?: boolean;         // from view
+  profiles?: {
+    first_name?: string | null;
+    last_name?: string | null;
+    username?: string | null;
+  } | null;
 }
 
 interface Comment {
@@ -52,403 +45,197 @@ interface VideoFeedProps {
 }
 
 /* ---------- helpers ---------- */
-const displayName = (s: Splik) => (s.username ? `@${s.username}` : "Anonymous");
+const nameFor = (s: Splik) =>
+  (s.profiles?.first_name || s.profiles?.username || "Anonymous User")!.toString();
 
 const initialsFor = (s: Splik) =>
-  (s.username || "A").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 2) || "A";
-
-const mimeFromUrl = (url: string): string => {
-  const clean = url.split("?")[0].split("#")[0];
-  const ext = clean.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "mp4":
-      return "video/mp4";
-    case "mov":
-      return "video/quicktime";
-    case "webm":
-      return "video/webm";
-    case "flv":
-      return "video/x-flv";
-    case "avi":
-      return "video/x-msvideo";
-    default:
-      return "video/mp4";
-  }
-};
+  nameFor(s)
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
-  const { pathname } = useLocation();
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
 
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+
+  // ✅ favorites UI
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set()); // disable while in-flight
+
   const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
 
-  // feed / autoplay state
+  // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
-  const [activeIndex, setActiveIndex] = useState<number>(-1);
-
-  // per-video bookkeeping
-  const timeupdateHandlers = useRef<Record<number, (e: Event) => void>>({});
-  const errorRetried = useRef<Record<number, boolean>>({});
-
-  /* --------- ALWAYS start at top on route change + on load --------- */
-  useLayoutEffect(() => {
-    try {
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    } catch {}
-    if (containerRef.current) {
-      containerRef.current.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    }
-  }, [pathname]);
+  const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
+  const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
+  const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
   useEffect(() => {
     const load = async () => {
       try {
         const { data, error } = await supabase
-          .from("spliks_feed")
-          .select("*")
+          .from("spliks")
+          .select("id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start,profiles(username,first_name,last_name)")
           .order("created_at", { ascending: false });
 
         if (error) throw error;
+        setSpliks(data || []);
 
-        const rows = (data as Splik[]) || [];
-        setSpliks(rows);
+        // init mute/pause UI
+        const mutedState: Record<number, boolean> = {};
+        const pauseState: Record<number, boolean> = {};
+        (data || []).forEach((_, index) => {
+          mutedState[index] = false;
+          pauseState[index] = true;
+        });
+        setMuted(mutedState);
+        setShowPauseButton(pauseState);
 
-        // seed liked set from view
-        setLikedIds(new Set(rows.filter((r) => r.liked_by_me).map((r) => r.id)));
+        // preload likes + favorites for this user
+        if (user?.id) {
+          const [{ data: likes }, { data: favs }] = await Promise.all([
+            supabase.from("likes").select("splik_id").eq("user_id", user.id),
+            supabase.from("favorites").select("splik_id").eq("user_id", user.id),
+          ]);
+          if (likes) setLikedIds(new Set(likes.map((l) => l.splik_id)));
+          if (favs) setSavedIds(new Set(favs.map((f) => f.splik_id)));
+        }
       } catch (e) {
         console.error(e);
       } finally {
         setLoading(false);
-        containerRef.current && (containerRef.current.scrollTop = 0);
       }
     };
     load();
   }, [user?.id]);
 
-  // ensure top when list length changes (e.g., switching feeds)
+  /* ---------- realtime sync for favorites (this user) ---------- */
   useEffect(() => {
-    if (containerRef.current) containerRef.current.scrollTop = 0;
-  }, [spliks.length]);
+    if (!user?.id) return;
+    const ch = supabase
+      .channel(`favorites-user-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "favorites", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const sid = (payload.new as any)?.splik_id;
+          if (sid) setSavedIds((prev) => new Set(prev).add(sid));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "favorites", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const sid = (payload.old as any)?.splik_id;
+          if (sid)
+            setSavedIds((prev) => {
+              const ns = new Set(prev);
+              ns.delete(sid);
+              return ns;
+            });
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user?.id]);
 
-  useEffect(() => {
-    if (activeIndex < 0 || !spliks[activeIndex]) return;
-    const s = spliks[activeIndex];
-    const sessionId = getViewSessionId();
-    supabase.rpc("increment_view_with_session", {
-      p_session_id: sessionId,
-      p_splik_id: s.id,
-      p_viewer_id: user?.id ?? null,
-      p_ip_address: null,
-    }).catch(() => {});
-  }, [activeIndex, spliks, user?.id]);
-
-  /* -------- Realtime: likes/comments/counter updates -------- */
-  useEffect(() => {
-    const channel = supabase.channel("feed-realtime", {
-      config: { broadcast: { ack: true }, presence: { key: user?.id || "anon" } },
+  // Mute all other videos
+  const muteOtherVideos = (exceptIndex: number) => {
+    videoRefs.current.forEach((video, index) => {
+      if (video && index !== exceptIndex) {
+        video.muted = true;
+        video.pause();
+        setIsPlaying(prev => ({ ...prev, [index]: false }));
+      }
     });
-
-    // Likes
-    channel.on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "likes" },
-      (payload: any) => {
-        const { splik_id, user_id } = payload.new || {};
-        if (user?.id && user_id === user.id) {
-          setLikedIds((prev) => new Set(prev).add(splik_id));
-        }
-        setSpliks((prev) =>
-          prev.map((s) =>
-            s.id === splik_id ? { ...s, likes_count: (Number(s.likes_count) || 0) + 1 } : s
-          )
-        );
-      }
-    );
-
-    channel.on(
-      "postgres_changes",
-      { event: "DELETE", schema: "public", table: "likes" },
-      (payload: any) => {
-        const { splik_id, user_id } = payload.old || {};
-        if (user?.id && user_id === user.id) {
-          setLikedIds((prev) => {
-            const ns = new Set(prev);
-            ns.delete(splik_id);
-            return ns;
-          });
-        }
-        setSpliks((prev) =>
-          prev.map((s) =>
-            s.id === splik_id
-              ? { ...s, likes_count: Math.max(0, (Number(s.likes_count) || 0) - 1) }
-              : s
-          )
-        );
-      }
-    );
-
-    // Comments
-    channel.on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "comments" },
-      (payload: any) => {
-        const { splik_id } = payload.new || {};
-        setSpliks((prev) =>
-          prev.map((s) =>
-            s.id === splik_id ? { ...s, comments_count: (Number(s.comments_count) || 0) + 1 } : s
-          )
-        );
-        if (showCommentsFor === splik_id) {
-          setComments((prev) => [payload.new, ...prev]);
-        }
-      }
-    );
-
-    channel.on(
-      "postgres_changes",
-      { event: "DELETE", schema: "public", table: "comments" },
-      (payload: any) => {
-        const { splik_id, id } = payload.old || {};
-        setSpliks((prev) =>
-          prev.map((s) =>
-            s.id === splik_id
-              ? { ...s, comments_count: Math.max(0, (Number(s.comments_count) || 0) - 1) }
-              : s
-          )
-        );
-        if (showCommentsFor === splik_id) {
-          setComments((prev) => prev.filter((c) => c.id !== id));
-        }
-      }
-    );
-
-    // If your backend updates counter columns directly on spliks, reflect them
-    channel.on(
-      "postgres_changes",
-      { event: "UPDATE", schema: "public", table: "spliks" },
-      (payload: any) => {
-        const row = payload.new;
-        setSpliks((prev) =>
-          prev.map((s) =>
-            s.id === row.id
-              ? {
-                  ...s,
-                  likes_count: row.likes_count ?? s.likes_count,
-                  comments_count: row.comments_count ?? s.comments_count,
-                  views_count: row.views_count ?? s.views_count,   // 👈 add this
-                }
-              : s
-          )
-        );
-      }
-    );
-
-    channel.subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id, showCommentsFor]);
-
-  /* ========== AUTOPLAY MANAGER (mobile-safe) ========== */
-  const thresholds = useMemo(
-    () => Array.from({ length: 21 }, (_, i) => i / 20), // 0, .05, .10 ... 1
-    []
-  );
-
-  const setupVideoForMobile = (v: HTMLVideoElement, poster?: string | null) => {
-    v.muted = true;
-    v.playsInline = true;
-    v.setAttribute("playsinline", "true");
-    // @ts-expect-error vendor attr
-    v.setAttribute("webkit-playsinline", "true");
-    v.setAttribute("x5-playsinline", "true");
-    v.setAttribute("x5-video-player-type", "h5");
-    v.controls = false;
-    v.disablePictureInPicture = true;
-    // @ts-expect-error vendor attr
-    v.disableRemotePlayback = true;
-    v.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
-    if (poster) v.poster = poster || "";
   };
 
-  const applyThreeSecondLoop = (index: number, startAt: number) => {
-    const v = videoRefs.current[index];
-    if (!v) return;
-    const loopEnd = startAt + 3;
-    const prev = timeupdateHandlers.current[index];
-    if (prev) {
-      v.removeEventListener("timeupdate", prev);
-      delete timeupdateHandlers.current[index];
-    }
-    const handler = () => {
-      if (v.currentTime >= loopEnd) {
-        try {
-          v.currentTime = startAt;
-        } catch {}
-      }
-    };
-    v.addEventListener("timeupdate", handler);
-    timeupdateHandlers.current[index] = handler;
-  };
-
+  /* ========== Autoplay with intersection observer ========== */
   useEffect(() => {
-    const root = containerRef.current;
-    if (!root) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const sectionVisibility: Record<number, number> = {};
-    let currentPlayingIndex: number | null = null;
-    let isProcessing = false;
+    let currentPlayingVideo: HTMLVideoElement | null = null;
+    let currentPlayingIndex: number = -1;
 
-    const findMostVisible = () => {
-      const pairs = Object.entries(sectionVisibility).map(([i, r]) => ({
-        i: Number(i),
-        r,
-      }));
-      if (!pairs.length) return -1;
-      pairs.sort((a, b) => b.r - a.r);
-      return pairs[0].r >= 0.6 ? pairs[0].i : -1;
-    };
+    const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
+      for (const entry of entries) {
+        const index = Number((entry.target as HTMLElement).dataset.index);
+        const video = videoRefs.current[index];
+        if (!video) continue;
 
-    const pauseVideo = (i: number) => {
-      const v = videoRefs.current[i];
-      if (!v) return;
-      try {
-        v.pause();
-      } catch {}
-    };
+        if (entry.intersectionRatio > 0.5) {
+          if (currentPlayingVideo && currentPlayingVideo !== video) {
+            currentPlayingVideo.pause();
+            setIsPlaying(prev => ({ ...prev, [currentPlayingIndex]: false }));
+          }
 
-    const playVideo = async (i: number) => {
-      const v = videoRefs.current[i];
-      if (!v) return false;
+          muteOtherVideos(index);
 
-      setupVideoForMobile(v, spliks[i]?.thumb_url ?? undefined);
-      v.muted = muted[i] ?? true;
+          video.muted = muted[index] ?? false;
+          video.playsInline = true;
 
-      const startAt = Number(spliks[i]?.trim_start ?? 0);
-      if (v.currentTime < startAt || v.currentTime > startAt + 3) {
-        try {
-          v.currentTime = startAt;
-        } catch {}
-      }
-      applyThreeSecondLoop(i, startAt);
+          const startAt = Number(spliks[index]?.trim_start ?? 0);
+          if (startAt > 0) video.currentTime = startAt;
 
-      if (v.readyState < 2) {
-        v.load();
-        await new Promise((r) => setTimeout(r, 80));
-      }
-      if (v.currentTime === 0 && (v.duration || 0) > 0) {
-        try {
-          v.currentTime = Math.max(0.1, startAt);
-        } catch {}
-      }
+          const onTimeUpdate = () => {
+            if (video.currentTime - startAt >= 3) video.currentTime = startAt;
+          };
+          video.removeEventListener("timeupdate", onTimeUpdate);
+          video.addEventListener("timeupdate", onTimeUpdate);
 
-      try {
-        await v.play();
-        return true;
-      } catch {
-        if (!v.muted) v.muted = true;
-        try {
-          await v.play();
-          return true;
-        } catch {
-          return false;
-        }
-      }
-    };
-
-    const handlePlayback = async () => {
-      if (isProcessing) return;
-      isProcessing = true;
-
-      const target = findMostVisible();
-
-      if (
-        currentPlayingIndex !== null &&
-        (sectionVisibility[currentPlayingIndex] || 0) < 0.45
-      ) {
-        pauseVideo(currentPlayingIndex);
-        currentPlayingIndex = null;
-      }
-
-      if (target !== -1 && target !== currentPlayingIndex) {
-        videoRefs.current.forEach((v, idx) => {
-          if (v && idx !== target && !v.paused) pauseVideo(idx);
-        });
-
-        const ok = await playVideo(target);
-        if (ok) {
-          currentPlayingIndex = target;
-          setActiveIndex(target);
-        } else {
-          const v = videoRefs.current[target];
-          if (v && v.currentTime === 0) {
-            try {
-              v.currentTime = Math.max(
-                0.1,
-                Number(spliks[target]?.trim_start ?? 0)
-              );
-            } catch {}
+          try {
+            await video.play();
+            currentPlayingVideo = video;
+            currentPlayingIndex = index;
+            setActiveIndex(index);
+            setIsPlaying(prev => ({ ...prev, [index]: true }));
+            setShowPauseButton(prev => ({ ...prev, [index]: true }));
+          } catch (error) {
+            if (video.currentTime === 0) video.currentTime = startAt || 0.1;
+          }
+        } else if (entry.intersectionRatio < 0.5 && video === currentPlayingVideo) {
+          video.pause();
+          video.muted = true;
+          setIsPlaying(prev => ({ ...prev, [index]: false }));
+          if (currentPlayingVideo === video) {
+            currentPlayingVideo = null;
+            currentPlayingIndex = -1;
           }
         }
-      } else if (target === -1 && currentPlayingIndex !== null) {
-        pauseVideo(currentPlayingIndex);
-        currentPlayingIndex = null;
-      }
-
-      isProcessing = false;
-    };
-
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const i = Number((entry.target as HTMLElement).dataset.index);
-          sectionVisibility[i] = entry.intersectionRatio;
-        });
-        void handlePlayback();
-      },
-      { root, threshold: thresholds, rootMargin: "10px" }
-    );
-
-    const sections = Array.from(
-      root.querySelectorAll<HTMLElement>("[data-index]")
-    );
-    sections.forEach((s) => io.observe(s));
-
-    const onVis = () => {
-      if (document.hidden && currentPlayingIndex !== null) {
-        pauseVideo(currentPlayingIndex);
-      } else {
-        void handlePlayback();
       }
     };
-    document.addEventListener("visibilitychange", onVis);
+
+    const observer = new IntersectionObserver(handleVideoPlayback, {
+      root: container,
+      threshold: [0, 0.25, 0.5, 0.75, 1.0],
+      rootMargin: "0px"
+    });
+
+    const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-index]"));
+    sections.forEach((section) => observer.observe(section));
 
     return () => {
-      io.disconnect();
-      document.removeEventListener("visibilitychange", onVis);
-      videoRefs.current.forEach((v, i) => {
-        if (!v) return;
-        const h = timeupdateHandlers.current[i];
-        if (h) v.removeEventListener("timeupdate", h);
-        try {
-          v.pause();
-        } catch {}
-      });
-      timeupdateHandlers.current = {};
+      observer.disconnect();
+      videoRefs.current.forEach((video) => { if (video && !video.paused) video.pause(); });
+      Object.values(pauseTimeoutRefs.current).forEach((t) => t && clearTimeout(t));
     };
-  }, [spliks, thresholds, muted]);
+  }, [spliks.length, muted, spliks]);
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
@@ -460,40 +247,103 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const toggleMute = (i: number) => {
     const v = videoRefs.current[i];
     if (!v) return;
-    const next = !(muted[i] ?? true);
-    v.muted = next;
-    setMuted((m) => ({ ...m, [i]: next }));
+    const newMutedState = !(muted[i] ?? false);
+    if (!newMutedState) muteOtherVideos(i);
+    v.muted = newMutedState;
+    setMuted((m) => ({ ...m, [i]: newMutedState }));
+  };
+
+  const handlePlayPause = (index: number) => {
+    const video = videoRefs.current[index];
+    if (!video) return;
+
+    const currentlyPlaying = isPlaying[index] ?? false;
+
+    if (currentlyPlaying) {
+      video.pause();
+      setIsPlaying(prev => ({ ...prev, [index]: false }));
+      setShowPauseButton(prev => ({ ...prev, [index]: false }));
+      if (pauseTimeoutRefs.current[index]) clearTimeout(pauseTimeoutRefs.current[index]);
+      pauseTimeoutRefs.current[index] = setTimeout(() => {
+        setShowPauseButton(prev => ({ ...prev, [index]: true }));
+      }, 2000);
+    } else {
+      muteOtherVideos(index);
+      const startAt = Number(spliks[index]?.trim_start ?? 0);
+      if (startAt > 0) video.currentTime = startAt;
+      video.muted = muted[index] ?? false;
+      video.play().catch(console.error);
+      setIsPlaying(prev => ({ ...prev, [index]: true }));
+      setShowPauseButton(prev => ({ ...prev, [index]: true }));
+    }
   };
 
   /* -------------------------- social actions -------------------------- */
   const handleLike = async (splikId: string) => {
     if (!user?.id) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like videos",
-        variant: "destructive",
-      });
-      return;
-    }
-    const isLiked = likedIds.has(splikId);
-    setLikedIds((prev) => {
-      const ns = new Set(prev);
-      isLiked ? ns.delete(splikId) : ns.add(splikId);
-      return ns;
-    });
-    try {
-      if (isLiked) {
-        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
-      } else {
-        await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
-      }
-    } catch {
+      toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
+    } else {
+      const isLiked = likedIds.has(splikId);
       setLikedIds((prev) => {
         const ns = new Set(prev);
-        isLiked ? ns.add(splikId) : ns.delete(splikId);
+        isLiked ? ns.delete(splikId) : ns.add(splikId);
         return ns;
       });
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+      try {
+        if (isLiked) {
+          await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
+        } else {
+          await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
+        }
+      } catch {
+        setLikedIds((prev) => {
+          const ns = new Set(prev);
+          isLiked ? ns.add(splikId) : ns.delete(splikId);
+          return ns;
+        });
+        toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+      }
+    }
+  };
+
+  // ✅ favorites: optimistic + realtime-backed
+  const toggleFavorite = async (splikId: string) => {
+    if (!user?.id) {
+      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
+      return;
+    }
+    if (savingIds.has(splikId)) return;
+    setSavingIds((s) => new Set(s).add(splikId));
+
+    const currentlySaved = savedIds.has(splikId);
+    setSavedIds((prev) => {
+      const ns = new Set(prev);
+      currentlySaved ? ns.delete(splikId) : ns.add(splikId);
+      return ns;
+    });
+
+    try {
+      if (currentlySaved) {
+        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splikId);
+        toast({ title: "Removed from favorites" });
+      } else {
+        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splikId });
+        toast({ title: "Added to favorites" });
+      }
+    } catch {
+      // revert on error
+      setSavedIds((prev) => {
+        const ns = new Set(prev);
+        currentlySaved ? ns.add(splikId) : ns.delete(splikId);
+        return ns;
+      });
+      toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
+    } finally {
+      setSavingIds((s) => {
+        const ns = new Set(s);
+        ns.delete(splikId);
+        return ns;
+      });
     }
   };
 
@@ -543,13 +393,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   return (
     <div
-      key={pathname}
       ref={containerRef}
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
       {spliks.map((s, i) => {
-        const isMuted = muted[i] ?? true;
-        const shouldPreload = Math.abs(i - activeIndex) <= 1;
+        const videoIsPlaying = isPlaying[i] ?? false;
+        const shouldShowPauseButton = showPauseButton[i] ?? true;
+        const isSaved = savedIds.has(s.id);
+        const saving = savingIds.has(s.id);
 
         return (
           <section
@@ -561,14 +412,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               {/* header */}
               <div className="flex items-center justify-between p-3 border-b">
                 <Link
-                  to={`/creator/${s.username || s.user_id}`}
+                  to={`/creator/${s.profiles?.username || s.user_id}`}
                   className="flex items-center gap-3 hover:opacity-80 transition-opacity"
                 >
                   <Avatar className="h-8 w-8">
                     <AvatarFallback>{initialsFor(s)}</AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="text-sm font-semibold">{displayName(s)}</p>
+                    <p className="text-sm font-semibold">{nameFor(s)}</p>
                     <p className="text-xs text-muted-foreground">
                       {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
                     </p>
@@ -580,81 +431,66 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               </div>
 
               {/* video */}
-              <div className="relative bg-black aspect-[9/16] max-h-[600px]">
+              <div className="relative bg-black aspect-[9/16] max-h:[600px] group">
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
-
                 <video
                   ref={(el) => (videoRefs.current[i] = el)}
-                  poster={s.thumb_url ?? undefined}
+                  src={s.video_url}
+                  poster={s.thumbnail_url ?? undefined}
                   className="w-full h-full object-cover"
                   playsInline
-                  muted={isMuted}
-                  // @ts-expect-error vendor attribute
-                  webkit-playsinline="true"
-                  preload={shouldPreload ? "metadata" : "none"}
-                  controls={false}
-                  controlsList="nodownload noplaybackrate noremoteplayback"
-                  disablePictureInPicture
-                  // @ts-expect-error vendor attribute
-                  disableRemotePlayback
+                  muted={muted[i] ?? false}
+                  preload="metadata"
                   onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
-                  onLoadedMetadata={() => {
-                    const v = videoRefs.current[i];
-                    if (!v) return;
-                    const start = Number(s.trim_start ?? 0);
-                    if (v.currentTime < start || v.currentTime > start + 3) {
-                      try {
-                        v.currentTime = Math.max(0.1, start);
-                      } catch {}
-                    }
-                  }}
-                  onError={() => {
-                    const v = videoRefs.current[i];
-                    if (!v) return;
-                    if (!errorRetried.current[i]) {
-                      errorRetried.current[i] = true;
-                      const bust = s.video_url.includes("#") ? "" : "#t=0.001";
-                      const source = v.querySelector("source");
-                      if (source) {
-                        source.setAttribute("src", s.video_url + bust);
-                        try {
-                          v.load();
-                        } catch {}
-                      } else {
-                        // @ts-ignore
-                        v.src = s.video_url + bust;
-                        try {
-                          v.load();
-                        } catch {}
-                      }
-                    } else {
-                      toast({
-                        title: "Playback error",
-                        description: "This video format isn't supported on your device.",
-                        variant: "destructive",
-                      });
-                    }
+                  onLoadedData={() => {
+                    const video = videoRefs.current[i];
+                    if (video && video.currentTime === 0) video.currentTime = 0.1;
                   }}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                >
-                  <source src={s.video_url} type={s.mime_type || mimeFromUrl(s.video_url)} />
-                </video>
+                />
 
-                <div className="absolute inset-0" onClick={() => scrollTo(i)} />
-
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleMute(i);
-                  }}
-                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
+                {/* Center play/pause controls */}
+                <div
+                  className="absolute inset-0 flex items-center justify-center"
+                  onClick={() => handlePlayPause(i)}
                 >
-                  {isMuted ? (
-                    <VolumeX className="h-4 w-4 text-white" />
+                  {videoIsPlaying ? (
+                    shouldShowPauseButton && (
+                      <button
+                        aria-label="Pause"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
+                        onClick={(e) => { e.stopPropagation(); handlePlayPause(i); }}
+                      >
+                        <Pause className="h-10 w-10 text-white drop-shadow-lg" />
+                      </button>
+                    )
                   ) : (
-                    <Volume2 className="h-4 w-4 text-white" />
+                    <button
+                      aria-label="Play"
+                      className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
+                      onClick={(e) => { e.stopPropagation(); handlePlayPause(i); }}
+                    >
+                      <Play className="h-8 w-8 text-white ml-1" />
+                    </button>
                   )}
+                </div>
+
+                {/* mute toggle */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleMute(i); }}
+                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
+                >
+                  {muted[i] ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
                 </button>
+
+                {/* title overlay */}
+                {s.title && (
+                  <div className="absolute bottom-3 left-3 z-20">
+                    <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
+                      <p className="text-white text-sm font-medium truncate">{s.title}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* actions */}
@@ -665,38 +501,54 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => handleLike(s.id)}
-                      className={likedIds.has(s.id) ? "text-red-500" : ""}
+                      className={likedIds.has(s.id) ? "text-red-500 hover:text-red-600" : "hover:text-red-500"}
+                      aria-pressed={likedIds.has(s.id)}
                     >
                       <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
                     </Button>
-                    <Button size="icon" variant="ghost" onClick={() => openComments(s)}>
+
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => openComments(s)}
+                      className="hover:text-blue-500"
+                    >
                       <MessageCircle className="h-6 w-6" />
                     </Button>
+
                     <Button
                       size="icon"
                       variant="ghost"
                       onClick={() => {
-                        const url = `${window.location.origin}/splik/${s.id}`;
+                        const url = `${window.location.origin.replace(/\/$/,'')}/splik/${s.id}`;
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
+                      className="hover:text-green-500"
                     >
                       <Share2 className="h-6 w-6" />
                     </Button>
                   </div>
-                  <Button size="icon" variant="ghost">
-                    <Bookmark className="h-6 w-6" />
+
+                  {/* ✅ Save / Saved with indicator */}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => toggleFavorite(s.id)}
+                    disabled={saving}
+                    className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                    aria-pressed={isSaved}
+                    aria-label={isSaved ? "Saved" : "Save"}
+                    title={isSaved ? "Saved" : "Save"}
+                  >
+                    {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
                   </Button>
                 </div>
-                {/* counts row */}
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span>{s.likes_count ?? 0} likes</span>
-                  <span>{s.comments_count ?? 0} comments</span>
-                  <span>{s.views_count ?? 0} views</span>   {/* 👈 new */}
-                </div>
+
+                {/* caption */}
                 {s.description && (
                   <p className="text-sm">
-                    <span className="font-semibold mr-2">{displayName(s)}</span>
+                    <span className="font-semibold mr-2">{nameFor(s)}</span>
                     {s.description}
                   </p>
                 )}
@@ -705,7 +557,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               {/* comments inline */}
               {showCommentsFor === s.id && (
                 <div className="px-3 pb-4">
-                  <div className="border-t pt-3 space-y-3">
+                  <div className="border-top pt-3 space-y-3">
                     {loadingComments ? (
                       <div className="text-sm text-muted-foreground">Loading…</div>
                     ) : comments.length === 0 ? (
