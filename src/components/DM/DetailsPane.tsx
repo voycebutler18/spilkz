@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Search, BellOff, Shield, Info } from "lucide-react";
 import { BlockButton, UnblockButton } from "@/components/DM/BlockButtons";
 
-type ProfileLite = { id: string; username: string | null; display_name: string | null; avatar_url?: string | null; };
+type ProfileLite = { id: string; username: string | null; display_name: string | null; avatar_url?: string | null };
 
 export default function DetailsPane() {
   const { otherId } = useParams();
@@ -14,7 +14,11 @@ export default function DetailsPane() {
   useEffect(() => {
     const run = async () => {
       if (!otherId) { setProfile(null); return; }
-      const { data } = await supabase.from("profiles").select("id,username,display_name,avatar_url").eq("id", otherId).single();
+      const { data } = await supabase
+        .from("profiles")
+        .select("id,username,display_name,avatar_url")
+        .eq("id", otherId)
+        .single();
       setProfile((data as any) || null);
     };
     run();
@@ -32,7 +36,7 @@ export default function DetailsPane() {
     <div className="flex flex-col h-[78vh]">
       <div className="p-6 border-b flex items-center gap-3">
         {profile?.avatar_url ? (
-          <img src={profile.avatar_url} alt={profile.display_name || profile.username || "User"} className="w-12 h-12 rounded-full border" />
+          <img src={profile.avatar_url} alt="" className="w-12 h-12 rounded-full border" />
         ) : (
           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-white flex items-center justify-center font-semibold">
             {(profile?.display_name || profile?.username || "U").charAt(0).toUpperCase()}
