@@ -1,4 +1,3 @@
-// src/pages/Dashboard/CreatorDashboard.tsx
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -19,12 +18,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
-import { Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield } from "lucide-react";
+import { Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield, Eye, Trash2, MoreVertical, Play } from "lucide-react";
 import { toast } from "sonner";
 
 /* ----------------------------- Types ----------------------------- */
@@ -51,7 +49,7 @@ interface SplikRow {
   created_at: string;
   likes_count?: number | null;
   comments_count?: number | null;
-  views_count?: number | null; // <-- important
+  views_count?: number | null;
   profile?: {
     username?: string | null;
     display_name?: string | null;
@@ -62,11 +60,184 @@ interface SplikRow {
 interface DashboardStats {
   totalSpliks: number;
   followers: number;
-  totalReactions: number; // likes + comments
+  totalReactions: number;
   avgReactionsPerVideo: number;
 }
 
-/* ----------------------------- Component ----------------------------- */
+/* ----------------------------- Enhanced Video Grid Component ----------------------------- */
+const EnhancedVideoGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelete: (id: string) => void }) => {
+  const [selectedVideos, setSelectedVideos] = useState(new Set<string>());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+
+  const formatNumber = (num: number) => {
+    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+    return num?.toString() || "0";
+  };
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const handleBulkDelete = () => {
+    selectedVideos.forEach(id => onDelete(id));
+    setSelectedVideos(new Set());
+  };
+
+  const VideoCard = ({ splik }: { splik: SplikRow }) => (
+    <div className="group relative bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors">
+      {/* Thumbnail */}
+      <div className="relative aspect-video bg-muted">
+        {splik.thumbnail_url ? (
+          <img 
+            src={splik.thumbnail_url} 
+            alt={splik.title || "Video thumbnail"}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-muted">
+            <Video className="h-12 w-12 text-muted-foreground" />
+          </div>
+        )}
+        
+        {/* Play button overlay */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
+          <div className="bg-primary rounded-full p-3">
+            <Play className="h-6 w-6 text-primary-foreground fill-current ml-1" />
+          </div>
+        </div>
+
+        {/* View count */}
+        <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-black/70 text-white text-xs px-2 py-1 rounded">
+          <Eye className="h-3 w-3" />
+          <span>{formatNumber(splik.views_count || 0)}</span>
+        </div>
+
+        {/* Selection checkbox */}
+        <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <input
+            type="checkbox"
+            className="w-4 h-4 rounded border-2 border-white bg-black/50"
+            checked={selectedVideos.has(splik.id)}
+            onChange={(e) => {
+              const newSelected = new Set(selectedVideos);
+              if (e.target.checked) {
+                newSelected.add(splik.id);
+              } else {
+                newSelected.delete(splik.id);
+              }
+              setSelectedVideos(newSelected);
+            }}
+          />
+        </div>
+
+        {/* Delete button */}
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-8 w-8 p-0"
+            onClick={() => setShowDeleteConfirm(splik.id)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-4">
+        <h3 className="font-medium text-sm mb-2 line-clamp-2">
+          {splik.title || "Untitled"}
+        </h3>
+        
+        {splik.description && (
+          <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
+            {splik.description}
+          </p>
+        )}
+
+        {/* Stats */}
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <Heart className="h-3 w-3" />
+              <span>{splik.likes_count || 0}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <MessageCircle className="h-3 w-3" />
+              <span>{splik.comments_count || 0}</span>
+            </div>
+          </div>
+          <span>{formatDate(splik.created_at)}</span>
+        </div>
+      </div>
+
+      {/* Delete confirmation modal */}
+      {showDeleteConfirm === splik.id && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-full max-w-md mx-4">
+            <CardHeader>
+              <CardTitle>Delete Video</CardTitle>
+              <CardDescription>
+                Are you sure you want to delete "{splik.title || 'this video'}"? This action cannot be undone.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex gap-2">
+              <Button 
+                variant="destructive" 
+                onClick={() => {
+                  onDelete(splik.id);
+                  setShowDeleteConfirm(null);
+                }}
+                className="flex-1"
+              >
+                Delete
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => setShowDeleteConfirm(null)}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Bulk actions */}
+      {selectedVideos.size > 0 && (
+        <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+          <Badge variant="secondary">{selectedVideos.size} selected</Badge>
+          <Button 
+            variant="destructive" 
+            size="sm"
+            onClick={handleBulkDelete}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Delete Selected
+          </Button>
+        </div>
+      )}
+
+      {/* Video grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {spliks.map((splik) => (
+          <VideoCard key={splik.id} splik={splik} />
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/* ----------------------------- Main Component ----------------------------- */
 const CreatorDashboard = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -135,7 +306,6 @@ const CreatorDashboard = () => {
 
   /* ---------------------------- Realtime ---------------------------- */
   const setupRealtime = (uid: string) => {
-    // Clean any previous
     if (channelCleanup.current) {
       try {
         channelCleanup.current();
@@ -145,7 +315,6 @@ const CreatorDashboard = () => {
 
     const ch = supabase
       .channel("creator-dashboard")
-      // only your spliks
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
@@ -177,7 +346,6 @@ const CreatorDashboard = () => {
           recomputeStatsFromList((prev) => prev.filter((s) => s.id !== deletedId));
         }
       )
-      // profile changes (followers_count / spliks_count, etc.)
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${uid}` },
@@ -220,7 +388,6 @@ const CreatorDashboard = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      // attach lightweight profile once for convenience (UI badges/avatars)
       let prof: Profile | null = null;
       try {
         const { data } = await supabase
@@ -266,6 +433,27 @@ const CreatorDashboard = () => {
       }));
       return list;
     });
+  };
+
+  /* ------------------------- Delete Functions ------------------------- */
+  const handleDeleteVideo = async (videoId: string) => {
+    if (!currentUserId) return;
+    
+    try {
+      const { error } = await supabase
+        .from("spliks")
+        .delete()
+        .eq("id", videoId)
+        .eq("user_id", currentUserId);
+      
+      if (error) throw error;
+      
+      toast.success("Video deleted successfully");
+      // Realtime will handle the UI update
+    } catch (error) {
+      console.error("Error deleting video:", error);
+      toast.error("Failed to delete video");
+    }
   };
 
   /* ------------------------- Profile update ------------------------- */
@@ -414,8 +602,7 @@ const CreatorDashboard = () => {
           {/* My Videos */}
           <TabsContent value="videos" className="mt-6">
             {spliks.length > 0 ? (
-              // Your VideoGrid should render a small badge with views_count for each item.
-              <VideoGrid spliks={spliks} />
+              <EnhancedVideoGrid spliks={spliks} onDelete={handleDeleteVideo} />
             ) : (
               <Card className="p-12 text-center">
                 <Video className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -435,7 +622,7 @@ const CreatorDashboard = () => {
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-accent/50 rounded-lg">
                   <div>
-                    <p className="text-sm text-muted-foreground">This Week’s Reactions</p>
+                    <p className="text-sm text-muted-foreground">This Week's Reactions</p>
                     <p className="text-2xl font-bold">{stats.totalReactions}</p>
                   </div>
                   <Badge variant="secondary">Live</Badge>
@@ -456,7 +643,6 @@ const CreatorDashboard = () => {
               <CardContent>
                 {editingProfile ? (
                   <div className="space-y-6">
-                    {/* Avatar uploader */}
                     <div>
                       <p className="text-sm text-muted-foreground mb-2">Profile Photo</p>
                       <AvatarUploader
@@ -464,7 +650,7 @@ const CreatorDashboard = () => {
                         onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
                       />
                       <p className="text-xs text-muted-foreground mt-2">
-                        JPG/PNG recommended. We’ll compress for faster loading.
+                        JPG/PNG recommended. We'll compress for faster loading.
                       </p>
                     </div>
 
@@ -511,7 +697,6 @@ const CreatorDashboard = () => {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {/* Avatar preview */}
                     <div className="flex items-center gap-3">
                       <Avatar className="h-16 w-16 ring-2 ring-primary/20">
                         <AvatarImage src={profile?.avatar_url || undefined} />
@@ -549,7 +734,6 @@ const CreatorDashboard = () => {
                       </div>
                     )}
 
-                    {/* Privacy Settings */}
                     <div className="border-t pt-4 mt-2 space-y-4">
                       <h3 className="font-semibold text-sm">Privacy Settings</h3>
 
@@ -600,7 +784,7 @@ const CreatorDashboard = () => {
         </Tabs>
       </div>
 
-      {/* Upload modal mounted here */}
+      {/* Upload modal */}
       <VideoUploadModal
         open={uploadModalOpen}
         onClose={() => setUploadModalOpen(false)}
