@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Heart, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, Volume2, VolumeX, Rocket, Sparkles,
+  Bookmark, BookmarkCheck, // ⬅️ add BookmarkCheck
+  Volume2, VolumeX, Rocket, Sparkles,
 } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -37,8 +38,7 @@ type Splik = {
   comments_count?: number | null;
   mood?: string | null;
   status?: string | null;
-  profile?: any; // merged in by VideoPage / fetcher
-  // IMPORTANT: use these if present
+  profile?: any;
   trim_start?: number | null;
   trim_end?: number | null;
 };
@@ -68,9 +68,13 @@ const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c
 export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
+
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
   const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
+
+  const [isSaved, setIsSaved] = useState(false); // ⬅️ NEW
+
   const [showShareModal, setShowShareModal] = useState(false);
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -80,7 +84,7 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const primedRef = useRef(false); // ensure we only auto-seek once per load
+  const primedRef = useRef(false);
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -88,22 +92,18 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
   const creatorSlug =
     splik.profile?.username || splik.profile?.handle || splik.user_id;
 
-  // --- Trim window (critical) ----------------------------------------
+  // --- Trim window ---------------------------------------------------
   const START = Math.max(0, Number(splik.trim_start ?? 0));
-  // If trim_end is present, use it; else cap at START+3.0
-  const RAW_END = Number.isFinite(Number(splik.trim_end))
-    ? Number(splik.trim_end)
-    : START + 3;
+  const RAW_END = Number.isFinite(Number(splik.trim_end)) ? Number(splik.trim_end) : START + 3;
   const END = Math.max(START, Math.min(START + 3, RAW_END));
-  const SEEK_SAFE = Math.max(0.05, START + 0.05); // tiny offset helps Safari keyframe seeking
+  const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
-  // Autoplay when ~70% in view, pause when out
+  // Autoplay when ~70% in view
   useEffect(() => {
     const video = videoRef.current;
     const el = cardRef.current;
     if (!video || !el) return;
 
-    // mobile autoplay constraints
     video.playsInline = true;
     video.setAttribute("playsinline", "true");
     // @ts-expect-error
@@ -120,7 +120,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
     };
 
     const primeToStart = () => {
-      // on metadata load, seek to the configured trim start
       if (!video.duration || video.duration <= 0) return;
       try {
         video.currentTime = SEEK_SAFE;
@@ -139,14 +138,9 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
           setIsInView(visible);
 
           if (visible) {
-            // Always re-align to start of the 3s window when coming into view
             try {
-              if (!primedRef.current) {
-                // If metadata wasn’t ready earlier
-                primeToStart();
-              } else {
-                video.currentTime = SEEK_SAFE;
-              }
+              if (!primedRef.current) primeToStart();
+              else video.currentTime = SEEK_SAFE;
             } catch {}
 
             video.muted = isMuted;
@@ -188,7 +182,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
     const v = videoRef.current;
     if (!v) return;
     const onTimeUpdate = () => {
-      // Jump back if we drifted out of window
       if (v.currentTime < START || v.currentTime >= END) {
         try { v.currentTime = SEEK_SAFE; } catch {}
       }
@@ -197,20 +190,30 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
   }, [START, END, SEEK_SAFE]);
 
-  // Load user + initial states
+  // Load user + initial states (likes + saved)
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setCurrentUser(user);
 
       if (user) {
-        const { data } = await supabase
+        // liked?
+        const { data: likeRow } = await supabase
           .from("likes")
           .select("id")
           .eq("user_id", user.id)
           .eq("splik_id", splik.id)
           .maybeSingle();
-        setIsLiked(!!data);
+        setIsLiked(!!likeRow);
+
+        // saved?
+        const { data: favRow } = await supabase
+          .from("favorites")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("splik_id", splik.id)
+          .maybeSingle();
+        setIsSaved(!!favRow);
       }
     })();
 
@@ -271,28 +274,27 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
     onShare?.();
   };
 
+  // ✅ Favorites with visual indicator (color + icon + label)
   const toggleFavorite = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
       return;
     }
-    try {
-      const { data } = await supabase
-        .from("favorites")
-        .select("id")
-        .eq("user_id", user.id)
-        .eq("splik_id", splik.id)
-        .maybeSingle();
 
-      if (data) {
-        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-        toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
-      } else {
+    const next = !isSaved;
+    setIsSaved(next); // optimistic UI
+
+    try {
+      if (next) {
         await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
-        toast({ title: "Added to favorites", description: "Video saved to your favorites" });
+        toast({ title: "Saved", description: "Video added to your favorites" });
+      } else {
+        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
+        toast({ title: "Removed", description: "Video removed from your favorites" });
       }
     } catch {
+      setIsSaved(!next); // revert UI
       toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     }
   };
@@ -317,7 +319,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
       pauseIfCurrent(video);
       setIsPlaying(false);
     } else {
-      // Always re-align into window before starting
       try { video.currentTime = SEEK_SAFE; } catch {}
       if (isMuted) {
         video.muted = false;
@@ -494,30 +495,51 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
             variant="ghost"
             size="sm"
             onClick={handleSplik}
-            className={cn("flex items-center space-x-2 transition-colors flex-1", isLiked && "text-red-500 hover:text-red-600")}
+            className={cn("flex items-center space-x-2 transition-colors flex-1",
+              isLiked && "text-red-500 hover:text-red-600")}
+            aria-pressed={isLiked}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
             <span className="text-xs font-medium">{(likesCount ?? 0).toLocaleString()}</span>
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={handleComment} className="flex items-center space-x-2 flex-1 hover:text-blue-500">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleComment}
+            className="flex items-center space-x-2 flex-1 hover:text-blue-500"
+          >
             <MessageCircle className="h-4 w-4" />
             <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
-          </Button>
-
-          <Button variant="ghost" size="sm" onClick={handleShare} className="flex items-center space-x-2 flex-1 hover:text-green-500">
-            <Share2 className="h-4 w-4" />
-            <span className="text-xs font-medium">Share</span>
           </Button>
 
           <Button
             variant="ghost"
             size="sm"
-            onClick={toggleFavorite}
-            className={cn("flex items-center space-x-2 transition-colors flex-1")}
+            onClick={handleShare}
+            className="flex items-center space-x-2 flex-1 hover:text-green-500"
           >
-            <Bookmark className="h-4 w-4" />
-            <span className="text-xs font-medium">Save</span>
+            <Share2 className="h-4 w-4" />
+            <span className="text-xs font-medium">Share</span>
+          </Button>
+
+          {/* ✅ Save / Saved indicator */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleFavorite}
+            className={cn(
+              "flex items-center space-x-2 transition-colors flex-1",
+              isSaved ? "text-yellow-400 hover:text-yellow-500" : ""
+            )}
+            aria-pressed={isSaved}
+          >
+            {isSaved ? (
+              <BookmarkCheck className="h-4 w-4" />
+            ) : (
+              <Bookmark className="h-4 w-4" />
+            )}
+            <span className="text-xs font-medium">{isSaved ? "Saved" : "Save"}</span>
           </Button>
         </div>
 
