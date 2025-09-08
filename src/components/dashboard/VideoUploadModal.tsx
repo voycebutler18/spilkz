@@ -1,5 +1,6 @@
 // src/components/dashboard/VideoUploadModal.tsx
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom"; // NEW
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -184,6 +185,9 @@ const blobToDataUrl = (blob: Blob) =>
   });
 
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
+  const navigate = useNavigate(); // NEW
+  const { toast } = useToast();
+
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -226,7 +230,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number>();
-  const { toast } = useToast();
+
+  // keep a reference to the processed file (MP4) if we convert MOV
+  const processedFileRef = useRef<File | null>(null); // NEW
 
   const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi,.mkv";
   const maxFileSize = isMobile ? MOBILE_MAX_SIZE : DESKTOP_MAX_SIZE;
@@ -302,7 +308,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     await ffmpeg.load({
       coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
       wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-      // worker is only needed/used by core-mt
       workerURL: useMT ? await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, "text/javascript") : undefined,
     });
 
@@ -332,7 +337,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setTranscodeStage("analyze");
       await ffmpeg.exec(["-hide_banner", "-i", inputName, "-f", "null", "-"]);
     } catch {
-      // ffmpeg returns non-zero sometimes for probe-like runs; logs are what we need.
+      // ignore non-zero exit for probe-like runs
     }
     return { video, audio };
   }, [getFFmpeg]);
@@ -376,7 +381,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         setTranscodeStage("transcode");
         await ffmpeg.exec([
           "-i", inputName,
-          // scale down for speed/size; fast scaler
           "-vf", "scale='min(1280,iw)':-2,setsar=1",
           "-sws_flags", "fast_bilinear",
           "-r", "30",
@@ -411,6 +415,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setVideoReady(false);
       setProcessingVideo(true);
       setCoverPreview(null);
+      processedFileRef.current = null; // reset processed file
 
       const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
       const validTypes = [
@@ -442,21 +447,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       }
 
       try {
-        setFile(selectedFile);
         const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
         setTitle(fileName);
-
-        if (/\.(mov)$/i.test(selectedFile.name)) {
-          toast({
-            title: "Optimizing preview",
-            description: "We’ll remux/convert MOV → MP4 for smooth trimming.",
-          });
-        } else if (/\.(mp4)$/i.test(selectedFile.name)) {
-          toast({
-            title: "Great choice",
-            description: "MP4 loads and uploads fastest.",
-          });
-        }
 
         const prepareFromUrl = async (url: string) => {
           setVideoPreview(url);
@@ -496,16 +488,28 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         };
 
         if (isMOV(selectedFile)) {
-          if (isMobile) {
-            toast({
-              title: "Conversion",
-              description: "Doing a quick remux/convert for preview (optimized on phones).",
-            });
-          }
+          toast({
+            title: "Optimizing preview",
+            description: "Doing a quick MOV → MP4 pass for smooth trimming.",
+          });
+
+          // Convert for preview AND future upload
           const mp4Blob = await convertMovToMp4Smart(selectedFile);
-          await prepareFromUrl(URL.createObjectURL(mp4Blob));
+          const mp4File = new File(
+            [mp4Blob],
+            selectedFile.name.replace(/\.mov$/i, ".mp4"),
+            { type: "video/mp4" }
+          );
+          processedFileRef.current = mp4File; // <-- use this for upload
+          setFile(mp4File);                   // <-- also update UI file reference
+          await prepareFromUrl(URL.createObjectURL(mp4File));
         } else {
+          // Non-MOV: just use original
+          setFile(selectedFile);
           await prepareFromUrl(URL.createObjectURL(selectedFile));
+          if (/\.(mp4)$/i.test(selectedFile.name)) {
+            toast({ title: "Great choice", description: "MP4 loads and uploads fastest." });
+          }
         }
       } catch (err: any) {
         console.error("Error processing video:", err);
@@ -686,12 +690,11 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const snapCoverPreview = useCallback(async () => {
     if (!file) return;
     try {
-      setCapturingCover(true);
       const blob = await makePosterFromFileVideo(file, coverTime);
       setCoverPreview(await blobToDataUrl(blob));
       toast({ title: "Cover updated", description: "We’ll use this frame for link previews." });
     } finally {
-      setCapturingCover(false);
+      // no-op
     }
   }, [file, coverTime, toast]);
 
@@ -721,11 +724,15 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     setUploadProgress(1);
 
     try {
-      const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
+      // If we converted MOV → MP4 for preview, upload the processed MP4
+      const fileToUpload = processedFileRef.current ?? file; // NEW
+
+      const ext =
+        (fileToUpload.name.split(".").pop() || "mp4").toLowerCase();
       const videoPath = `${user.id}/${Date.now()}.${ext}`;
 
       // Upload video with progress + immutable caching
-      const { publicUrl } = await uploadWithProgress("spliks", videoPath, file);
+      const { publicUrl } = await uploadWithProgress("spliks", videoPath, fileToUpload);
 
       const selectedStart = Math.max(0, Math.min(trimRange[0], originalDuration));
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
@@ -745,7 +752,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
           Math.max(0.1, coverTime),
           Math.max(0.1, originalDuration - 0.1)
         );
-        const posterBlob = await makePosterFromFileVideo(file, thumbSecond);
+        const posterBlob = await makePosterFromFileVideo(fileToUpload, thumbSecond); // use processed file
         const thumbPath = `${user.id}/${Date.now()}_poster.jpg`;
         const poster = await uploadBlob("spliks", thumbPath, posterBlob);
         thumbnail_url = poster.publicUrl || null;
@@ -758,8 +765,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         title,
         description: finalDescription.trim(),
         duration: MAX_VIDEO_DURATION,
-        file_size: file.size,
-        mime_type: file.type || inferMimeFromName(file.name),
+        file_size: fileToUpload.size,
+        mime_type: fileToUpload.type || inferMimeFromName(fileToUpload.name),
         status: "active",
         trim_start: selectedStart,
         trim_end: enforcedEnd,
@@ -770,7 +777,13 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         cover_time: coverTime,
       };
 
-      const { error: dbError } = await supabase.from("spliks").insert(payload);
+      // RETURN the inserted row id so we can navigate
+      const { data: inserted, error: dbError } = await supabase
+        .from("spliks")
+        .insert(payload)
+        .select("id")
+        .single(); // NEW: get new id
+
       if (dbError) throw dbError;
 
       setUploadProgress(100);
@@ -778,6 +791,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
       // Reset UI
       setFile(null);
+      processedFileRef.current = null;
       setTitle("");
       setDescription("");
       setIsFood(false);
@@ -794,8 +808,14 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       setUploadETA(null);
       setCoverPreview(null);
 
+      // Inform parent and close modal
       onUploadComplete();
       onClose();
+
+      // Navigate straight to the new Splik page
+      if (inserted?.id) {
+        navigate(`/splik/${inserted.id}`, { replace: true }); // NEW
+      }
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({
@@ -828,7 +848,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader className="sticky top-0 bg-background z-10 pb-2">
           <DialogTitle>Upload Your 3-Second Splik</DialogTitle>
@@ -1107,16 +1127,9 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                           variant="outline"
                           size="sm"
                           onClick={snapCoverPreview}
-                          disabled={capturingCover}
+                          // disabled state not necessary; quick capture
                         >
-                          {capturingCover ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Capturing…
-                            </>
-                          ) : (
-                            <>Use this frame</>
-                          )}
+                          Use this frame
                         </Button>
                         <Button
                           variant="ghost"
@@ -1222,6 +1235,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   variant="outline"
                   onClick={() => {
                     setFile(null);
+                    processedFileRef.current = null;
                     if (videoPreview) URL.revokeObjectURL(videoPreview);
                     setVideoPreview(null);
                     setTitle("");
