@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -7,13 +7,27 @@ import { Search, MessageSquare, Clock, Loader2, MailOpen } from "lucide-react";
 import { toast } from "sonner";
 
 type Msg = {
-  id: string; sender_id: string; recipient_id: string;
-  body: string | null; created_at: string; read_at: string | null; thread_key: string;
+  id: string;
+  sender_id: string;
+  recipient_id: string;
+  body: string | null;
+  created_at: string;
+  read_at: string | null;
 };
 
-type ProfileLite = { id: string; username: string | null; display_name: string | null; avatar_url?: string | null; };
+type ProfileLite = {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  avatar_url?: string | null;
+};
 
-type ThreadRow = { partnerId: string; lastMessage: Msg | null; unread: number; partner: ProfileLite | null; };
+type ThreadRow = {
+  partnerId: string;
+  lastMessage: Msg | null;
+  unread: number;
+  partner: ProfileLite | null;
+};
 
 export default function InboxPane() {
   const [me, setMe] = useState<string | null>(null);
@@ -22,8 +36,12 @@ export default function InboxPane() {
   const [profiles, setProfiles] = useState<Record<string, ProfileLite>>({});
   const [query, setQuery] = useState("");
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const { otherId } = useParams();
+  const navigate = useNavigate();
 
-  useEffect(() => { supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null)); }, []);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
+  }, []);
 
   useEffect(() => {
     if (!me) return;
@@ -37,16 +55,23 @@ export default function InboxPane() {
         .or(`sender_id.eq.${me},recipient_id.eq.${me}`)
         .order("created_at", { ascending: false });
 
-      if (error) { toast.error("Failed to load inbox"); setLoading(false); return; }
+      if (error) {
+        toast.error("Failed to load inbox");
+        setLoading(false);
+        return;
+      }
       if (cancelled) return;
 
       setMessages((data as Msg[]) ?? []);
-      const partnerIds = Array.from(new Set((data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id))));
+      const partnerIds = Array.from(
+        new Set((data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id)))
+      );
       if (partnerIds.length) {
         const { data: ps } = await supabase
           .from("profiles")
           .select("id,username,display_name,avatar_url")
           .in("id", partnerIds);
+
         const map: Record<string, ProfileLite> = {};
         (ps || []).forEach((p: any) => (map[p.id] = p));
         setProfiles(map);
@@ -70,24 +95,33 @@ export default function InboxPane() {
           setMessages((prev) => {
             const idx = prev.findIndex((x) => x.id === m.id);
             if (idx === -1) return prev;
-            const copy = prev.slice(); copy[idx] = m; return copy;
+            const copy = prev.slice();
+            copy[idx] = m;
+            return copy;
           });
         })
       .subscribe();
+
     subRef.current = ch;
 
-    return () => { cancelled = true; if (subRef.current) supabase.removeChannel(subRef.current); subRef.current = null; };
+    return () => {
+      cancelled = true;
+      if (subRef.current) supabase.removeChannel(subRef.current);
+      subRef.current = null;
+    };
   }, [me]);
 
   const threads = useMemo<ThreadRow[]>(() => {
     if (!me) return [];
     const map: Record<string, ThreadRow> = {};
     for (const m of messages) {
-      const partnerId = m.sender_id === me ? m.recipient_id : m.sender_id;
-      if (!map[partnerId]) map[partnerId] = { partnerId, lastMessage: m, unread: 0, partner: profiles[partnerId] || null };
-      if (!map[partnerId].lastMessage || m.created_at > map[partnerId].lastMessage!.created_at) map[partnerId].lastMessage = m;
-      if (m.recipient_id === me && !m.read_at) map[partnerId].unread += 1;
-      if (!map[partnerId].partner && profiles[partnerId]) map[partnerId].partner = profiles[partnerId];
+      const pid = m.sender_id === me ? m.recipient_id : m.sender_id;
+      if (!map[pid]) map[pid] = { partnerId: pid, lastMessage: m, unread: 0, partner: profiles[pid] || null };
+      if (!map[pid].lastMessage || m.created_at > (map[pid].lastMessage?.created_at || "")) {
+        map[pid].lastMessage = m;
+      }
+      if (m.recipient_id === me && !m.read_at) map[pid].unread += 1;
+      if (!map[pid].partner && profiles[pid]) map[pid].partner = profiles[pid];
     }
     let arr = Object.values(map);
     if (query.trim()) {
@@ -103,21 +137,29 @@ export default function InboxPane() {
 
   const formatWhen = (iso?: string) => {
     if (!iso) return "";
-    const d = new Date(iso); const now = new Date();
+    const d = new Date(iso);
+    const now = new Date();
     const diffMin = Math.round((now.getTime() - d.getTime()) / 60000);
     if (diffMin < 1) return "now";
     if (diffMin < 60) return `${diffMin}m`;
-    const hr = Math.round(diffMin / 60); if (hr < 24) return `${hr}h`;
-    const day = Math.round(hr / 24); if (day < 7) return `${day}d`;
+    const hr = Math.round(diffMin / 60);
+    if (hr < 24) return `${hr}h`;
+    const day = Math.round(hr / 24);
+    if (day < 7) return `${day}d`;
     return d.toLocaleDateString();
   };
 
   return (
     <div className="flex flex-col h-[78vh]">
-      <div className="p-3 border-b">
+      <div className="p-4 border-b">
         <div className="relative">
           <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search by name or message…" className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <Input
+            placeholder="Search by name or message…"
+            className="pl-9"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
         </div>
       </div>
 
@@ -138,11 +180,15 @@ export default function InboxPane() {
             const avatar = t.partner?.avatar_url || null;
             const last = t.lastMessage?.body?.trim() || "";
             const when = formatWhen(t.lastMessage?.created_at);
+            const selected = otherId === t.partnerId; // highlight active
+
             return (
-              <Link
-                to={`/messages/${t.partnerId}`}
+              <div
                 key={t.partnerId}
-                className="flex items-center justify-between p-3 hover:bg-accent/60 transition-colors border-b"
+                onClick={() => navigate(`/messages/${t.partnerId}`)}
+                className={`flex items-center justify-between p-3 border-b cursor-pointer transition-colors ${
+                  selected ? "bg-accent/80" : "hover:bg-accent/60"
+                }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   {avatar ? (
@@ -170,7 +216,7 @@ export default function InboxPane() {
                   </div>
                   {t.unread > 0 && <Badge variant="default">{t.unread > 99 ? "99+" : t.unread}</Badge>}
                 </div>
-              </Link>
+              </div>
             );
           })
         )}
