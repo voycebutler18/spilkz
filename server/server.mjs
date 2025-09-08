@@ -1,205 +1,132 @@
 // server/server.mjs
 import express from "express";
 import compression from "compression";
+import cors from "cors";
+import path from "path";
+import fs from "fs/promises";
+import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
 
-const PORT = process.env.PORT || 3000;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST = path.join(__dirname, "../dist");
+const INDEX_HTML = path.join(DIST, "index.html");
 
-// Prefer server env, fall back to your existing VITE_* if needed
+// ---- env: works with either SUPABASE_* (server) or VITE_* (client) names
 const SUPABASE_URL =
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 
-// Your public site origin (used in <meta og:url> and redirects)
-const SITE_ORIGIN =
-  process.env.SITE_ORIGIN ||
-  process.env.PUBLIC_SITE_URL ||
-  "https://www.splikz.com";
+const supabase =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // Render will show this clearly in logs
-  throw new Error("Missing SUPABASE_URL / SUPABASE_ANON_KEY");
-}
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// ---------------------------------------------------------------------------
 
 const app = express();
 app.disable("x-powered-by");
 app.use(compression());
+app.use(cors());
 
-// health
-app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
-
-/**
- * /v/:id -> tiny HTML page with OG/Twitter tags
- * Real users are redirected to /video/:id immediately.
- * Bots (FB/Twitter/iMessage/Slack/etc) read the <meta> tags.
- */
-app.get("/v/:id", async (req, res) => {
-  const { id } = req.params;
-
-  // cache for bots; OK to re-fetch every 5 min
-  res.set("Cache-Control", "public, max-age=60, s-maxage=300");
-
-  // 1) fetch video
-  let splik = null;
-  let creator = null;
-
-  // Try single query with join (works if your policy allows it)
-  const { data: joined } = await supabase
-    .from("spliks")
-    .select(
-      "id,title,description,video_url,thumbnail_url,status,user_id,profiles(display_name,username)"
-    )
-    .eq("id", id)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (joined) {
-    splik = {
-      id: joined.id,
-      title: joined.title,
-      description: joined.description,
-      video_url: joined.video_url,
-      thumbnail_url: joined.thumbnail_url,
-      status: joined.status,
-      user_id: joined.user_id,
-    };
-    creator =
-      joined.profiles?.display_name ||
-      joined.profiles?.username ||
-      "Splikz Creator";
-  } else {
-    // If join blocked by RLS, fetch separately
-    const { data: v } = await supabase
-      .from("spliks")
-      .select(
-        "id,title,description,video_url,thumbnail_url,status,user_id"
-      )
-      .eq("id", id)
-      .eq("status", "active")
-      .maybeSingle();
-
-    splik = v || null;
-
-    if (splik?.user_id) {
-      const { data: p } = await supabase
-        .from("profiles")
-        .select("display_name,username")
-        .eq("id", splik.user_id)
-        .maybeSingle();
-      creator = p?.display_name || p?.username || "Splikz Creator";
-    }
+// cache static files long-term (but NOT index.html)
+app.use((req, res, next) => {
+  if (/\.(js|css|png|jpe?g|gif|svg|ico|webp|woff2?)$/i.test(req.path)) {
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   }
-
-  // Not found or not public
-  if (!splik) {
-    return res
-      .status(404)
-      .type("text/html")
-      .send(`<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<meta name="robots" content="noindex">
-<title>404 — Splikz</title>
-<meta property="og:title" content="Splik not found">
-<meta property="og:description" content="This splik doesn’t exist or isn’t public.">
-<meta property="og:image" content="${SITE_ORIGIN}/og/cover.png">
-<meta property="og:type" content="website">
-</head><body>
-<h1>404</h1>
-<p>This splik doesn’t exist or isn’t public.</p>
-</body></html>`);
-  }
-
-  const canonical = `${SITE_ORIGIN}/video/${splik.id}`;
-
-  const title =
-    splik.title?.trim() ||
-    (creator ? `${creator} on Splikz` : "Watch on Splikz");
-  const desc =
-    splik.description?.trim() ||
-    (creator
-      ? `A 3-second moment by ${creator} — watch on Splikz.`
-      : "Watch this 3-second moment on Splikz.");
-  const image =
-    splik.thumbnail_url ||
-    `${SITE_ORIGIN}/og/cover.png`; // fallback image if no poster yet
-
-  // most link unfurlers require an image; we also include video tags
-  const og = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>${escapeHtml(title)}</title>
-<link rel="canonical" href="${canonical}">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-
-<meta property="og:site_name" content="Splikz">
-<meta property="og:title" content="${escapeHtml(title)}">
-<meta property="og:description" content="${escapeHtml(desc)}">
-<meta property="og:type" content="video.other">
-<meta property="og:url" content="${canonical}">
-<meta property="og:image" content="${image}">
-<meta property="og:image:alt" content="${escapeHtml(title)}">
-<meta property="og:video" content="${splik.video_url}">
-<meta property="og:video:secure_url" content="${splik.video_url}">
-<meta property="og:video:type" content="video/mp4">
-
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${escapeHtml(title)}">
-<meta name="twitter:description" content="${escapeHtml(desc)}">
-<meta name="twitter:image" content="${image}">
-
-<meta name="robots" content="max-image-preview:large">
-<script>
-  // humans are redirected to the real page instantly
-  if (typeof window !== 'undefined') {
-    window.location.replace(${JSON.stringify(canonical)});
-  }
-</script>
-<noscript><meta http-equiv="refresh" content="0;url=${canonical}"/></noscript>
-</head>
-<body>
-Redirecting to <a href="${canonical}">${canonical}</a>…
-</body>
-</html>`;
-
-  res.status(200).type("text/html").send(og);
+  next();
 });
+app.use(express.static(DIST, { index: false }));
 
-// (optional) super-simple embeddable player if you ever switch to twitter:player
-app.get("/embed/:id", async (req, res) => {
-  const { id } = req.params;
-  const { data: v } = await supabase
-    .from("spliks")
-    .select("video_url,status")
-    .eq("id", id)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (!v) return res.status(404).type("text/plain").send("Not found");
-
-  res.set("Cache-Control", "public, max-age=60, s-maxage=300");
-  res.type("text/html").send(`<!doctype html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:cover}</style>
-</head><body>
-<video autoplay muted loop playsinline controls src="${v.video_url}"></video>
-</body></html>`);
-});
-
-app.listen(PORT, () =>
-  console.log(`OG server running on :${PORT} (origin ${SITE_ORIGIN})`)
-);
-
-// tiny helper
+async function getIndexHtml() {
+  return fs.readFile(INDEX_HTML, "utf8");
+}
+function injectHead(html, extraHead) {
+  return html.replace("</head>", `${extraHead}\n</head>`);
+}
 function escapeHtml(s = "") {
   return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
+function absoluteBase(req) {
+  const envBase = process.env.PUBLIC_SITE_URL?.replace(/\/+$/, "");
+  if (envBase) return envBase;
+  const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+  return `${proto}://${req.get("host")}`;
+}
+
+// Dynamic OG for /video/:id (also /v/:id if you want shorter links)
+async function renderVideoOG(req, res, id) {
+  try {
+    const base = absoluteBase(req);
+    const canonical = `${base}/video/${id}`;
+
+    // sensible defaults if DB isn’t reachable
+    let ogTitle = "Splikz — 3-Second Video";
+    let ogDesc = "Watch this 3-second Splik!";
+    // Put a brand fallback image into /public/splikz-og.png (bundled to /dist)
+    let ogImage = `${base}/splikz-og.png`;
+
+    if (supabase) {
+      const { data } = await supabase
+        .from("spliks")
+        .select("id,title,description,thumbnail_url,poster_url,status")
+        .eq("id", id)
+        .eq("status", "active")
+        .maybeSingle();
+
+      if (data) {
+        ogTitle = data.title || ogTitle;
+        ogDesc = (data.description || "").slice(0, 160) || ogDesc;
+        ogImage = data.thumbnail_url || data.poster_url || ogImage;
+      }
+    }
+
+    const extra = `
+      <link rel="canonical" href="${canonical}">
+      <meta property="og:type" content="video.other">
+      <meta property="og:site_name" content="Splikz">
+      <meta property="og:url" content="${canonical}">
+      <meta property="og:title" content="${escapeHtml(ogTitle)}">
+      <meta property="og:description" content="${escapeHtml(ogDesc)}">
+      <meta property="og:image" content="${ogImage}">
+      <meta name="twitter:card" content="summary_large_image">
+      <meta name="twitter:title" content="${escapeHtml(ogTitle)}">
+      <meta name="twitter:description" content="${escapeHtml(ogDesc)}">
+      <meta name="twitter:image" content="${ogImage}">
+    `;
+
+    const html = injectHead(await getIndexHtml(), extra);
+    res.status(200).type("html").send(html);
+  } catch (err) {
+    console.error("OG route error:", err);
+    res.sendFile(INDEX_HTML); // SPA fallback
+  }
+}
+
+// Health check
+app.get("/healthz", (_req, res) => res.type("text").send("ok"));
+
+// OG routes
+app.get("/video/:id", (req, res) => renderVideoOG(req, res, req.params.id));
+app.get("/v/:id", (req, res) => renderVideoOG(req, res, req.params.id));
+
+// Root + SPA fallback (fixes “Cannot GET /”)
+app.get("/", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(INDEX_HTML);
+});
+app.get("*", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.sendFile(INDEX_HTML);
+});
+
+// Boot
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server listening on :${PORT}`);
+});
