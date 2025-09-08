@@ -26,7 +26,7 @@ import {
   Smartphone,
   Info,
   Utensils,
-  Image as ImageIcon,
+  Image as ImageIcon, // NEW: icon for the cover section
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -92,29 +92,35 @@ const formatBytes = (bytes: number) => {
 };
 
 /* =========================================================
-   Create a poster image (JPEG) from a video Blob/File
+   Create a poster image (JPEG) from the uploaded video
    ========================================================= */
-async function makePosterFromVideoSource(source: Blob | File, atSeconds = 1): Promise<Blob> {
+async function makePosterFromFileVideo(file: File, atSeconds = 1): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     video.preload = "metadata";
     video.muted = true;
     video.crossOrigin = "anonymous";
 
-    const url = URL.createObjectURL(source);
+    const url = URL.createObjectURL(file);
     video.src = url;
 
     const cleanup = () => {
-      try { URL.revokeObjectURL(url); } catch {}
-      try { video.pause(); } catch {}
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+      try {
+        video.pause();
+      } catch {}
       video.removeAttribute("src");
       video.load();
     };
 
-    video.onerror = () => {
+    const onError = () => {
       cleanup();
       reject(new Error("Failed to read video for poster"));
     };
+
+    video.onerror = onError;
 
     video.onloadedmetadata = () => {
       const safeTarget =
@@ -125,7 +131,10 @@ async function makePosterFromVideoSource(source: Blob | File, atSeconds = 1): Pr
       const onSeeked = () => {
         try {
           const targetWidth = 720; // good OG size; FB/Twitter will resize
-          const ratio = video.videoWidth > 0 ? video.videoHeight / video.videoWidth : 16 / 9;
+          const ratio =
+            video.videoWidth > 0
+              ? video.videoHeight / video.videoWidth
+              : 16 / 9;
           const canvas = document.createElement("canvas");
           canvas.width = targetWidth;
           canvas.height = Math.round(targetWidth * ratio);
@@ -183,9 +192,6 @@ const blobToDataUrl = (blob: Blob) =>
 
 const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalProps) => {
   const [file, setFile] = useState<File | null>(null);
-  // the blob we'll use for frame capture (mp4 after transcode if source was MOV)
-  const [frameSource, setFrameSource] = useState<Blob | File | null>(null);
-
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
 
@@ -214,7 +220,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
   const [transcodeProgress, setTranscodeProgress] = useState(0);
   const ffmpegRef = useRef<FFmpeg | null>(null);
 
-  // COVER PICKER state
+  // NEW: cover picking state
   const [coverTime, setCoverTime] = useState(1.5);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [capturingCover, setCapturingCover] = useState(false);
@@ -423,17 +429,14 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
             });
           }
           const mp4Blob = await transcodeMovToMp4(selectedFile);
-          setFrameSource(mp4Blob); // use the converted mp4 for cover capture
           await prepareFromUrl(URL.createObjectURL(mp4Blob));
         } else {
-          setFrameSource(selectedFile); // capture frames directly from the original file
           await prepareFromUrl(URL.createObjectURL(selectedFile));
         }
       } catch (err: any) {
         console.error("Error processing video:", err);
         setVideoError(err?.message || "Failed to process your video.");
         setFile(null);
-        setFrameSource(null);
         if (videoPreview) {
           URL.revokeObjectURL(videoPreview);
           setVideoPreview(null);
@@ -486,14 +489,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [isPlaying, trimRange]);
-
-  // keep cover time inside current trim
-  useEffect(() => {
-    const mid = (trimRange[0] + trimRange[1]) / 2;
-    setCoverTime((prev) =>
-      Math.min(trimRange[1] - 0.05, Math.max(trimRange[0] + 0.05, prev ?? mid))
-    );
-  }, [trimRange[0], trimRange[1]]);
 
   const togglePlayPause = () => {
     if (!videoRef.current || !videoReady || videoError) return;
@@ -613,20 +608,18 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
     return { publicUrl: pub.publicUrl };
   };
 
-  // capture a cover preview (UI only)
+  // NEW: capture a cover preview (purely UI; the real image is generated again on upload)
   const snapCoverPreview = useCallback(async () => {
-    if (!frameSource) return;
+    if (!file) return;
     try {
       setCapturingCover(true);
-      // clamp to trim window to show exactly what will be used
-      const safe = Math.min(trimRange[1] - 0.05, Math.max(trimRange[0] + 0.05, coverTime));
-      const blob = await makePosterFromVideoSource(frameSource, safe);
+      const blob = await makePosterFromFileVideo(file, coverTime);
       setCoverPreview(await blobToDataUrl(blob));
       toast({ title: "Cover updated", description: "We’ll use this frame for link previews." });
     } finally {
       setCapturingCover(false);
     }
-  }, [frameSource, coverTime, trimRange, toast]);
+  }, [file, coverTime, toast]);
 
   // deterministic path + save video_path in DB
   const handleUpload = async () => {
@@ -671,17 +664,17 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
-      /* make & upload poster, using selected coverTime (clamped to trimmed window) */
+      /* make & upload poster, using selected coverTime */
       let thumbnail_url: string | null = null;
-      let savedCoverTime = coverTime;
       try {
-        const source = frameSource ?? file;
-        const thumbSecond = Math.min(enforcedEnd - 0.05, Math.max(selectedStart + 0.05, coverTime));
-        const posterBlob = await makePosterFromVideoSource(source, thumbSecond);
+        const thumbSecond = Math.min(
+          Math.max(0.1, coverTime),
+          Math.max(0.1, originalDuration - 0.1)
+        );
+        const posterBlob = await makePosterFromFileVideo(file, thumbSecond);
         const thumbPath = `${user.id}/${Date.now()}_poster.jpg`;
         const poster = await uploadBlob("spliks", thumbPath, posterBlob);
         thumbnail_url = poster.publicUrl || null;
-        savedCoverTime = thumbSecond;
       } catch (e) {
         console.warn("Poster generation failed:", e);
       }
@@ -699,8 +692,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
         is_food: isFood,
         video_path: videoPath,
         video_url: publicUrl,
-        thumbnail_url,       // used by server OG route
-        cover_time: savedCoverTime, // optional, handy for UI
+        thumbnail_url,
+        cover_time: coverTime, // storing it is handy
       };
 
       const { error: dbError } = await supabase.from("spliks").insert(payload);
@@ -711,7 +704,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
 
       // Reset UI
       setFile(null);
-      setFrameSource(null);
       setTitle("");
       setDescription("");
       setIsFood(false);
@@ -1023,8 +1015,8 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                       </div>
                       <Slider
                         value={[coverTime]}
-                        min={trimRange[0]}
-                        max={trimRange[1]}
+                        min={0}
+                        max={originalDuration || 3}
                         step={0.01}
                         onValueChange={(v) => setCoverTime(v[0])}
                       />
@@ -1033,7 +1025,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                           variant="outline"
                           size="sm"
                           onClick={snapCoverPreview}
-                          disabled={capturingCover || !frameSource}
+                          disabled={capturingCover}
                         >
                           {capturingCover ? (
                             <>
@@ -1049,7 +1041,7 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                           size="sm"
                           onClick={() => {
                             const mid = trimRange[0] + Math.min(trimRange[1] - trimRange[0], MAX_VIDEO_DURATION) / 2;
-                            setCoverTime(Math.min(trimRange[1] - 0.05, Math.max(trimRange[0] + 0.05, mid)));
+                            setCoverTime(Math.min(originalDuration, Math.max(0, mid)));
                           }}
                         >
                           Middle of clip
@@ -1148,7 +1140,6 @@ const VideoUploadModal = ({ open, onClose, onUploadComplete }: VideoUploadModalP
                   variant="outline"
                   onClick={() => {
                     setFile(null);
-                    setFrameSource(null);
                     if (videoPreview) URL.revokeObjectURL(videoPreview);
                     setVideoPreview(null);
                     setTitle("");
