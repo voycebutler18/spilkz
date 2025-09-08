@@ -19,6 +19,7 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 
+// ffmpeg v0.12+ API
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
 
@@ -36,7 +37,7 @@ interface VideoUploadModalProps {
   onUploadComplete: () => void;
 }
 
-const MAX_VIDEO_DURATION = 3; // hard cap
+const MAX_VIDEO_DURATION = 3;
 const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024;
 const MOBILE_MAX_SIZE = 1024 * 1024 * 1024;
 
@@ -68,7 +69,7 @@ const formatBytes = (bytes: number) => {
   return `${value.toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
 };
 
-/** Make a poster JPEG from a video Blob/File */
+/** Poster from video at a specific time */
 async function makePosterFromVideoSource(source: Blob | File, atSeconds = 1): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
@@ -146,21 +147,14 @@ async function uploadBlob(bucket: string, path: string, blob: Blob): Promise<{ p
   return { publicUrl: pub.publicUrl };
 }
 
-const blobToDataUrl = (blob: Blob) =>
-  new Promise<string>((resolve) => {
-    const r = new FileReader();
-    r.onloadend = () => resolve(r.result as string);
-    r.readAsDataURL(blob);
-  });
-
 export default function VideoUploadModal({ open, onClose, onUploadComplete }: VideoUploadModalProps) {
   const [file, setFile] = useState<File | null>(null);
 
-  // The exact video we will upload (mp4 after MOV transcode)
+  // The thing we actually upload (mp4 if transcoded from mov)
   const [uploadSource, setUploadSource] = useState<Blob | File | null>(null);
   const [uploadExt, setUploadExt] = useState<string>("mp4");
   const [uploadMime, setUploadMime] = useState<string>("video/mp4");
-  // Used for cover frame extraction
+  // For extracting frames
   const [frameSource, setFrameSource] = useState<Blob | File | null>(null);
 
   const [title, setTitle] = useState("");
@@ -181,7 +175,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
-  // Always a 3s window: [start, end] but we clamp to <= 3s in handler
+  // 3s window (we clamp to 3.0s automatically)
   const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]);
 
   const [showTrimmer, setShowTrimmer] = useState(false);
@@ -189,16 +183,15 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
 
+  // Cover time (selected inside the video)
+  const [coverTime, setCoverTime] = useState(1.5);
+
   const [transcoding, setTranscoding] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
   const ffmpegRef = useRef<FFmpeg | null>(null);
 
-  // COVER
-  const [coverTime, setCoverTime] = useState(1.5);
-  const [coverPreview, setCoverPreview] = useState<string | null>(null);
-  const [capturingCover, setCapturingCover] = useState(false);
-
   const videoRef = useRef<HTMLVideoElement>(null);
+  const seekBarRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number>();
   const { toast } = useToast();
@@ -222,14 +215,14 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     }
   };
 
-  // user sync
+  // Keep current user in sync
   useEffect(() => {
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
       if (!mounted) return;
       setCurrentUser(data.user ?? null);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setCurrentUser(session?.user ?? null);
     });
     return () => {
@@ -258,7 +251,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     return ffmpeg;
   }, []);
 
-  // MOV -> MP4
   const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
     setTranscoding(true);
     setTranscodeProgress(1);
@@ -295,7 +287,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     setVideoError(null);
     setVideoReady(false);
     setProcessingVideo(true);
-    setCoverPreview(null);
 
     const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
     const validTypes = ["video/mp4", "video/quicktime", "video/x-flv", "video/webm", "video/x-msvideo", "video/x-matroska"];
@@ -341,7 +332,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
             setOriginalDuration(duration);
             setShowTrimmer(duration > MAX_VIDEO_DURATION);
             const end = Math.min(MAX_VIDEO_DURATION, duration);
-            setTrimRange([0, end]); // initial window is 0..min(3,duration)
+            setTrimRange([0, end]);
             setCoverTime(Math.min(duration, end / 2));
             finish(true);
           };
@@ -351,10 +342,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       };
 
       if (isMOV(selectedFile)) {
-        toast({
-          title: "Converting MOV → MP4",
-          description: "We’ll upload MP4 so it plays everywhere.",
-        });
+        toast({ title: "Converting MOV → MP4", description: "We’ll upload MP4 so it plays everywhere." });
         const mp4Blob = await transcodeMovToMp4(selectedFile);
         setUploadSource(mp4Blob);
         setUploadExt("mp4");
@@ -412,7 +400,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     if (!videoRef.current || !isPlaying) return;
     const el = videoRef.current;
     const tick = () => {
-      // keep playback inside the 3s window
       if (el.currentTime >= trimRange[1] || el.currentTime < trimRange[0]) {
         el.currentTime = trimRange[0];
       }
@@ -424,6 +411,15 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
   }, [isPlaying, trimRange]);
+
+  // Keyboard shortcut: press "C" to set cover at current frame
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "c") setCoverAtCurrent();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentTime, trimRange]);
 
   const togglePlayPause = () => {
     if (!videoRef.current || !videoReady || videoError) return;
@@ -461,47 +457,37 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   const handleSeek = (value: number[]) => {
     if (!videoRef.current) return;
     const [pos] = value;
-    // Seek stays inside the enforced 3s window
     const newTime = Math.max(trimRange[0], Math.min(pos, trimRange[1]));
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
   };
 
-  /** Enforce a MAX 3s window even if the user drags beyond */
+  /** Enforce a 3.0s window even if the user drags beyond */
   const handleTrimChange = (value: number[]) => {
     if (!value || value.length < 2) return;
     let [start, end] = value as [number, number];
 
-    // clamp into the media duration
     start = Math.max(0, Math.min(start, originalDuration));
     end = Math.max(0, Math.min(end, originalDuration));
 
-    // identify which thumb moved (compare to previous)
     const [prevStart, prevEnd] = trimRange;
     const movedStart = Math.abs(start - prevStart) > Math.abs(end - prevEnd);
 
-    // enforce 3s window max
     const maxEndFromStart = Math.min(start + MAX_VIDEO_DURATION, originalDuration);
     const minStartFromEnd = Math.max(end - MAX_VIDEO_DURATION, 0);
 
     if (end - start > MAX_VIDEO_DURATION) {
-      if (movedStart) {
-        // user dragged start → snap end to start+3
-        end = maxEndFromStart;
-      } else {
-        // user dragged end → snap start to end-3
-        start = minStartFromEnd;
-      }
+      if (movedStart) end = maxEndFromStart;
+      else start = minStartFromEnd;
     }
 
     setTrimRange([start, end]);
 
-    // keep cover in the middle of the SAVED 3s window
     const savedEnd = Math.min(start + MAX_VIDEO_DURATION, end, originalDuration);
     const mid = start + Math.min(savedEnd - start, MAX_VIDEO_DURATION) / 2;
-    setCoverTime(Math.min(originalDuration, Math.max(0, mid)));
+    // keep cover inside the saved window
+    setCoverTime(Math.min(savedEnd - 0.05, Math.max(start + 0.05, mid)));
 
-    // keep the player cursor inside the window
     if (videoRef.current) {
       if (videoRef.current.currentTime < start || videoRef.current.currentTime > savedEnd) {
         videoRef.current.currentTime = start;
@@ -560,20 +546,19 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     return { publicUrl: pub.publicUrl };
   };
 
-  const snapCoverPreview = useCallback(async () => {
-    if (!frameSource) return;
-    try {
-      setCapturingCover(true);
-      const safeStart = trimRange[0];
-      const safeEnd = Math.min(trimRange[0] + MAX_VIDEO_DURATION, trimRange[1], originalDuration);
-      const safe = Math.min(safeEnd - 0.05, Math.max(safeStart + 0.05, coverTime));
-      const blob = await makePosterFromVideoSource(frameSource, safe);
-      setCoverPreview(await blobToDataUrl(blob));
-      toast({ title: "Cover updated", description: "We’ll use this frame for link previews." });
-    } finally {
-      setCapturingCover(false);
-    }
-  }, [frameSource, coverTime, trimRange, originalDuration, toast]);
+  // === Cover selection in-video ===========================================
+  const setCoverAtCurrent = () => {
+    // Clamp inside the saved 3s window
+    const start = trimRange[0];
+    const end = Math.min(start + MAX_VIDEO_DURATION, trimRange[1], originalDuration);
+    const t = Math.min(end - 0.05, Math.max(start + 0.05, currentTime));
+    setCoverTime(t);
+    toast({ title: "Cover set", description: `Using frame at ${t.toFixed(2)}s` });
+  };
+
+  const onVideoDoubleClick = () => setCoverAtCurrent();
+
+  // ========================================================================
 
   const handleUpload = async () => {
     if (!uploadSource || !title) {
@@ -594,10 +579,9 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       const ext = uploadExt || "mp4";
       const videoPath = `${user.id}/${Date.now()}.${ext}`;
 
-      // Upload the (possibly transcoded) source
       const { publicUrl } = await uploadWithProgress("spliks", videoPath, uploadSource);
 
-      // HARD CAP: always save exactly 3s window
+      // Exactly 3s window
       const selectedStart = Math.min(
         Math.max(0, trimRange[0]),
         Math.max(0, originalDuration - 0.05)
@@ -610,7 +594,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
-      // Poster inside the saved 3s window
+      // Poster from chosen frame
       let thumbnail_url: string | null = null;
       let savedCoverTime = coverTime;
       try {
@@ -628,12 +612,12 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         user_id: user.id,
         title,
         description: finalDescription.trim(),
-        duration: MAX_VIDEO_DURATION, // always 3
+        duration: MAX_VIDEO_DURATION,
         file_size: (uploadSource as Blob).size ?? file?.size ?? null,
         mime_type: uploadMime || "video/mp4",
         status: "active",
         trim_start: selectedStart,
-        trim_end: enforcedEnd,          // <= start + 3s
+        trim_end: enforcedEnd,
         is_food: isFood,
         video_path: videoPath,
         video_url: publicUrl,
@@ -647,7 +631,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       setUploadProgress(100);
       toast({ title: "Upload successful!", description: "Saved as a 3-second Splik." });
 
-      // Reset
+      // Reset UI
       setFile(null);
       setUploadSource(null);
       setUploadExt("mp4");
@@ -667,7 +651,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       setTrimRange([0, 3]);
       setUploadSpeedMBps(0);
       setUploadETA(null);
-      setCoverPreview(null);
 
       onUploadComplete();
       onClose();
@@ -694,6 +677,12 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     const ms = Math.floor((seconds % 1) * 10);
     return `${mins}:${secs.toString().padStart(2, "0")}.${ms}`;
   };
+
+  // Helper for cover marker position on seek bar
+  const coverPct = (() => {
+    const span = Math.max(0.001, trimRange[1] - trimRange[0]);
+    return ((coverTime - trimRange[0]) / span) * 100;
+  })();
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -772,6 +761,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                 </div>
               )}
 
+              {/* Video + overlay controls */}
               <div className="flex justify-center">
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
                   <div className="relative" style={{ paddingBottom: "177.78%" }}>
@@ -793,43 +783,69 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                           playsInline
                           preload="metadata"
                           controls={false}
+                          onDoubleClick={onVideoDoubleClick}
                         />
+
                         {!videoReady && !videoError && (
                           <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
                             <Loader2 className="h-8 w-8 animate-spin text-white" />
                           </div>
                         )}
+
                         {videoReady && !videoError && (
-                          <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/40">
+                          <div className="absolute inset-0 flex flex-col justify-end p-4 gap-2 bg-gradient-to-b from-black/20 via-transparent to-black/40">
+                            {/* Play/Pause big target */}
                             <button
                               onClick={togglePlayPause}
-                              className="absolute inset-0 w-full h-full flex items-center justify-center group"
-                            >
-                              <div
-                                className={`${isPlaying ? "opacity-0" : "opacity-100"} group-hover:opacity-100 transition-opacity bg-black/50 rounded-full p-4`}
-                              >
-                                {isPlaying ? <Pause className="h-12 w-12 text-white" /> : <Play className="h-12 w-12 text-white ml-1" />}
-                              </div>
-                            </button>
+                              className="absolute inset-0 w-full h-full"
+                              aria-label="Toggle playback"
+                            />
 
-                            <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2">
-                              <div className="flex justify-between text-white text-xs font-medium">
+                            {/* Bottom controls */}
+                            <div className="relative z-10 space-y-2 pointer-events-none">
+                              <div className="flex justify-between items-center text-white text-xs font-medium pointer-events-auto">
                                 <span>{formatTime(currentTime - trimRange[0])}</span>
-                                <span>Saved length: <strong>3.0s</strong> (auto-capped)</span>
+                                <span className="opacity-90">Saved length: <strong>3.0s</strong></span>
                               </div>
 
-                              <Slider
-                                value={[currentTime]}
-                                min={trimRange[0]}
-                                max={trimRange[1]}
-                                step={0.01}
-                                onValueChange={handleSeek}
-                                className="w-full"
-                              />
+                              {/* Seek + cover marker */}
+                              <div className="relative" ref={seekBarRef}>
+                                <Slider
+                                  value={[currentTime]}
+                                  min={trimRange[0]}
+                                  max={trimRange[1]}
+                                  step={0.01}
+                                  onValueChange={handleSeek}
+                                  className="w-full pointer-events-auto"
+                                />
+                                {/* cover marker */}
+                                <div
+                                  className="absolute -top-1 h-4 w-0.5 bg-white/90 rounded-sm pointer-events-none"
+                                  style={{ left: `calc(${coverPct}% - 1px)` }}
+                                  title="Cover frame"
+                                />
+                              </div>
 
-                              <button onClick={toggleMute} className="text-white hover:text-primary transition-colors">
-                                {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-                              </button>
+                              <div className="flex items-center justify-between pointer-events-auto">
+                                <button
+                                  onClick={toggleMute}
+                                  className="bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow"
+                                  aria-label={isMuted ? "Unmute" : "Mute"}
+                                >
+                                  {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+                                </button>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={(e) => { e.stopPropagation(); setCoverAtCurrent(); }}
+                                  className="ml-auto flex items-center gap-2"
+                                >
+                                  <ImageIcon className="h-4 w-4" />
+                                  Set cover (C / double-tap)
+                                </Button>
+                              </div>
                             </div>
                           </div>
                         )}
@@ -839,6 +855,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                 </div>
               </div>
 
+              {/* Trim picker (3s window auto-enforced) */}
               {videoPreview && showTrimmer && (
                 <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
@@ -865,66 +882,28 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                 </div>
               )}
 
-              {/* COVER PICKER */}
-              {videoPreview && (
-                <div className="space-y-3 p-4 rounded-lg border">
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-semibold">Cover</span>
-                  </div>
-
-                  <div className="flex gap-4 items-center">
-                    <div className="w-[120px] h-[160px] rounded-lg overflow-hidden bg-muted flex items-center justify-center">
-                      {coverPreview ? (
-                        <img src={coverPreview} alt="cover" className="w-full h-full object-cover" />
-                      ) : (
-                        <span className="text-xs text-muted-foreground px-2 text-center">
-                          Pick a frame then press “Use this frame”
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex-1 space-y-2">
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Time: {coverTime.toFixed(2)}s</span>
-                        <span>Tip: stop on the clearest face/action.</span>
-                      </div>
-                      <Slider
-                        value={[coverTime]}
-                        min={trimRange[0]}
-                        max={Math.min(trimRange[0] + MAX_VIDEO_DURATION, originalDuration)}
-                        step={0.01}
-                        onValueChange={(v) => setCoverTime(v[0])}
-                      />
-                      <div className="flex gap-2">
-                        <Button variant="outline" size="sm" onClick={snapCoverPreview} disabled={capturingCover || !frameSource}>
-                          {capturingCover ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Capturing…</>) : (<>Use this frame</>)}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const mid = trimRange[0] + MAX_VIDEO_DURATION / 2;
-                            setCoverTime(Math.min(trimRange[0] + MAX_VIDEO_DURATION - 0.05, Math.max(trimRange[0] + 0.05, mid)));
-                          }}
-                        >
-                          Middle of clip
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
+              {/* Details */}
               <div className="space-y-3">
                 <div>
                   <Label htmlFor="title">Title</Label>
-                  <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Enter a title for your Splik" disabled={uploading} />
+                  <Input
+                    id="title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Enter a title for your Splik"
+                    disabled={uploading}
+                  />
                 </div>
 
                 <div>
                   <Label htmlFor="description">Description (optional)</Label>
-                  <Input id="description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Add a description" disabled={uploading} />
+                  <Input
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Add a description"
+                    disabled={uploading}
+                  />
                 </div>
 
                 <div>
@@ -935,7 +914,9 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                     </SelectTrigger>
                     <SelectContent>
                       {MOOD_OPTIONS.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -949,9 +930,12 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                     <Utensils className="h-4 w-4 text-primary mt-0.5" />
                     <div>
                       <p className="text-sm font-medium">Food video</p>
-                      <p className="text-xs text-muted-foreground">If enabled, this video will also appear on the Food page.</p>
+                      <p className="text-xs text-muted-foreground">
+                        If enabled, this video will also appear on the Food page.
+                      </p>
                     </div>
                   </div>
+
                   <Button
                     type="button"
                     onClick={() => setIsFood((v) => !v)}
@@ -970,7 +954,9 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                   <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-1">
                       <Info className="h-3.5 w-3.5" />
-                      <span>Uploading… {uploadProgress}%{uploadETA ? ` • ETA ${uploadETA}` : ""}</span>
+                      <span>
+                        Uploading… {uploadProgress}%{uploadETA ? ` • ETA ${uploadETA}` : ""}
+                      </span>
                     </div>
                     <div className="font-mono">
                       {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
@@ -1002,7 +988,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                     setTrimRange([0, 3]);
                     setUploadSpeedMBps(0);
                     setUploadETA(null);
-                    setCoverPreview(null);
                   }}
                   disabled={uploading}
                 >
@@ -1010,7 +995,14 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                   Remove
                 </Button>
                 <Button onClick={handleUpload} disabled={uploading || !title}>
-                  {uploading ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />Uploading…</>) : ("Upload Splik")}
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading…
+                    </>
+                  ) : (
+                    "Upload Splik"
+                  )}
                 </Button>
               </div>
             </div>
