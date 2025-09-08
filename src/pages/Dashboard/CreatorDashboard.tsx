@@ -1,3 +1,4 @@
+// src/pages/CreatorDashboard.tsx
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,12 +19,22 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-import VideoGrid from "@/components/dashboard/VideoGrid";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
-import { Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield, Trash2, Plus, Eye, MoreVertical } from "lucide-react";
+import {
+  Video,
+  Users,
+  TrendingUp,
+  Settings,
+  Heart,
+  MessageCircle,
+  Shield,
+  Trash2,
+  Plus,
+  Eye,
+} from "lucide-react";
 import { toast } from "sonner";
 
 /* ----------------------------- Types ----------------------------- */
@@ -65,14 +76,22 @@ interface DashboardStats {
   avgReactionsPerVideo: number;
 }
 
-/* ----------------------------- Enhanced Video Management ----------------------------- */
-const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelete: (id: string) => void }) => {
+/* -------------------- Enhanced Video Management -------------------- */
+const VideoManagementGrid = ({
+  spliks,
+  onDelete,
+}: {
+  spliks: SplikRow[];
+  onDelete: (id: string) => void;
+}) => {
   const [selectedVideos, setSelectedVideos] = useState(new Set<string>());
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(
+    null
+  );
   const [hoveredVideo, setHoveredVideo] = useState<string | null>(null);
 
   const handleBulkDelete = () => {
-    selectedVideos.forEach(id => onDelete(id));
+    selectedVideos.forEach((id) => onDelete(id));
     setSelectedVideos(new Set());
   };
 
@@ -80,7 +99,7 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
     if (selectedVideos.size === spliks.length) {
       setSelectedVideos(new Set());
     } else {
-      setSelectedVideos(new Set(spliks.map(s => s.id)));
+      setSelectedVideos(new Set(spliks.map((s) => s.id)));
     }
   };
 
@@ -90,11 +109,14 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
       <div className="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl border border-gray-800">
         <div className="flex items-center gap-4">
           <h3 className="text-lg font-semibold text-white">Video Management</h3>
-          <Badge variant="outline" className="bg-gray-800 text-gray-300 border-gray-700">
+          <Badge
+            variant="outline"
+            className="bg-gray-800 text-gray-300 border-gray-700"
+          >
             {spliks.length} videos
           </Badge>
         </div>
-        
+
         <div className="flex items-center gap-3">
           {spliks.length > 0 && (
             <Button
@@ -103,10 +125,12 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
               onClick={handleSelectAll}
               className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
             >
-              {selectedVideos.size === spliks.length ? "Deselect All" : "Select All"}
+              {selectedVideos.size === spliks.length
+                ? "Deselect All"
+                : "Select All"}
             </Button>
           )}
-          
+
           {selectedVideos.size > 0 && (
             <Button
               variant="destructive"
@@ -133,9 +157,9 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
             {/* Video Thumbnail/Preview */}
             <div className="aspect-[9/16] bg-gray-800 relative overflow-hidden">
               {splik.thumbnail_url ? (
-                <img 
-                  src={splik.thumbnail_url} 
-                  alt={splik.title || 'Video thumbnail'}
+                <img
+                  src={splik.thumbnail_url}
+                  alt={splik.title || "Video thumbnail"}
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -143,31 +167,34 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
                   <Video className="h-12 w-12 text-gray-600" />
                 </div>
               )}
-              
+
               {/* Selection Checkbox */}
-              <div className={`absolute top-3 left-3 transition-opacity duration-200 ${
-                hoveredVideo === splik.id || selectedVideos.has(splik.id) ? 'opacity-100' : 'opacity-0'
-              }`}>
+              <div
+                className={`absolute top-3 left-3 transition-opacity duration-200 ${
+                  hoveredVideo === splik.id || selectedVideos.has(splik.id)
+                    ? "opacity-100"
+                    : "opacity-0"
+                }`}
+              >
                 <input
                   type="checkbox"
                   className="w-5 h-5 rounded border-2 border-white bg-black/50 text-blue-500 focus:ring-blue-500"
                   checked={selectedVideos.has(splik.id)}
                   onChange={(e) => {
                     const newSelected = new Set(selectedVideos);
-                    if (e.target.checked) {
-                      newSelected.add(splik.id);
-                    } else {
-                      newSelected.delete(splik.id);
-                    }
+                    if (e.target.checked) newSelected.add(splik.id);
+                    else newSelected.delete(splik.id);
                     setSelectedVideos(newSelected);
                   }}
                 />
               </div>
 
               {/* Delete Button */}
-              <div className={`absolute top-3 right-3 transition-opacity duration-200 ${
-                hoveredVideo === splik.id ? 'opacity-100' : 'opacity-0'
-              }`}>
+              <div
+                className={`absolute top-3 right-3 transition-opacity duration-200 ${
+                  hoveredVideo === splik.id ? "opacity-100" : "opacity-0"
+                }`}
+              >
                 <Button
                   size="sm"
                   variant="destructive"
@@ -224,12 +251,13 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
             <CardHeader>
               <CardTitle className="text-white">Delete Video</CardTitle>
               <CardDescription className="text-gray-400">
-                Are you sure you want to delete this video? This action cannot be undone.
+                Are you sure you want to delete this video? This action cannot
+                be undone.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex gap-2">
-              <Button 
-                variant="destructive" 
+              <Button
+                variant="destructive"
                 onClick={() => {
                   onDelete(showDeleteConfirm);
                   setShowDeleteConfirm(null);
@@ -238,8 +266,8 @@ const VideoManagementGrid = ({ spliks, onDelete }: { spliks: SplikRow[], onDelet
               >
                 Delete
               </Button>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setShowDeleteConfirm(null)}
                 className="flex-1 bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
               >
@@ -284,29 +312,39 @@ const CreatorDashboard = () => {
   /* ------------------------ Auth + initial load ------------------------ */
   useEffect(() => {
     (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id || null;
-      if (!uid) {
-        navigate("/login");
-        return;
-      }
-      setCurrentUserId(uid);
-
-      // admin check
       try {
-        const { data: adminRow } = await supabase
-          .from("admin_users")
-          .select("user_id")
-          .eq("user_id", uid)
-          .maybeSingle();
-        setIsAdmin(!!adminRow?.user_id);
-      } catch {
-        setIsAdmin(false);
-      }
+        const { data: auth, error } = await supabase.auth.getUser();
+        if (error) throw error;
+        const uid = auth.user?.id || null;
 
-      await Promise.all([fetchProfile(uid), fetchSpliks(uid)]);
-      setupRealtime(uid);
-      setLoading(false);
+        if (!uid) {
+          setLoading(false);
+          navigate("/login", { replace: true });
+          return;
+        }
+
+        setCurrentUserId(uid);
+
+        // admin check
+        try {
+          const { data: adminRow } = await supabase
+            .from("admin_users")
+            .select("user_id")
+            .eq("user_id", uid)
+            .maybeSingle();
+          setIsAdmin(!!adminRow?.user_id);
+        } catch {
+          setIsAdmin(false);
+        }
+
+        await Promise.all([fetchProfile(uid), fetchSpliks(uid)]);
+        setupRealtime(uid);
+      } catch (e) {
+        console.error("Auth/init error:", e);
+        toast.error("Failed to load dashboard");
+      } finally {
+        setLoading(false);
+      }
     })();
 
     return () => {
@@ -316,9 +354,9 @@ const CreatorDashboard = () => {
         } catch {}
         channelCleanup.current = null;
       }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [navigate]);
 
   /* ---------------------------- Realtime ---------------------------- */
   const setupRealtime = (uid: string) => {
@@ -335,21 +373,32 @@ const CreatorDashboard = () => {
       // only your spliks
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "spliks",
+          filter: `user_id=eq.${uid}`,
+        },
         (payload) => {
           const row = payload.new as SplikRow;
           setSpliks((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
-          recomputeStatsFromList((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
+          recomputeStatsFromList((prev) => [
+            { ...row, profile: prev[0]?.profile ?? null },
+            ...prev,
+          ]);
         }
       )
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "spliks",
+          filter: `user_id=eq.${uid}`,
+        },
         (payload) => {
           const row = payload.new as SplikRow;
-          setSpliks((prev) =>
-            prev.map((s) => (s.id === row.id ? { ...s, ...row } : s))
-          );
+          setSpliks((prev) => prev.map((s) => (s.id === row.id ? { ...s, ...row } : s)));
           recomputeStatsFromList((prev) =>
             prev.map((s) => (s.id === row.id ? { ...s, ...row } : s))
           );
@@ -357,7 +406,12 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "spliks",
+          filter: `user_id=eq.${uid}`,
+        },
         (payload) => {
           const deletedId = (payload.old as any)?.id as string;
           setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
@@ -367,7 +421,12 @@ const CreatorDashboard = () => {
       // profile changes (followers_count / spliks_count, etc.)
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${uid}` },
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "profiles",
+          filter: `id=eq.${uid}`,
+        },
         (payload) => {
           const p = payload.new as Profile;
           setProfile(p);
@@ -382,7 +441,11 @@ const CreatorDashboard = () => {
   /* ----------------------------- Fetchers ----------------------------- */
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
       if (error) throw error;
 
       setProfile(data as Profile);
@@ -437,13 +500,22 @@ const CreatorDashboard = () => {
     }));
   };
 
-  const recomputeStatsFromList = (listOrUpdater: SplikRow[] | ((prev: SplikRow[]) => SplikRow[])) => {
+  const recomputeStatsFromList = (
+    listOrUpdater: SplikRow[] | ((prev: SplikRow[]) => SplikRow[])
+  ) => {
     setSpliks((prev) => {
-      const list = typeof listOrUpdater === "function" ? (listOrUpdater as any)(prev) : listOrUpdater;
+      const list =
+        typeof listOrUpdater === "function"
+          ? (listOrUpdater as any)(prev)
+          : listOrUpdater;
       const totalReactions =
-        list.reduce((acc, s) => acc + (s.likes_count || 0) + (s.comments_count || 0), 0) || 0;
+        list.reduce(
+          (acc, s) => acc + (s.likes_count || 0) + (s.comments_count || 0),
+          0
+        ) || 0;
       const totalSpliks = list.length;
-      const avgReactionsPerVideo = totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
+      const avgReactionsPerVideo =
+        totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
 
       setStats((st) => ({
         ...st,
@@ -458,16 +530,16 @@ const CreatorDashboard = () => {
   /* ------------------------- Delete Functions ------------------------- */
   const handleDeleteVideo = async (videoId: string) => {
     if (!currentUserId) return;
-    
+
     try {
       const { error } = await supabase
         .from("spliks")
         .delete()
         .eq("id", videoId)
         .eq("user_id", currentUserId);
-      
+
       if (error) throw error;
-      
+
       toast.success("Video deleted successfully");
       // Realtime will handle the UI update
     } catch (error) {
@@ -503,15 +575,24 @@ const CreatorDashboard = () => {
     }
   };
 
-  const togglePrivacy = async (field: "followers_private" | "following_private") => {
+  const togglePrivacy = async (
+    field: "followers_private" | "following_private"
+  ) => {
     if (!currentUserId || !profile) return;
     const newValue = !profile[field];
     try {
-      const { error } = await supabase.from("profiles").update({ [field]: newValue }).eq("id", currentUserId);
+      const { error } = await supabase
+        .from("profiles")
+        .update({ [field]: newValue })
+        .eq("id", currentUserId);
       if (error) throw error;
 
       setProfile({ ...profile, [field]: newValue });
-      toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
+      toast.success(
+        `${
+          field === "followers_private" ? "Followers" : "Following"
+        } privacy updated`
+      );
     } catch (e) {
       console.error("Error updating privacy:", e);
       toast.error("Failed to update privacy settings");
@@ -540,14 +621,18 @@ const CreatorDashboard = () => {
               <Avatar className="h-20 w-20 ring-4 ring-blue-500/20">
                 <AvatarImage src={profile?.avatar_url || undefined} />
                 <AvatarFallback className="bg-gray-800 text-2xl">
-                  {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
+                  {profile?.display_name?.[0] ||
+                    profile?.username?.[0] ||
+                    "U"}
                 </AvatarFallback>
               </Avatar>
               <div>
                 <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
                   {profile?.display_name || "Creator Dashboard"}
                 </h1>
-                <p className="text-gray-400 mt-1">@{profile?.username || "username"}</p>
+                <p className="text-gray-400 mt-1">
+                  @{profile?.username || "username"}
+                </p>
                 {profile?.bio && (
                   <p className="text-gray-300 mt-2 max-w-md">{profile.bio}</p>
                 )}
@@ -556,14 +641,14 @@ const CreatorDashboard = () => {
 
             {/* Actions */}
             <div className="flex items-center gap-3">
-              <Button 
+              <Button
                 onClick={() => setUploadModalOpen(true)}
                 className="bg-blue-600 hover:bg-blue-700 gap-2"
               >
                 <Plus className="h-4 w-4" />
                 Upload Video
               </Button>
-              
+
               {isAdmin && (
                 <Button
                   variant="outline"
@@ -584,11 +669,15 @@ const CreatorDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card className="bg-gray-900 border-gray-800">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Total Videos</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400">
+                Total Videos
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.totalSpliks}</div>
+                <div className="text-3xl font-bold text-white">
+                  {stats.totalSpliks}
+                </div>
                 <div className="p-3 bg-blue-500/10 rounded-full">
                   <Video className="h-6 w-6 text-blue-400" />
                 </div>
@@ -599,11 +688,15 @@ const CreatorDashboard = () => {
 
           <Card className="bg-gray-900 border-gray-800">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Total Reactions</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400">
+                Total Reactions
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.totalReactions}</div>
+                <div className="text-3xl font-bold text-white">
+                  {stats.totalReactions}
+                </div>
                 <div className="flex items-center gap-2 p-3 bg-pink-500/10 rounded-full">
                   <Heart className="h-6 w-6 text-pink-400" />
                 </div>
@@ -614,11 +707,15 @@ const CreatorDashboard = () => {
 
           <Card className="bg-gray-900 border-gray-800">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Followers</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400">
+                Followers
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.followers}</div>
+                <div className="text-3xl font-bold text-white">
+                  {stats.followers}
+                </div>
                 <div className="p-3 bg-green-500/10 rounded-full">
                   <Users className="h-6 w-6 text-green-400" />
                 </div>
@@ -629,11 +726,15 @@ const CreatorDashboard = () => {
 
           <Card className="bg-gray-900 border-gray-800">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Avg Reactions</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400">
+                Avg Reactions
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.avgReactionsPerVideo}</div>
+                <div className="text-3xl font-bold text-white">
+                  {stats.avgReactionsPerVideo}
+                </div>
                 <div className="p-3 bg-purple-500/10 rounded-full">
                   <TrendingUp className="h-6 w-6 text-purple-400" />
                 </div>
@@ -646,13 +747,22 @@ const CreatorDashboard = () => {
         {/* Content Tabs */}
         <Tabs defaultValue="videos" className="w-full">
           <TabsList className="grid w-full grid-cols-3 bg-gray-900 border-gray-800">
-            <TabsTrigger value="videos" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
+            <TabsTrigger
+              value="videos"
+              className="data-[state=active]:bg-gray-800 data-[state=active]:text-white"
+            >
               My Videos
             </TabsTrigger>
-            <TabsTrigger value="analytics" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
+            <TabsTrigger
+              value="analytics"
+              className="data-[state=active]:bg-gray-800 data-[state=active]:text-white"
+            >
               Analytics
             </TabsTrigger>
-            <TabsTrigger value="profile" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
+            <TabsTrigger
+              value="profile"
+              className="data-[state=active]:bg-gray-800 data-[state=active]:text-white"
+            >
               Profile Settings
             </TabsTrigger>
           </TabsList>
@@ -660,13 +770,17 @@ const CreatorDashboard = () => {
           {/* My Videos Tab */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
-              <EnhancedVideoGridWithDelete spliks={spliks} onDelete={handleDeleteVideo} />
+              <VideoManagementGrid spliks={spliks} onDelete={handleDeleteVideo} />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
                 <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
-                <h3 className="text-xl font-semibold text-white mb-2">No videos yet</h3>
-                <p className="text-gray-400 mb-6">Start building your content library</p>
-                <Button 
+                <h3 className="text-xl font-semibold text-white mb-2">
+                  No videos yet
+                </h3>
+                <p className="text-gray-400 mb-6">
+                  Start building your content library
+                </p>
+                <Button
                   onClick={() => setUploadModalOpen(true)}
                   className="bg-blue-600 hover:bg-blue-700 gap-2"
                 >
@@ -682,15 +796,21 @@ const CreatorDashboard = () => {
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
                 <CardTitle className="text-white">Performance Overview</CardTitle>
-                <CardDescription className="text-gray-400">Track your content performance and growth</CardDescription>
+                <CardDescription className="text-gray-400">
+                  Track your content performance and growth
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
                   <div>
                     <p className="text-sm text-gray-400">This Week's Reactions</p>
-                    <p className="text-2xl font-bold text-white">{stats.totalReactions}</p>
+                    <p className="text-2xl font-bold text-white">
+                      {stats.totalReactions}
+                    </p>
                   </div>
-                  <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
+                  <Badge variant="secondary" className="bg-green-900 text-green-300">
+                    Live
+                  </Badge>
                 </div>
 
                 <CreatorAnalytics spliks={spliks} stats={stats} />
@@ -703,7 +823,9 @@ const CreatorDashboard = () => {
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
                 <CardTitle className="text-white">Profile Settings</CardTitle>
-                <CardDescription className="text-gray-400">Manage your creator profile</CardDescription>
+                <CardDescription className="text-gray-400">
+                  Manage your creator profile
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {editingProfile ? (
@@ -713,7 +835,9 @@ const CreatorDashboard = () => {
                       <p className="text-sm text-gray-400 mb-2">Profile Photo</p>
                       <AvatarUploader
                         value={formData.avatar_url || profile?.avatar_url}
-                        onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
+                        onChange={(url) =>
+                          setFormData((f) => ({ ...f, avatar_url: url }))
+                        }
                       />
                       <p className="text-xs text-gray-500 mt-2">
                         JPG/PNG recommended. We'll compress for faster loading.
@@ -721,11 +845,15 @@ const CreatorDashboard = () => {
                     </div>
 
                     <div>
-                      <Label htmlFor="username" className="text-gray-300">Username</Label>
+                      <Label htmlFor="username" className="text-gray-300">
+                        Username
+                      </Label>
                       <Input
                         id="username"
                         value={formData.username}
-                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, username: e.target.value })
+                        }
                         placeholder="@username"
                         className="bg-gray-800 border-gray-700 text-white"
                       />
@@ -735,22 +863,33 @@ const CreatorDashboard = () => {
                     </div>
 
                     <div>
-                      <Label htmlFor="display_name" className="text-gray-300">Display Name</Label>
+                      <Label htmlFor="display_name" className="text-gray-300">
+                        Display Name
+                      </Label>
                       <Input
                         id="display_name"
                         value={formData.display_name}
-                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            display_name: e.target.value,
+                          })
+                        }
                         placeholder="Your display name"
                         className="bg-gray-800 border-gray-700 text-white"
                       />
                     </div>
 
                     <div>
-                      <Label htmlFor="bio" className="text-gray-300">Bio</Label>
+                      <Label htmlFor="bio" className="text-gray-300">
+                        Bio
+                      </Label>
                       <Textarea
                         id="bio"
                         value={formData.bio}
-                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, bio: e.target.value })
+                        }
                         placeholder="Tell us about yourself"
                         rows={4}
                         className="bg-gray-800 border-gray-700 text-white"
@@ -758,11 +897,14 @@ const CreatorDashboard = () => {
                     </div>
 
                     <div className="flex gap-2">
-                      <Button onClick={handleProfileUpdate} className="bg-blue-600 hover:bg-blue-700">
+                      <Button
+                        onClick={handleProfileUpdate}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
                         Save Changes
                       </Button>
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         onClick={() => setEditingProfile(false)}
                         className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
                       >
@@ -777,30 +919,40 @@ const CreatorDashboard = () => {
                       <Avatar className="h-16 w-16 ring-2 ring-blue-500/20">
                         <AvatarImage src={profile?.avatar_url || undefined} />
                         <AvatarFallback className="bg-gray-800 text-xl">
-                          {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
+                          {profile?.display_name?.[0] ||
+                            profile?.username?.[0] ||
+                            "U"}
                         </AvatarFallback>
                       </Avatar>
                       <div>
                         <p className="text-sm text-gray-400">Signed in as</p>
-                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
+                        <p className="font-medium text-white">
+                          @{profile?.username || "Not set"}
+                        </p>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
                         <p className="text-sm text-gray-400 mb-1">Display Name</p>
-                        <p className="font-medium text-white">{profile?.display_name || "Not set"}</p>
+                        <p className="font-medium text-white">
+                          {profile?.display_name || "Not set"}
+                        </p>
                       </div>
-                      
+
                       <div>
                         <p className="text-sm text-gray-400 mb-1">Username</p>
-                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
+                        <p className="font-medium text-white">
+                          @{profile?.username || "Not set"}
+                        </p>
                       </div>
                     </div>
 
                     <div>
                       <p className="text-sm text-gray-400 mb-1">Bio</p>
-                      <p className="font-medium text-white break-words">{profile?.bio || "No bio yet"}</p>
+                      <p className="font-medium text-white break-words">
+                        {profile?.bio || "No bio yet"}
+                      </p>
                     </div>
 
                     {profile?.username && (
@@ -824,7 +976,9 @@ const CreatorDashboard = () => {
                       <div className="space-y-4">
                         <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
                           <div>
-                            <p className="font-medium text-white text-sm">Followers List</p>
+                            <p className="font-medium text-white text-sm">
+                              Followers List
+                            </p>
                             <p className="text-xs text-gray-400">
                               {profile?.followers_private
                                 ? "Private — Only you can see your followers"
@@ -840,7 +994,9 @@ const CreatorDashboard = () => {
 
                         <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
                           <div>
-                            <p className="font-medium text-white text-sm">Following List</p>
+                            <p className="font-medium text-white text-sm">
+                              Following List
+                            </p>
                             <p className="text-xs text-gray-400">
                               {profile?.following_private
                                 ? "Private — Only you can see who you follow"
@@ -856,7 +1012,7 @@ const CreatorDashboard = () => {
                       </div>
                     </div>
 
-                    <Button 
+                    <Button
                       onClick={() => setEditingProfile(true)}
                       className="bg-gray-800 hover:bg-gray-700 border border-gray-700 gap-2"
                     >
