@@ -6,23 +6,20 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+// ⬇️ removed shadcn Input import
+// import { Input } from "@/components/ui/input";
 import { BlockButton, UnblockButton } from "@/components/DM/BlockButtons";
 import { toast } from "sonner";
-import { 
-  Send, 
-  Paperclip, 
-  Smile, 
-  MoreVertical, 
-  Phone, 
-  Video, 
+import {
+  Send,
+  Paperclip,
+  Smile,
+  MoreVertical,
+  Phone,
+  Video,
   Search,
   ArrowLeft,
   Circle,
-  CheckCheck,
-  Check,
-  Eye,
-  EyeOff
 } from "lucide-react";
 
 type Msg = {
@@ -35,9 +32,9 @@ type Msg = {
   read_at: string | null;
 };
 
-type ProfileLite = { 
-  id: string; 
-  username: string | null; 
+type ProfileLite = {
+  id: string;
+  username: string | null;
   display_name: string | null;
   avatar_url?: string | null;
 };
@@ -57,25 +54,22 @@ export default function MessageThread() {
   const [replyingTo, setReplyingTo] = useState<Msg | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Common emojis for quick access
   const commonEmojis = ["😀", "😂", "❤️", "👍", "👎", "😢", "😮", "😡", "🎉", "🔥", "💯", "😊"];
 
-  // 1) Know who I am first (prevents wrong-side flash)
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
   }, []);
 
-  // 2) Stable thread key
   const threadKey = useMemo(() => {
     if (!me || !otherId) return null;
     return me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
-  // 4) Load display names and profiles for both users
   useEffect(() => {
     const run = async () => {
       if (!me || !otherId) return;
@@ -83,22 +77,19 @@ export default function MessageThread() {
         .from("profiles")
         .select("id,username,display_name,avatar_url")
         .in("id", [me, otherId as string]);
-      
+
       const nameMap: Record<string, string> = {};
       const profileMap: Record<string, ProfileLite> = {};
-      
       (data || []).forEach((p: any) => {
         nameMap[p.id] = p.display_name || p.username || "User";
         profileMap[p.id] = p;
       });
-      
       setNames(nameMap);
       setProfiles(profileMap);
     };
     run();
   }, [me, otherId]);
 
-  // 5) Scroll detection for unread indicator
   const handleScroll = () => {
     if (!messagesRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesRef.current;
@@ -106,15 +97,11 @@ export default function MessageThread() {
     setIsScrolledUp(!isAtBottom);
   };
 
-  // 6) Filter messages based on search
   const filteredMsgs = useMemo(() => {
     if (!searchQuery.trim()) return msgs;
-    return msgs.filter(m => 
-      m.body?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    return msgs.filter((m) => m.body?.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [msgs, searchQuery]);
 
-  // 7) Initial load + realtime (messages, presence, typing)
   useEffect(() => {
     if (!threadKey || !me || !otherId) return;
 
@@ -131,7 +118,6 @@ export default function MessageThread() {
       }
       setMsgs((data as Msg[]) || []);
 
-      // mark any messages TO ME as read now
       const toMark = (data || [])
         .filter((m: Msg) => m.recipient_id === me && !m.read_at)
         .map((m: Msg) => m.id);
@@ -150,13 +136,11 @@ export default function MessageThread() {
         (payload) => {
           const m = payload.new as Msg;
           setMsgs((prev) => [...prev, m]);
-          
-          // if I'm the recipient and I have this thread open, mark read immediately
           if (m.recipient_id === me && !m.read_at) {
             if (!isScrolledUp) {
               supabase.from("messages").update({ read_at: new Date().toISOString() }).eq("id", m.id);
             } else {
-              setUnreadCount(prev => prev + 1);
+              setUnreadCount((prev) => prev + 1);
             }
           }
         }
@@ -169,14 +153,12 @@ export default function MessageThread() {
           setMsgs((prev) => prev.map((p) => (p.id === m.id ? m : p)));
         }
       )
-      // presence
       .on("presence", { event: "sync" }, () => {
         const state = ch.presenceState();
         setOtherOnline(Object.prototype.hasOwnProperty.call(state, otherId as string));
       })
       .on("presence", { event: "join" }, ({ key }) => key === otherId && setOtherOnline(true))
       .on("presence", { event: "leave" }, ({ key }) => key === otherId && setOtherOnline(false))
-      // typing
       .on("broadcast", { event: "typing" }, (payload) => {
         const { userId, typing } = payload.payload as { userId: string; typing: boolean };
         if (userId === otherId) setOtherTyping(Boolean(typing));
@@ -190,7 +172,6 @@ export default function MessageThread() {
     };
   }, [threadKey, me, otherId, isScrolledUp]);
 
-  // 8) autoscroll only if not scrolled up
   useEffect(() => {
     if (!isScrolledUp) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -198,7 +179,6 @@ export default function MessageThread() {
     }
   }, [msgs.length, isScrolledUp]);
 
-  // 9) typing broadcast
   useEffect(() => {
     if (!me || !otherId || !threadKey) return;
     const ch = supabase.channel(`dm-${threadKey}`);
@@ -212,12 +192,10 @@ export default function MessageThread() {
     };
   }, [text, me, otherId, threadKey]);
 
-  // 10) send message
   const send = async () => {
     if (!me || !otherId || !text.trim()) return;
     const body = text.trim();
 
-    // optimistic
     const optimisticId =
       typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `tmp_${Date.now()}`;
     const optimistic: Msg = {
@@ -233,19 +211,19 @@ export default function MessageThread() {
     setText("");
     setReplyingTo(null);
 
+    // NOTE: do NOT pass thread_key here — the DB computes it.
     const { error } = await supabase.from("messages").insert({
       sender_id: me,
       recipient_id: otherId,
       body,
     });
-    
+
     if (error) {
       setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
-      toast.error("Couldn't send message.");
+      toast.error(`Couldn't send message: ${error.message}`);
       return;
     }
 
-    // fallback refresh if realtime UPDATEs aren't firing
     const { data: latest } = await supabase
       .from("messages")
       .select("*")
@@ -254,47 +232,31 @@ export default function MessageThread() {
     if (latest) setMsgs(latest as Msg[]);
   };
 
-  // 11) Scroll to bottom function
   const scrollToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     setIsScrolledUp(false);
     setUnreadCount(0);
-    
-    // Mark recent unread messages as read
-    const unreadMessages = msgs.filter(m => m.recipient_id === me && !m.read_at);
+    const unreadMessages = msgs.filter((m) => m.recipient_id === me && !m.read_at);
     if (unreadMessages.length > 0) {
-      const unreadIds = unreadMessages.map(m => m.id);
+      const unreadIds = unreadMessages.map((m) => m.id);
       supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", unreadIds);
     }
   };
 
-  // 12) Add emoji to message
   const addEmoji = (emoji: string) => {
-    setText(prev => prev + emoji);
+    setText((prev) => prev + emoji);
     setShowEmojiPicker(false);
     inputRef.current?.focus();
   };
 
-  // 13) Format time more elegantly
-  const formatTime = (dateStr: string) => {
-    const date = new Date(dateStr);
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
     const now = new Date();
-    const diffInHours = Math.abs(now.getTime() - date.getTime()) / (1000 * 60 * 60);
-    
-    if (diffInHours < 24) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (diffInHours < 168) { // 7 days
-      return date.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-    } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    }
-  };
-
-  // 14) Message status (kept function, not shown)
-  const getMessageStatus = (msg: Msg) => {
-    if (msg.sender_id !== me) return null;
-    if (msg.read_at) return <CheckCheck className="w-3 h-3 text-blue-500" />;
-    return <Check className="w-3 h-3 text-gray-400" />;
+    const diffHr = Math.abs(+now - +d) / 36e5;
+    if (diffHr < 24) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (diffHr < 168)
+      return d.toLocaleDateString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
   if (me === null) {
@@ -317,9 +279,34 @@ export default function MessageThread() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <Header />
-      
+
+      {/* 🔒 super small, component-scoped CSS to FORCE visible inputs */}
+      <style>{`
+        .force-input {
+          color: #000000 !important;
+          background-color: #ffffff !important;
+          -webkit-text-fill-color: #000000 !important;
+          caret-color: #000000 !important;
+          border: 1px solid rgba(0,0,0,0.25) !important;
+          border-radius: 12px !important;
+          padding: 10px 12px !important;
+          height: 40px !important;
+          line-height: 20px !important;
+          outline: none !important;
+        }
+        .force-input:focus {
+          box-shadow: 0 0 0 2px rgba(124,58,237,.35) !important;
+          border-color: rgba(124,58,237,.75) !important;
+        }
+        .force-input::placeholder {
+          color: #6b7280 !important;
+          -webkit-text-fill-color: #6b7280 !important;
+          opacity: 1 !important;
+        }
+      `}</style>
+
       <div className="max-w-4xl mx-auto px-4 py-6">
-        {/* Chat Header */}
+        {/* Header */}
         <div className="bg-slate-800/80 backdrop-blur-sm rounded-t-2xl border border-slate-700/50 p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -331,13 +318,12 @@ export default function MessageThread() {
               >
                 <ArrowLeft className="w-4 h-4" />
               </Button>
-              
+
               <div className="flex items-center gap-3">
-                {/* Avatar */}
                 <div className="relative">
                   {otherProfile?.avatar_url ? (
-                    <img 
-                      src={otherProfile.avatar_url} 
+                    <img
+                      src={otherProfile.avatar_url}
                       alt={nameFor(otherId as string)}
                       className="w-10 h-10 rounded-full border-2 border-slate-600"
                     />
@@ -350,19 +336,17 @@ export default function MessageThread() {
                     <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-800"></div>
                   )}
                 </div>
-                
+
                 <div>
-                  <h2 className="text-white font-semibold text-lg">
-                    {nameFor(otherId as string)}
-                  </h2>
+                  <h2 className="text-white font-semibold text-lg">{nameFor(otherId as string)}</h2>
                   <div className="flex items-center gap-2 text-sm">
-                    <Circle className={`w-2 h-2 fill-current ${otherOnline ? 'text-green-500' : 'text-slate-500'}`} />
+                    <Circle
+                      className={`w-2 h-2 fill-current ${otherOnline ? "text-green-500" : "text-slate-500"}`}
+                    />
                     <span className="text-slate-400">
                       {otherOnline ? "Online" : "Offline"}
                       {otherTyping && (
-                        <span className="ml-2 text-purple-400 animate-pulse">
-                          typing...
-                        </span>
+                        <span className="ml-2 text-purple-400 animate-pulse">typing...</span>
                       )}
                     </span>
                   </div>
@@ -379,54 +363,43 @@ export default function MessageThread() {
               >
                 <Search className="w-4 h-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-slate-300 hover:text-white hover:bg-slate-700/50"
-              >
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
                 <Phone className="w-4 h-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-slate-300 hover:text-white hover:bg-slate-700/50"
-              >
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
                 <Video className="w-4 h-4" />
               </Button>
-              
+
               <div className="flex gap-2 ml-2">
                 <BlockButton otherUserId={otherId!} />
                 <UnblockButton otherUserId={otherId!} />
               </div>
-              
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-slate-300 hover:text-white hover:bg-slate-700/50"
-              >
+
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
                 <MoreVertical className="w-4 h-4" />
               </Button>
             </div>
           </div>
 
-          {/* Search Bar */}
+          {/* Search Bar (native input) */}
           {showSearch && (
             <div className="mt-4 pt-4 border-t border-slate-700/50">
-              <Input
+              <input
+                type="text"
                 placeholder="Search messages..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-slate-700/50 border-slate-600 text-white placeholder-slate-400"
+                className="force-input w-full"
+                autoComplete="off"
               />
             </div>
           )}
         </div>
 
-        {/* Messages Container */}
+        {/* Messages */}
         <Card className="rounded-none rounded-b-2xl border-x border-b border-slate-700/50 bg-slate-800/60 backdrop-blur-sm">
           <div className="h-[65vh] flex flex-col">
-            {/* Messages List */}
-            <div 
+            <div
               ref={messagesRef}
               className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
               onScroll={handleScroll}
@@ -440,14 +413,13 @@ export default function MessageThread() {
 
                 return (
                   <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"} group`}>
-                    <div className={`flex items-end gap-2 max-w-[80%] ${mine ? 'flex-row-reverse' : 'flex-row'}`}>
-                      {/* Avatar for other user */}
+                    <div className={`flex items-end gap-2 max-w-[80%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
                       {!mine && (
-                        <div className={`w-6 h-6 flex-shrink-0 ${showAvatar ? '' : 'invisible'}`}>
+                        <div className={`w-6 h-6 flex-shrink-0 ${showAvatar ? "" : "invisible"}`}>
                           {showAvatar && (
                             otherProfile?.avatar_url ? (
-                              <img 
-                                src={otherProfile.avatar_url} 
+                              <img
+                                src={otherProfile.avatar_url}
                                 alt={nameFor(m.sender_id)}
                                 className="w-6 h-6 rounded-full"
                               />
@@ -461,17 +433,16 @@ export default function MessageThread() {
                       )}
 
                       <div className="flex flex-col">
-                        {/* Message bubble */}
                         <div
                           className={[
                             "relative group px-4 py-2 text-sm leading-relaxed break-words shadow-lg",
                             "transition-all duration-200 hover:shadow-xl",
                             mine
                               ? `bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-purple-500/25 ${
-                                  isConsecutive ? 'rounded-2xl rounded-br-md' : 'rounded-2xl rounded-br-sm'
+                                  isConsecutive ? "rounded-2xl rounded-br-md" : "rounded-2xl rounded-br-sm"
                                 }`
                               : `bg-slate-700/80 text-slate-100 shadow-slate-900/50 ${
-                                  isConsecutive ? 'rounded-2xl rounded-bl-md' : 'rounded-2xl rounded-bl-sm'
+                                  isConsecutive ? "rounded-2xl rounded-bl-md" : "rounded-2xl rounded-bl-sm"
                                 }`,
                           ].join(" ")}
                         >
@@ -480,21 +451,8 @@ export default function MessageThread() {
                           ) : (
                             <span className="opacity-60 italic text-xs">(empty message)</span>
                           )}
-                          
-                          {/* Message actions on hover */}
-                          <div className="absolute -top-8 right-0 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 rounded-lg shadow-lg border border-slate-700 flex">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-2 text-xs text-slate-300 hover:text-white"
-                              onClick={() => setReplyingTo(m)}
-                            >
-                              Reply
-                            </Button>
-                          </div>
                         </div>
 
-                        {/* Timestamp (no seen indicator) */}
                         <div
                           className={[
                             "flex items-center gap-1 mt-1 text-[10px] text-slate-500",
@@ -502,7 +460,6 @@ export default function MessageThread() {
                           ].join(" ")}
                         >
                           <span>{formatTime(m.created_at)}</span>
-                          {/* seen/status removed per request */}
                         </div>
                       </div>
                     </div>
@@ -510,29 +467,13 @@ export default function MessageThread() {
                 );
               })}
 
-              {/* Typing indicator */}
               {otherTyping && (
                 <div className="flex justify-start">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 flex-shrink-0">
-                      {otherProfile?.avatar_url ? (
-                        <img 
-                          src={otherProfile.avatar_url} 
-                          alt={nameFor(otherId as string)}
-                          className="w-6 h-6 rounded-full"
-                        />
-                      ) : (
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
-                          {nameFor(otherId as string).charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                    <div className="bg-slate-700/80 rounded-2xl rounded-bl-sm px-4 py-2 shadow-lg">
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                      </div>
+                  <div className="bg-slate-700/80 rounded-2xl rounded-bl-sm px-4 py-2 shadow-lg">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
+                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
                     </div>
                   </div>
                 </div>
@@ -541,43 +482,39 @@ export default function MessageThread() {
               <div ref={bottomRef} />
             </div>
 
-            {/* Unread messages indicator */}
             {isScrolledUp && unreadCount > 0 && (
               <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 z-10">
                 <Button
                   onClick={scrollToBottom}
                   className="bg-purple-600 hover:bg-purple-700 text-white rounded-full px-4 py-2 shadow-lg flex items-center gap-2 animate-bounce"
                 >
-                  <span className="text-sm">{unreadCount} new message{unreadCount > 1 ? 's' : ''}</span>
+                  <span className="text-sm">
+                    {unreadCount} new message{unreadCount > 1 ? "s" : ""}
+                  </span>
                   <div className="w-2 h-2 bg-white rounded-full"></div>
                 </Button>
               </div>
             )}
 
-            {/* Reply indicator */}
             {replyingTo && (
               <div className="px-4 py-2 bg-slate-700/50 border-t border-slate-600/50 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm text-slate-300">
                   <div className="w-1 h-8 bg-purple-500 rounded"></div>
                   <div>
-                    <div className="text-purple-400 text-xs">Replying to {nameFor(replyingTo.sender_id)}</div>
+                    <div className="text-purple-400 text-xs">
+                      Replying to {nameFor(replyingTo.sender_id)}
+                    </div>
                     <div className="truncate max-w-md">{replyingTo.body}</div>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setReplyingTo(null)}
-                  className="text-slate-400 hover:text-white"
-                >
+                <Button variant="ghost" size="sm" onClick={() => setReplyingTo(null)} className="text-slate-400 hover:text-white">
                   ×
                 </Button>
               </div>
             )}
 
-            {/* Input Area */}
+            {/* Composer */}
             <div className="p-4 border-t border-slate-700/50 bg-slate-800/40">
-              {/* Emoji Picker */}
               {showEmojiPicker && (
                 <div className="mb-3 p-3 bg-slate-700/80 rounded-xl border border-slate-600/50">
                   <div className="grid grid-cols-6 gap-2">
@@ -597,19 +534,15 @@ export default function MessageThread() {
               )}
 
               <div className="flex items-end gap-2">
-                {/* Attachment button */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0"
-                >
+                <Button variant="ghost" size="sm" className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0">
                   <Paperclip className="w-4 h-4" />
                 </Button>
 
-                {/* Message input — FIXED: black text on white in light mode */}
+                {/* 🔁 Native input (message box) */}
                 <div className="flex-1 relative">
-                  <Input
+                  <input
                     ref={inputRef}
+                    type="text"
                     placeholder="Type a message..."
                     value={text}
                     onChange={(e) => setText(e.target.value)}
@@ -619,15 +552,13 @@ export default function MessageThread() {
                         send();
                       }
                     }}
-                    className="bg-white text-black placeholder-slate-500 border-slate-300
-                               dark:bg-slate-700/60 dark:text-white dark:placeholder-slate-400 dark:border-slate-600/50
-                               rounded-xl pr-12 h-10 resize-none
-                               focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500/50"
-                    style={{ minHeight: "40px" }}
+                    className="force-input w-full"
+                    autoComplete="off"
+                    autoCorrect="on"
+                    spellCheck
                   />
                 </div>
 
-                {/* Emoji button */}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -637,7 +568,6 @@ export default function MessageThread() {
                   <Smile className="w-4 h-4" />
                 </Button>
 
-                {/* Send button */}
                 <Button
                   onClick={send}
                   disabled={!text.trim()}
@@ -650,7 +580,7 @@ export default function MessageThread() {
           </div>
         </Card>
       </div>
-      
+
       <Footer />
     </div>
   );
