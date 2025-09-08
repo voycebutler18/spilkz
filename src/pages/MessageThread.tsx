@@ -591,8 +591,9 @@ export default function MessageThread() {
 
                 {/* Enhanced Input Field */}
                 <div className="flex-1 relative">
-                  <Input
+                  <input
                     ref={inputRef}
+                    type="text"
                     placeholder="Type your message..."
                     value={text}
                     onChange={(e) => setText(e.target.value)}
@@ -603,13 +604,18 @@ export default function MessageThread() {
                       }
                     }}
                     className="
-                      bg-white text-slate-900 placeholder-slate-500 border-0
-                      rounded-full px-6 py-4 text-base font-medium
+                      w-full h-12 px-6 py-4 text-base font-medium
+                      bg-white text-black placeholder-gray-500
+                      border-0 rounded-full outline-none
                       shadow-inner focus:shadow-lg transition-all duration-200
-                      focus:ring-2 focus:ring-purple-500/50 focus:bg-white
+                      focus:ring-2 focus:ring-purple-500/50
                     "
                     style={{ 
-                      minHeight: "48px"
+                      backgroundColor: '#ffffff !important',
+                      color: '#000000 !important',
+                      minHeight: "48px",
+                      WebkitTextFillColor: '#000000',
+                      opacity: 1
                     }}
                     autoComplete="off"
                     autoCorrect="on"
