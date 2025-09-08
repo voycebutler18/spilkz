@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
@@ -82,12 +82,36 @@ function UploadRoute() {
   return null;
 }
 
+/** Force the window to the top on route changes (fixes "pages start at bottom") */
+function ScrollToTop() {
+  const { pathname, hash } = useLocation();
+
+  // Set manual restoration once
+  useEffect(() => {
+    try {
+      if ("scrollRestoration" in window.history) {
+        window.history.scrollRestoration = "manual";
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    // Keep anchor links (/#section) working
+    if (hash) return;
+
+    // Reset window + doc scroll
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, [pathname, hash]);
+
+  return null;
+}
+
 /** Hook to detect desktop for routing the messages experience */
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
-    typeof window !== "undefined"
-      ? window.matchMedia("(min-width: 1024px)").matches
-      : true
+    typeof window !== "undefined" ? window.matchMedia("(min-width: 1024px)").matches : true
   );
 
   useEffect(() => {
@@ -118,6 +142,9 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {/* 🔝 ensure new routes start at the top */}
+        <ScrollToTop />
+
         <UploadModalProvider>
           <Routes>
             {/* Auth screens (no layout) */}
