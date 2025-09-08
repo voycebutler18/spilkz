@@ -19,6 +19,9 @@ import {
   Search,
   ArrowLeft,
   Circle,
+  Image,
+  Mic,
+  Settings,
 } from "lucide-react";
 
 type Msg = {
@@ -59,7 +62,12 @@ export default function MessageThread() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  const commonEmojis = ["😀", "😂", "❤️", "👍", "👎", "😢", "😮", "😡", "🎉", "🔥", "💯", "😊"];
+  const emojiCategories = {
+    faces: ["😀", "😂", "🥰", "😍", "🤔", "😎", "🥳", "😴"],
+    gestures: ["👍", "👎", "👏", "🙌", "🤝", "✌️", "🤞", "👌"],
+    hearts: ["❤️", "💙", "💚", "💛", "💜", "🖤", "🤍", "💖"],
+    objects: ["🔥", "💯", "⚡", "💎", "🎉", "🚀", "💡", "⭐"],
+  };
 
   // who am I
   useEffect(() => {
@@ -202,7 +210,7 @@ export default function MessageThread() {
     }
   }, [msgs.length, isScrolledUp]);
 
-  // typing broadcast (reuses subscribed channel)
+  // typing broadcast
   useEffect(() => {
     if (!me || !threadKey || !channelRef.current) return;
 
@@ -223,7 +231,7 @@ export default function MessageThread() {
     };
   }, [text, me, threadKey]);
 
-  // send message (ensures thread_key is included)
+  // send message
   const send = async () => {
     if (!me || !otherId || !text.trim() || !threadKey) return;
     const body = text.trim();
@@ -251,7 +259,7 @@ export default function MessageThread() {
       sender_id: me,
       recipient_id: otherId,
       body,
-      thread_key: threadKey, // <- make sure the row has the same thread key
+      thread_key: threadKey,
     });
 
     if (error) {
@@ -266,7 +274,6 @@ export default function MessageThread() {
     setIsScrolledUp(false);
     setUnreadCount(0);
 
-    // mark any unread (to me) as read
     const toMark = msgs.filter((m) => m.recipient_id === me && !m.read_at).map((m) => m.id);
     if (toMark.length) {
       supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", toMark);
@@ -291,11 +298,11 @@ export default function MessageThread() {
 
   if (me === null) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-slate-950">
         <Header />
-        <div className="max-w-4xl mx-auto px-4 py-10 text-center">
+        <div className="max-w-6xl mx-auto px-4 py-10 text-center">
           <div className="animate-pulse">
-            <div className="h-4 bg-slate-700 rounded w-32 mx-auto"></div>
+            <div className="h-6 bg-white/10 rounded-lg w-48 mx-auto"></div>
           </div>
         </div>
         <Footer />
@@ -307,102 +314,118 @@ export default function MessageThread() {
   const otherProfile = profiles[otherId as string];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-slate-950">
       <Header />
 
-      <div className="max-w-4xl mx-auto px-4 py-6">
-        {/* Top bar */}
-        <div className="bg-slate-800/80 backdrop-blur-sm rounded-t-2xl border border-slate-700/50 p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-slate-300 hover:text-white hover:bg-slate-700/50 p-2"
-                onClick={() => window.history.back()}
-              >
-                <ArrowLeft className="w-4 h-4" />
-              </Button>
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        {/* Enhanced Header */}
+        <div className="bg-gradient-to-r from-slate-900/90 to-slate-800/90 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl mb-6">
+          <div className="p-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-white/70 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200"
+                  onClick={() => window.history.back()}
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </Button>
 
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  {otherProfile?.avatar_url ? (
-                    <img
-                      src={otherProfile.avatar_url}
-                      alt={nameFor(otherId as string)}
-                      className="w-10 h-10 rounded-full border-2 border-slate-600"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-semibold border-2 border-slate-600">
-                      {nameFor(otherId as string).charAt(0).toUpperCase()}
+                <div className="flex items-center gap-4">
+                  <div className="relative group">
+                    {otherProfile?.avatar_url ? (
+                      <img
+                        src={otherProfile.avatar_url}
+                        alt={nameFor(otherId as string)}
+                        className="w-14 h-14 rounded-full border-3 border-gradient-to-r from-purple-400 to-blue-400 shadow-lg group-hover:scale-105 transition-transform duration-200"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold text-xl shadow-lg group-hover:scale-105 transition-transform duration-200">
+                        {nameFor(otherId as string).charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    {otherOnline && (
+                      <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-400 rounded-full border-3 border-slate-900 shadow-lg animate-pulse" />
+                    )}
+                  </div>
+
+                  <div className="space-y-1">
+                    <h2 className="text-white font-bold text-2xl tracking-tight">{nameFor(otherId as string)}</h2>
+                    <div className="flex items-center gap-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <Circle
+                          className={`w-2.5 h-2.5 fill-current ${otherOnline ? "text-emerald-400" : "text-slate-500"}`}
+                        />
+                        <span className={`font-medium ${otherOnline ? "text-emerald-400" : "text-slate-400"}`}>
+                          {otherOnline ? "Online now" : "Offline"}
+                        </span>
+                      </div>
+                      {otherTyping && (
+                        <span className="text-purple-400 animate-pulse flex items-center gap-1">
+                          <div className="flex space-x-0.5">
+                            <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" />
+                            <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}} />
+                            <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}} />
+                          </div>
+                          typing...
+                        </span>
+                      )}
                     </div>
-                  )}
-                  {otherOnline && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-800" />
-                  )}
-                </div>
-
-                <div>
-                  <h2 className="text-white font-semibold text-lg">{nameFor(otherId as string)}</h2>
-                  <div className="flex items-center gap-2 text-sm">
-                    <Circle
-                      className={`w-2 h-2 fill-current ${otherOnline ? "text-green-500" : "text-slate-500"}`}
-                    />
-                    <span className="text-slate-400">
-                      {otherOnline ? "Online" : "Offline"}
-                      {otherTyping && <span className="ml-2 text-purple-400 animate-pulse">typing…</span>}
-                    </span>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-slate-300 hover:text-white hover:bg-slate-700/50"
-                onClick={() => setShowSearch((s) => !s)}
-              >
-                <Search className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
-                <Phone className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
-                <Video className="w-4 h-4" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-white/70 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200"
+                  onClick={() => setShowSearch((s) => !s)}
+                >
+                  <Search className="w-5 h-5" />
+                </Button>
+                <Button variant="ghost" size="sm" className="text-white/70 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200">
+                  <Phone className="w-5 h-5" />
+                </Button>
+                <Button variant="ghost" size="sm" className="text-white/70 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200">
+                  <Video className="w-5 h-5" />
+                </Button>
 
-              <div className="flex gap-2 ml-2">
-                <BlockButton otherUserId={otherId!} />
-                <UnblockButton otherUserId={otherId!} />
+                <div className="flex gap-2 ml-2 border-l border-white/10 pl-4">
+                  <BlockButton otherUserId={otherId!} />
+                  <UnblockButton otherUserId={otherId!} />
+                </div>
+
+                <Button variant="ghost" size="sm" className="text-white/70 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200">
+                  <Settings className="w-5 h-5" />
+                </Button>
               </div>
-
-              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
-                <MoreVertical className="w-4 h-4" />
-              </Button>
             </div>
+
+            {showSearch && (
+              <div className="mt-6 pt-6 border-t border-white/10">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/50" />
+                  <Input
+                    placeholder="Search messages..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="bg-white/10 border-white/20 text-white placeholder-white/50 rounded-full pl-12 h-12 focus:bg-white/15 focus:border-white/30 transition-all duration-200"
+                  />
+                </div>
+              </div>
+            )}
           </div>
-
-          {showSearch && (
-            <div className="mt-4 pt-4 border-t border-slate-700/50">
-              <Input
-                placeholder="Search messages…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-slate-700/50 border-slate-600 text-white placeholder-slate-400"
-              />
-            </div>
-          )}
         </div>
 
-        {/* Chat surface */}
-        <Card className="relative rounded-none rounded-b-2xl border-x border-b border-slate-700/50 bg-slate-800/60 backdrop-blur-sm">
-          <div className="h-[65vh] flex flex-col">
-            {/* list */}
+        {/* Enhanced Chat Container */}
+        <div className="bg-gradient-to-b from-slate-900/40 to-slate-800/40 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl overflow-hidden">
+          <div className="h-[70vh] flex flex-col">
+            {/* Messages Area */}
             <div
               ref={messagesRef}
-              className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
+              className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent hover:scrollbar-thumb-white/30"
               onScroll={handleScroll}
             >
               {filteredMsgs.map((m, i) => {
@@ -413,50 +436,56 @@ export default function MessageThread() {
 
                 return (
                   <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"} group`}>
-                    <div className={`flex items-end gap-2 max-w-[80%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
+                    <div className={`flex items-end gap-3 max-w-[75%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
                       {!mine && (
-                        <div className={`w-6 h-6 flex-shrink-0 ${isConsecutive ? "invisible" : ""}`}>
+                        <div className={`w-8 h-8 flex-shrink-0 ${isConsecutive ? "invisible" : ""}`}>
                           {profiles[otherId as string]?.avatar_url ? (
                             <img
                               src={profiles[otherId as string]!.avatar_url!}
                               alt={nameFor(m.sender_id)}
-                              className="w-6 h-6 rounded-full"
+                              className="w-8 h-8 rounded-full border-2 border-white/20"
                             />
                           ) : (
-                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-sm font-bold border-2 border-white/20">
                               {nameFor(m.sender_id).charAt(0).toUpperCase()}
                             </div>
                           )}
                         </div>
                       )}
 
-                      <div className="flex flex-col">
+                      <div className="flex flex-col space-y-1">
                         <div
                           className={[
-                            "relative px-4 py-2 text-sm leading-relaxed break-words shadow-lg transition-all duration-200",
+                            "relative px-5 py-3 text-sm leading-relaxed break-words shadow-xl transition-all duration-300 group-hover:shadow-2xl",
                             mine
-                              ? `bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-purple-500/25 ${
-                                  isConsecutive ? "rounded-2xl rounded-br-md" : "rounded-2xl rounded-br-sm"
+                              ? `bg-gradient-to-r from-purple-600 via-blue-600 to-purple-600 bg-size-200 bg-pos-0 hover:bg-pos-100 text-white shadow-purple-500/30 ${
+                                  isConsecutive ? "rounded-3xl rounded-br-lg" : "rounded-3xl rounded-br-sm"
                                 }`
-                              : `bg-slate-700/80 text-slate-100 shadow-slate-900/50 ${
-                                  isConsecutive ? "rounded-2xl rounded-bl-md" : "rounded-2xl rounded-bl-sm"
+                              : `bg-gradient-to-r from-slate-700/90 to-slate-600/90 backdrop-blur-sm text-white shadow-slate-900/50 border border-white/10 ${
+                                  isConsecutive ? "rounded-3xl rounded-bl-lg" : "rounded-3xl rounded-bl-sm"
                                 }`,
                           ].join(" ")}
                         >
                           {content.length ? (
-                            <span className="whitespace-pre-wrap">{content}</span>
+                            <span className="whitespace-pre-wrap font-medium">{content}</span>
                           ) : (
                             <span className="opacity-60 italic text-xs">(empty message)</span>
                           )}
+                          
+                          {/* Enhanced message glow effect */}
+                          <div className={`absolute inset-0 rounded-3xl ${mine ? 'bg-gradient-to-r from-purple-600/20 to-blue-600/20' : 'bg-gradient-to-r from-slate-600/20 to-slate-500/20'} -z-10 blur-lg group-hover:opacity-80 opacity-0 transition-opacity duration-300`} />
                         </div>
 
                         <div
                           className={[
-                            "mt-1 text-[10px] text-slate-500 flex items-center gap-1",
+                            "flex items-center gap-2 text-xs text-white/50 px-2",
                             mine ? "justify-end" : "justify-start",
                           ].join(" ")}
                         >
-                          <span>{formatTime(m.created_at)}</span>
+                          <span className="font-medium">{formatTime(m.created_at)}</span>
+                          {mine && m.read_at && (
+                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full" />
+                          )}
                         </div>
                       </div>
                     </div>
@@ -464,14 +493,14 @@ export default function MessageThread() {
                 );
               })}
 
-              {/* typing */}
+              {/* Enhanced Typing Indicator */}
               {otherTyping && (
                 <div className="flex justify-start">
-                  <div className="bg-slate-700/80 rounded-2xl rounded-bl-sm px-4 py-2 shadow-lg">
-                    <div className="flex space-x-1">
-                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
-                      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
+                  <div className="bg-gradient-to-r from-slate-700/90 to-slate-600/90 backdrop-blur-sm rounded-3xl rounded-bl-sm px-6 py-4 shadow-xl border border-white/10">
+                    <div className="flex space-x-2">
+                      <div className="w-2.5 h-2.5 bg-white/60 rounded-full animate-bounce" />
+                      <div className="w-2.5 h-2.5 bg-white/60 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }} />
+                      <div className="w-2.5 h-2.5 bg-white/60 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
                     </div>
                   </div>
                 </div>
@@ -480,73 +509,91 @@ export default function MessageThread() {
               <div ref={bottomRef} />
             </div>
 
-            {/* unread floater */}
+            {/* Enhanced Unread Messages Indicator */}
             {isScrolledUp && unreadCount > 0 && (
-              <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
+              <div className="absolute bottom-32 left-1/2 -translate-x-1/2 z-20">
                 <Button
                   onClick={scrollToBottom}
-                  className="bg-purple-600 hover:bg-purple-700 text-white rounded-full px-4 py-2 shadow-lg animate-bounce"
+                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-full px-6 py-3 shadow-2xl animate-bounce border border-white/20 backdrop-blur-sm"
                 >
-                  {unreadCount} new message{unreadCount > 1 ? "s" : ""}
+                  <span className="font-semibold">{unreadCount} new message{unreadCount > 1 ? "s" : ""}</span>
                 </Button>
               </div>
             )}
 
-            {/* reply indicator */}
+            {/* Enhanced Reply Indicator */}
             {replyingTo && (
-              <div className="px-4 py-2 bg-slate-700/50 border-t border-slate-600/50 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-sm text-slate-300">
-                  <div className="w-1 h-8 bg-purple-500 rounded" />
-                  <div>
-                    <div className="text-purple-400 text-xs">Replying to {nameFor(replyingTo.sender_id)}</div>
-                    <div className="truncate max-w-md">{replyingTo.body}</div>
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-800/50 to-slate-700/50 backdrop-blur-sm border-t border-white/10 flex items-center justify-between">
+                <div className="flex items-center gap-3 text-sm text-white/90">
+                  <div className="w-1 h-12 bg-gradient-to-b from-purple-500 to-blue-500 rounded-full" />
+                  <div className="space-y-1">
+                    <div className="text-purple-400 text-xs font-semibold uppercase tracking-wide">Replying to {nameFor(replyingTo.sender_id)}</div>
+                    <div className="truncate max-w-md text-white/70">{replyingTo.body}</div>
                   </div>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setReplyingTo(null)}
-                  className="text-slate-400 hover:text-white"
+                  className="text-white/50 hover:text-white hover:bg-white/10 rounded-full p-2"
                 >
-                  ×
+                  ✕
                 </Button>
               </div>
             )}
 
-            {/* composer */}
-            <div className="p-4 border-t border-slate-700/50 bg-slate-800/40">
+            {/* Enhanced Composer */}
+            <div className="p-6 bg-gradient-to-r from-slate-800/30 to-slate-700/30 backdrop-blur-sm border-t border-white/10">
+              {/* Enhanced Emoji Picker */}
               {showEmojiPicker && (
-                <div className="mb-3 p-3 bg-slate-700/80 rounded-xl border border-slate-600/50">
-                  <div className="grid grid-cols-6 gap-2">
-                    {commonEmojis.map((emoji) => (
-                      <Button
-                        key={emoji}
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 hover:bg-slate-600/50 text-lg"
-                        onClick={() => addEmoji(emoji)}
-                      >
-                        {emoji}
-                      </Button>
+                <div className="mb-6 p-6 bg-gradient-to-r from-slate-800/80 to-slate-700/80 backdrop-blur-xl rounded-2xl border border-white/20 shadow-2xl">
+                  <div className="space-y-4">
+                    {Object.entries(emojiCategories).map(([category, emojis]) => (
+                      <div key={category}>
+                        <h4 className="text-white/70 text-xs uppercase tracking-wide font-semibold mb-2 capitalize">{category}</h4>
+                        <div className="grid grid-cols-8 gap-2">
+                          {emojis.map((emoji) => (
+                            <Button
+                              key={emoji}
+                              variant="ghost"
+                              size="sm"
+                              className="h-10 w-10 p-0 hover:bg-white/10 hover:scale-110 transition-all duration-200 text-xl rounded-full"
+                              onClick={() => addEmoji(emoji)}
+                            >
+                              {emoji}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              <div className="flex items-end gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0"
-                >
-                  <Paperclip className="w-4 h-4" />
-                </Button>
+              <div className="flex items-center gap-3">
+                {/* Enhanced Action Buttons */}
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-white/60 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200"
+                  >
+                    <Paperclip className="w-5 h-5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-white/60 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200"
+                  >
+                    <Image className="w-5 h-5" />
+                  </Button>
+                </div>
 
-                {/* FIXED INPUT — guaranteed visible text while typing */}
+                {/* Enhanced Input Field */}
                 <div className="flex-1 relative">
                   <Input
                     ref={inputRef}
-                    placeholder="Type a message…"
+                    placeholder="Type your message..."
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => {
@@ -556,17 +603,13 @@ export default function MessageThread() {
                       }
                     }}
                     className="
-                      bg-white text-slate-900 placeholder-slate-500 border-slate-300
-                      dark:bg-slate-700 dark:text-white dark:placeholder-slate-400 dark:border-slate-600/50
-                      rounded-xl pr-12 h-10
-                      focus-visible:ring-2 focus-visible:ring-purple-500/60 focus-visible:border-purple-500/60
-                      focus:text-slate-900 dark:focus:text-white
+                      bg-white text-slate-900 placeholder-slate-500 border-0
+                      rounded-full px-6 py-4 text-base font-medium
+                      shadow-inner focus:shadow-lg transition-all duration-200
+                      focus:ring-2 focus:ring-purple-500/50 focus:bg-white
                     "
                     style={{ 
-                      color: 'inherit',
-                      WebkitTextFillColor: 'unset',
-                      minHeight: "40px",
-                      opacity: 1
+                      minHeight: "48px"
                     }}
                     autoComplete="off"
                     autoCorrect="on"
@@ -574,26 +617,37 @@ export default function MessageThread() {
                   />
                 </div>
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0"
-                  onClick={() => setShowEmojiPicker((s) => !s)}
-                >
-                  <Smile className="w-4 h-4" />
-                </Button>
+                {/* Enhanced Control Buttons */}
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-white/60 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200"
+                    onClick={() => setShowEmojiPicker((s) => !s)}
+                  >
+                    <Smile className="w-5 h-5" />
+                  </Button>
+                  
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-white/60 hover:text-white hover:bg-white/10 rounded-full p-3 transition-all duration-200"
+                  >
+                    <Mic className="w-5 h-5" />
+                  </Button>
 
-                <Button
-                  onClick={send}
-                  disabled={!text.trim()}
-                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl h-10 w-10 p-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
+                  <Button
+                    onClick={send}
+                    disabled={!text.trim()}
+                    className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-slate-600 disabled:to-slate-600 text-white rounded-full p-3 shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                  >
+                    <Send className="w-5 h-5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
-        </Card>
+        </div>
       </div>
 
       <Footer />
