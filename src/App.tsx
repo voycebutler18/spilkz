@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
 
@@ -47,9 +47,12 @@ import CreatorProfile from "./pages/CreatorProfile";
 import VideoPage from "./pages/VideoPage";
 import Search from "./pages/Search";
 
-// Messaging
+// Messaging (existing pages)
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
+
+// ✅ New desktop 3-panel shell page (you’ll add this file)
+import MessagesDesktop from "./pages/MessagesDesktop";
 
 // 404
 import NotFound from "./pages/NotFound";
@@ -77,6 +80,36 @@ function UploadRoute() {
   }, [isOpen, navigate]);
 
   return null;
+}
+
+/** Small hook to detect desktop for routing the messages experience */
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(min-width: 1024px)").matches
+      : true
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  return isDesktop;
+}
+
+/** Route element that picks desktop (3-panel) vs mobile (existing pages) */
+function MessagesIndexRoute() {
+  const isDesktop = useIsDesktop();
+  return isDesktop ? <MessagesDesktop /> : <MessagesInbox />;
+}
+
+function MessagesOtherRoute() {
+  const isDesktop = useIsDesktop();
+  return isDesktop ? <MessagesDesktop /> : <MessageThread />;
 }
 
 const App = () => (
@@ -128,8 +161,9 @@ const App = () => (
               <Route path="/splik/:id" element={<SplikPage />} />
 
               {/* Messaging */}
-              <Route path="/messages" element={<MessagesInbox />} />
-              <Route path="/messages/:otherId" element={<MessageThread />} />
+              {/* On desktop: 3-panel layout; on mobile: your current pages */}
+              <Route path="/messages" element={<MessagesIndexRoute />} />
+              <Route path="/messages/:otherId" element={<MessagesOtherRoute />} />
 
               {/* Legal / community */}
               <Route path="/terms" element={<Terms />} />
