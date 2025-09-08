@@ -27,10 +27,10 @@ type Profile = {
 
 interface CommentRow {
   id: string;
-  content: string;
+  content: string;         // ✅ correct column
   created_at: string;
   user_id: string;
-  profile?: Profile | null;
+  profile?: Profile | null; // hydrated via join
 }
 
 interface CommentsModalProps {
@@ -59,6 +59,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
   const initials = (p?: Profile | null) =>
     (displayName(p).substring(0, 2) || "UU").toUpperCase();
 
+  // Load current user + profile
   useEffect(() => {
     if (!isOpen) return;
     (async () => {
@@ -70,34 +71,42 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
           .eq("id", auth.user.id)
           .maybeSingle();
         setCurrentUser({ id: auth.user.id, profile: (profile as Profile) || undefined });
+      } else {
+        setCurrentUser(null);
       }
     })();
   }, [isOpen]);
 
+  // Load comments (single query with profile join)
   useEffect(() => {
     if (!isOpen) return;
     (async () => {
       setLoading(true);
       try {
-        const { data: rows, error } = await supabase
+        const { data, error } = await supabase
           .from("comments")
-          .select("*")
+          .select(`
+            id,
+            content,
+            created_at,
+            user_id,
+            profiles:profiles!comments_user_id_fkey (
+              id, display_name, first_name, last_name, username, avatar_url
+            )
+          `)
           .eq("splik_id", splikId)
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false }); // ✅ correct ordering
         if (error) throw error;
 
-        const hydrated: CommentRow[] = await Promise.all(
-          (rows || []).map(async (c) => {
-            const { data: p } = await supabase
-              .from("profiles")
-              .select("id,display_name,first_name,last_name,username,avatar_url")
-              .eq("id", c.user_id)
-              .maybeSingle();
-            return { ...c, profile: (p as Profile) || null };
-          })
-        );
+        const mapped: CommentRow[] = (data || []).map((c: any) => ({
+          id: c.id,
+          content: c.content,
+          created_at: c.created_at,
+          user_id: c.user_id,
+          profile: c.profiles ?? null,
+        }));
 
-        setComments(hydrated);
+        setComments(mapped);
       } catch (e) {
         console.error(e);
         toast({ title: "Error", description: "Failed to load comments", variant: "destructive" });
@@ -118,12 +127,13 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
         .insert({
           splik_id: splikId,
           user_id: currentUser.id,
-          content: newComment.trim(),
+          content: newComment.trim(), // ✅ correct column on insert
         })
-        .select()
+        .select("id, content, created_at, user_id")
         .single();
       if (error) throw error;
 
+      // Optimistic add with current user's profile
       setComments((prev) => [
         { ...(data as any), profile: currentUser.profile || null },
         ...prev,
@@ -162,7 +172,6 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
                   const path = buildProfilePath(c.profile, c.user_id);
                   return (
                     <div key={c.id} className="flex space-x-3">
-                      {/* Avatar (clickable) */}
                       <Link to={path} className="shrink-0">
                         <Avatar className="h-8 w-8">
                           <AvatarImage src={c.profile?.avatar_url || undefined} />
@@ -172,11 +181,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
 
                       <div className="flex-1 space-y-1">
                         <div className="flex items-center space-x-2">
-                          {/* Display name (clickable) */}
-                          <Link
-                            to={path}
-                            className="font-semibold text-sm hover:underline"
-                          >
+                          <Link to={path} className="font-semibold text-sm hover:underline">
                             {displayName(c.profile)}
                           </Link>
                           <span className="text-xs text-muted-foreground">
@@ -192,7 +197,6 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
             )}
           </ScrollArea>
 
-          {/* Input row */}
           {currentUser ? (
             <form onSubmit={handleSubmit} className="flex items-center space-x-2 pt-4 border-t">
               <Link to={buildProfilePath(currentUser.profile, currentUser.id)} className="shrink-0">
