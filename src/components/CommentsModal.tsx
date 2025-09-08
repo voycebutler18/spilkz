@@ -27,10 +27,10 @@ type Profile = {
 
 interface CommentRow {
   id: string;
-  content: string;         // ✅ correct column
+  content: string;
   created_at: string;
   user_id: string;
-  profile?: Profile | null; // hydrated via join
+  profile?: Profile | null;
 }
 
 interface CommentsModalProps {
@@ -48,10 +48,8 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
   const [currentUser, setCurrentUser] = useState<{ id: string; profile?: Profile } | null>(null);
   const { toast } = useToast();
 
-  const buildProfilePath = (p?: Profile | null, fallbackUserId?: string) => {
-    if (p?.username) return `/creator/${p.username}`;
-    return `/profile/${p?.id || fallbackUserId}`;
-  };
+  const buildProfilePath = (p?: Profile | null, fallbackUserId?: string) =>
+    p?.username ? `/creator/${p.username}` : `/profile/${p?.id || fallbackUserId}`;
 
   const displayName = (p?: Profile | null) =>
     p?.display_name || p?.first_name || p?.username || "Unknown User";
@@ -77,39 +75,52 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
     })();
   }, [isOpen]);
 
-  // Load comments (single query with profile join)
+  // Load comments (no FK join; batch fetch profiles)
   useEffect(() => {
     if (!isOpen) return;
     (async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
+        // 1) comments
+        const { data: rows, error } = await supabase
           .from("comments")
-          .select(`
-            id,
-            content,
-            created_at,
-            user_id,
-            profiles:profiles!comments_user_id_fkey (
-              id, display_name, first_name, last_name, username, avatar_url
-            )
-          `)
+          .select("id, content, created_at, user_id")
           .eq("splik_id", splikId)
-          .order("created_at", { ascending: false }); // ✅ correct ordering
+          .order("created_at", { ascending: false }); // ?order=created_at.desc
         if (error) throw error;
 
-        const mapped: CommentRow[] = (data || []).map((c: any) => ({
+        const list = rows || [];
+
+        // 2) unique user ids
+        const ids = Array.from(new Set(list.map((r) => r.user_id).filter(Boolean)));
+        let profilesById = new Map<string, Profile>();
+
+        if (ids.length > 0) {
+          const { data: profs, error: pErr } = await supabase
+            .from("profiles")
+            .select("id,display_name,first_name,last_name,username,avatar_url")
+            .in("id", ids);
+          if (pErr) throw pErr;
+          (profs || []).forEach((p: any) => profilesById.set(p.id, p as Profile));
+        }
+
+        // 3) merge
+        const hydrated: CommentRow[] = list.map((c: any) => ({
           id: c.id,
           content: c.content,
           created_at: c.created_at,
           user_id: c.user_id,
-          profile: c.profiles ?? null,
+          profile: profilesById.get(c.user_id) ?? null,
         }));
 
-        setComments(mapped);
+        setComments(hydrated);
       } catch (e) {
         console.error(e);
-        toast({ title: "Error", description: "Failed to load comments", variant: "destructive" });
+        toast({
+          title: "Error",
+          description: "Failed to load comments",
+          variant: "destructive",
+        });
       } finally {
         setLoading(false);
       }
@@ -127,13 +138,12 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
         .insert({
           splik_id: splikId,
           user_id: currentUser.id,
-          content: newComment.trim(), // ✅ correct column on insert
+          content: newComment.trim(),
         })
         .select("id, content, created_at, user_id")
         .single();
       if (error) throw error;
 
-      // Optimistic add with current user's profile
       setComments((prev) => [
         { ...(data as any), profile: currentUser.profile || null },
         ...prev,
