@@ -9,6 +9,7 @@ import { formatDistanceToNow } from "date-fns";
 import { fetchClipById } from "@/lib/feed";
 import type { FeedItem } from "@/lib/feed";
 import { useToast } from "@/components/ui/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function SplikPage() {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +18,11 @@ export default function SplikPage() {
   const [row, setRow] = useState<FeedItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [muted, setMuted] = useState(true);
+
+  // like state
+  const [likesCount, setLikesCount] = useState<number>(0);
+  const [isLiked, setIsLiked] = useState<boolean>(false);
+  const [liking, setLiking] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -39,7 +45,10 @@ export default function SplikPage() {
           });
         }
         setRow(r ?? null);
-      } catch (e) {
+        // seed count for UI; realtime will keep it fresh
+        // @ts-ignore tolerate optional fields
+        setLikesCount((r?.likes_count as number) ?? 0);
+      } catch {
         if (!alive) return;
         toast({
           title: "Not found",
@@ -54,7 +63,7 @@ export default function SplikPage() {
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, toast]);
 
   // Page <title> & description (client-side only; crawlers use server OG)
   useEffect(() => {
@@ -74,7 +83,7 @@ export default function SplikPage() {
     }
     metaDesc.setAttribute("content", desc);
 
-    // canonical (helps normal browsers; server already injects for crawlers)
+    // canonical
     const base = window.location.origin;
     const canonicalHref = `${base}/video/${row.id}`;
     let linkCanon = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
@@ -85,6 +94,52 @@ export default function SplikPage() {
     }
     linkCanon.setAttribute("href", canonicalHref);
   }, [row]);
+
+  // Determine if the current user has liked this splik + subscribe to count updates
+  useEffect(() => {
+    let unsubbed = false;
+
+    (async () => {
+      if (!row?.id) return;
+
+      // fetch whether I liked it
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id;
+      if (uid) {
+        const { data: likeRow } = await supabase
+          .from("likes")
+          .select("id")
+          .eq("user_id", uid)
+          .eq("splik_id", row.id)
+          .maybeSingle();
+        if (!unsubbed) setIsLiked(Boolean(likeRow));
+      } else {
+        setIsLiked(false);
+      }
+
+      // realtime for likes_count
+      const ch = supabase
+        .channel(`splik-${row.id}`)
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${row.id}` },
+          (p) => {
+            // @ts-ignore
+            const next = (p.new?.likes_count as number) ?? 0;
+            setLikesCount(next);
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(ch);
+      };
+    })();
+
+    return () => {
+      unsubbed = true;
+    };
+  }, [row?.id]);
 
   const onToggleMute = () => {
     const v = videoRef.current;
@@ -97,12 +152,58 @@ export default function SplikPage() {
   const onShare = async () => {
     if (!row) return;
     const origin = window.location.origin;
-    const shareUrl = `${origin}/v/${row.id}`; // <-- short OG route that unfurls correctly
+    const shareUrl = `${origin}/v/${row.id}`; // short OG route
     try {
-      await navigator.clipboard.writeText(shareUrl);
-      toast({ title: "Link copied!", description: shareUrl });
+      if (navigator.share) {
+        await navigator.share({ title: row.title || "Splik", url: shareUrl });
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+        toast({ title: "Link copied!", description: shareUrl });
+      }
     } catch {
-      toast({ title: "Couldn’t copy link", description: shareUrl, variant: "destructive" });
+      toast({ title: "Couldn’t share", description: shareUrl, variant: "destructive" });
+    }
+  };
+
+  // Like handler: flip only the heart; let realtime update the count
+  const onLike = async () => {
+    if (liking || !row?.id) return;
+    const { data: auth } = await supabase.auth.getUser();
+    const uid = auth.user?.id;
+    if (!uid) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to like videos",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLiking(true);
+    const next = !isLiked;
+    setIsLiked(next); // optimistic heart only
+
+    try {
+      if (next) {
+        await supabase.from("likes").insert({ user_id: uid, splik_id: row.id });
+      } else {
+        await supabase.from("likes").delete().eq("user_id", uid).eq("splik_id", row.id);
+      }
+
+      // Fallback refresh in case realtime is delayed
+      setTimeout(async () => {
+        const { data } = await supabase
+          .from("spliks")
+          .select("likes_count")
+          .eq("id", row.id)
+          .maybeSingle();
+        if (data?.likes_count != null) setLikesCount(data.likes_count);
+      }, 400);
+    } catch {
+      setIsLiked(!next); // revert on error
+      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+    } finally {
+      setLiking(false);
     }
   };
 
@@ -115,7 +216,7 @@ export default function SplikPage() {
       if (Number.isFinite(start)) v.currentTime = start;
     } catch {}
     v.play().catch(() => {
-      // some browsers require user gesture; keep muted true so a tap will play
+      // some browsers require user gesture
     });
   };
 
@@ -141,17 +242,17 @@ export default function SplikPage() {
         {/* header */}
         <div className="flex items-center justify-between p-3 border-b">
           <Link
-            to={`/creator/${row.username || row.user_id}`}
+            to={`/creator/${(row as any).username || row.user_id}`}
             className="flex items-center gap-3 hover:opacity-80"
           >
             <Avatar className="h-8 w-8">
               <AvatarFallback>
-                {(row.username || "A").toUpperCase().slice(0, 2)}
+                {((row as any).username || "A").toUpperCase().slice(0, 2)}
               </AvatarFallback>
             </Avatar>
             <div>
               <p className="text-sm font-semibold">
-                {row.username ? `@${row.username}` : "Anonymous"}
+                {(row as any).username ? `@${(row as any).username}` : "Anonymous"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {formatDistanceToNow(createdAt, { addSuffix: true })}
@@ -193,9 +294,19 @@ export default function SplikPage() {
         <div className="p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <Button size="icon" variant="ghost" aria-label="Like">
-                <Heart className="h-6 w-6" />
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="Like"
+                onClick={onLike}
+                disabled={liking}
+                className={isLiked ? "text-red-500 hover:text-red-600" : ""}
+              >
+                <Heart className={`h-6 w-6 ${isLiked ? "fill-current" : ""}`} />
               </Button>
+
+              <div className="text-sm">{likesCount.toLocaleString()}</div>
+
               <Button size="icon" variant="ghost" aria-label="Comments">
                 <MessageCircle className="h-6 w-6" />
               </Button>
@@ -204,14 +315,15 @@ export default function SplikPage() {
               </Button>
             </div>
             <div className="text-xs text-muted-foreground">
-              {(row as any).views_count ?? 0} views
+              {/* tolerate optional field */}
+              {((row as any).views_count ?? 0).toLocaleString()} views
             </div>
           </div>
 
           {row.description && (
             <p className="text-sm">
               <span className="font-semibold mr-2">
-                {row.username ? `@${row.username}` : "Anonymous"}
+                {(row as any).username ? `@${(row as any).username}` : "Anonymous"}
               </span>
               {row.description}
             </p>
