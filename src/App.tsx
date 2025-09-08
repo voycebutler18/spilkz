@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
 
@@ -34,7 +34,7 @@ import Signup from "./pages/Auth/Signup";
 import AuthCallback from "./pages/Auth/AuthCallback";
 import ResetPassword from "./pages/Auth/ResetPassword";
 
-// ✅ ADMIN (matches actual file path & casing)
+// Admin
 import Admin from "./pages/admin/admin";
 
 // Dashboard
@@ -47,12 +47,12 @@ import CreatorProfile from "./pages/CreatorProfile";
 import VideoPage from "./pages/VideoPage";
 import Search from "./pages/Search";
 
-// Messaging (mobile-friendly legacy pages)
+// Messaging - NEW COMBINED COMPONENT
+import CombinedMessages from "./pages/CombinedMessages";
+
+// Mobile fallback messaging (keep for mobile responsiveness)
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
-
-// ✅ New desktop shell (3-column layout with Outlet in the middle)
-import MessagesDesktop from "./pages/MessagesDesktop";
 
 // 404
 import NotFound from "./pages/NotFound";
@@ -82,13 +82,42 @@ function UploadRoute() {
   return null;
 }
 
+/** Hook to detect desktop for routing the messages experience */
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState<boolean>(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(min-width: 1024px)").matches
+      : true
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  return isDesktop;
+}
+
+/** Route element that picks desktop (combined) vs mobile (separate pages) */
+function MessagesIndexRoute() {
+  const isDesktop = useIsDesktop();
+  return isDesktop ? <CombinedMessages /> : <MessagesInbox />;
+}
+
+function MessagesThreadRoute() {
+  const isDesktop = useIsDesktop();
+  return isDesktop ? <CombinedMessages /> : <MessageThread />;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        {/* Provider must be INSIDE BrowserRouter (it uses navigation hooks) */}
         <UploadModalProvider>
           <Routes>
             {/* Auth screens (no layout) */}
@@ -130,17 +159,9 @@ const App = () => (
               <Route path="/search" element={<Search />} />
               <Route path="/splik/:id" element={<SplikPage />} />
 
-              {/* ✅ Messaging (Desktop = 3-panel with nested routes; Mobile can still use the old pages via direct links if you want) */}
-              <Route path="/messages" element={<MessagesDesktop />}>
-                {/* Center pane empty state */}
-                <Route index element={<div className="h-[78vh] flex items-center justify-center text-muted-foreground">Select a conversation</div>} />
-                {/* Center pane active thread */}
-                <Route path=":otherId" element={<MessageThread />} />
-              </Route>
-
-              {/* If you still want the standalone legacy routes accessible directly: */}
-              <Route path="/messages-legacy" element={<MessagesInbox />} />
-              <Route path="/messages-legacy/:otherId" element={<MessageThread />} />
+              {/* Messaging - Responsive Layout */}
+              <Route path="/messages" element={<MessagesIndexRoute />} />
+              <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
 
               {/* Legal / community */}
               <Route path="/terms" element={<Terms />} />
