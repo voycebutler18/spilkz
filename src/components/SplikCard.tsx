@@ -1,3 +1,4 @@
+// src/components/SplikCard.tsx
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -18,7 +19,6 @@ import BoostModal from "@/components/BoostModal";
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 
-// shadcn dropdown
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,12 +33,14 @@ type Splik = {
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
-  poster_url?: string | null; // ✅ NEW
   likes_count?: number | null;
   comments_count?: number | null;
   mood?: string | null;
   status?: string | null;
-  profile?: any; // merged in by VideoPage
+  profile?: any; // merged in by VideoPage / fetcher
+  // IMPORTANT: use these if present
+  trim_start?: number | null;
+  trim_end?: number | null;
 };
 
 interface SplikCardProps {
@@ -74,12 +76,11 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
   const [showReportModal, setShowReportModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [isFavorited, setIsFavorited] = useState(false);
   const [isInView, setIsInView] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const viewedRef = useRef(false);
+  const primedRef = useRef(false); // ensure we only auto-seek once per load
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -87,17 +88,28 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
   const creatorSlug =
     splik.profile?.username || splik.profile?.handle || splik.user_id;
 
+  // --- Trim window (critical) ----------------------------------------
+  const START = Math.max(0, Number(splik.trim_start ?? 0));
+  // If trim_end is present, use it; else cap at START+3.0
+  const RAW_END = Number.isFinite(Number(splik.trim_end))
+    ? Number(splik.trim_end)
+    : START + 3;
+  const END = Math.max(START, Math.min(START + 3, RAW_END));
+  const SEEK_SAFE = Math.max(0.05, START + 0.05); // tiny offset helps Safari keyframe seeking
+
   // Autoplay when ~70% in view, pause when out
   useEffect(() => {
     const video = videoRef.current;
     const el = cardRef.current;
     if (!video || !el) return;
 
+    // mobile autoplay constraints
     video.playsInline = true;
     video.setAttribute("playsinline", "true");
     // @ts-expect-error
     video.setAttribute("webkit-playsinline", "true");
-    video.setAttribute("muted", "true");
+    video.muted = isMuted;
+    if (isMuted) video.setAttribute("muted", "true");
     video.controls = false;
 
     const onVisibilityChange = () => {
@@ -107,6 +119,19 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
       }
     };
 
+    const primeToStart = () => {
+      // on metadata load, seek to the configured trim start
+      if (!video.duration || video.duration <= 0) return;
+      try {
+        video.currentTime = SEEK_SAFE;
+        primedRef.current = true;
+      } catch {}
+    };
+
+    const onLoadedMetadata = () => {
+      primeToStart();
+    };
+
     const io = new IntersectionObserver(
       (entries) => {
         entries.forEach(async (entry) => {
@@ -114,7 +139,16 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
           setIsInView(visible);
 
           if (visible) {
-            try { video.currentTime = 0; } catch {}
+            // Always re-align to start of the 3s window when coming into view
+            try {
+              if (!primedRef.current) {
+                // If metadata wasn’t ready earlier
+                primeToStart();
+              } else {
+                video.currentTime = SEEK_SAFE;
+              }
+            } catch {}
+
             video.muted = isMuted;
             if (isMuted) video.setAttribute("muted", "true");
             else video.removeAttribute("muted");
@@ -122,7 +156,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
             try {
               await playExclusive(video);
               setIsPlaying(true);
-              if (!viewedRef.current) viewedRef.current = true;
             } catch {
               setIsPlaying(false);
             }
@@ -139,25 +172,30 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
 
     io.observe(el);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
+
     return () => {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
       pauseIfCurrent(video);
+      primedRef.current = false;
     };
-  }, [isMuted]);
+  }, [isMuted, START, END, SEEK_SAFE]);
 
-  // Enforce 0–3s loop
+  // Enforce loop within [START, END]
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const onTimeUpdate = () => {
-      if (v.currentTime >= 3) {
-        try { v.currentTime = 0; } catch {}
+      // Jump back if we drifted out of window
+      if (v.currentTime < START || v.currentTime >= END) {
+        try { v.currentTime = SEEK_SAFE; } catch {}
       }
     };
     v.addEventListener("timeupdate", onTimeUpdate);
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
-  }, []);
+  }, [START, END, SEEK_SAFE]);
 
   // Load user + initial states
   useEffect(() => {
@@ -240,13 +278,18 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
       return;
     }
     try {
-      if (isFavorited) {
+      const { data } = await supabase
+        .from("favorites")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("splik_id", splik.id)
+        .maybeSingle();
+
+      if (data) {
         await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-        setIsFavorited(false);
         toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
       } else {
         await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
-        setIsFavorited(true);
         toast({ title: "Added to favorites", description: "Video saved to your favorites" });
       }
     } catch {
@@ -274,6 +317,8 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
       pauseIfCurrent(video);
       setIsPlaying(false);
     } else {
+      // Always re-align into window before starting
+      try { video.currentTime = SEEK_SAFE; } catch {}
       if (isMuted) {
         video.muted = false;
         video.removeAttribute("muted");
@@ -281,7 +326,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
       }
       await playExclusive(video);
       setIsPlaying(true);
-      if (!viewedRef.current) viewedRef.current = true;
     }
   };
 
@@ -347,7 +391,7 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
         <video
           ref={videoRef}
           src={splik.video_url}
-          poster={splik.thumbnail_url || splik.poster_url || undefined} {/* ✅ use generated still */}
+          poster={splik.thumbnail_url || undefined}
           className="block w-full h-full object-cover"
           autoPlay={false}
           loop={false}
@@ -470,10 +514,9 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
             variant="ghost"
             size="sm"
             onClick={toggleFavorite}
-            className={cn("flex items-center space-x-2 transition-colors flex-1",
-              isFavorited && "text-yellow-500 hover:text-yellow-600")}
+            className={cn("flex items-center space-x-2 transition-colors flex-1")}
           >
-            <Bookmark className={cn("h-4 w-4", isFavorited && "fill-current")} />
+            <Bookmark className="h-4 w-4" />
             <span className="text-xs font-medium">Save</span>
           </Button>
         </div>
@@ -499,8 +542,6 @@ export default function SplikCard({ splik, onSplik, onReact, onShare }: SplikCar
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || "Check out this video"}
-        // shareUrl is OPTIONAL; uncomment if your ShareModal supports it:
-        // shareUrl={`${window.location.origin.replace(/\/$/,'')}/v/${splik.id}`}
       />
       <CommentsModal
         isOpen={showCommentsModal}
