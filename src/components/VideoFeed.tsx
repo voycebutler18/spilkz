@@ -6,8 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Heart, MessageCircle, Share2, Bookmark, BookmarkCheck,
-  MoreVertical, Volume2, VolumeX, Send, Play, Pause
+  Heart,
+  MessageCircle,
+  Share2,
+  Bookmark,
+  BookmarkCheck,
+  MoreVertical,
+  Volume2,
+  VolumeX,
+  Send,
+  Play,
+  Pause,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -67,9 +76,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
 
-  // ✅ favorites UI
+  // favorites UI
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
-  const [savingIds, setSavingIds] = useState<Set<string>>(new Set()); // disable while in-flight
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
   const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -90,7 +99,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select("id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start,profiles(username,first_name,last_name)")
+          .select(
+            "id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start,profiles(username,first_name,last_name)"
+          )
           .order("created_at", { ascending: false });
 
         if (error) throw error;
@@ -151,7 +162,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
       )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [user?.id]);
 
   // Mute all other videos
@@ -160,7 +173,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       if (video && index !== exceptIndex) {
         video.muted = true;
         video.pause();
-        setIsPlaying(prev => ({ ...prev, [index]: false }));
+        setIsPlaying((prev) => ({ ...prev, [index]: false }));
       }
     });
   };
@@ -171,7 +184,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (!container) return;
 
     let currentPlayingVideo: HTMLVideoElement | null = null;
-    let currentPlayingIndex: number = -1;
+    let currentPlayingIndex = -1;
 
     const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
@@ -182,7 +195,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (entry.intersectionRatio > 0.5) {
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
-            setIsPlaying(prev => ({ ...prev, [currentPlayingIndex]: false }));
+            setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
           }
 
           muteOtherVideos(index);
@@ -204,15 +217,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             currentPlayingVideo = video;
             currentPlayingIndex = index;
             setActiveIndex(index);
-            setIsPlaying(prev => ({ ...prev, [index]: true }));
-            setShowPauseButton(prev => ({ ...prev, [index]: true }));
-          } catch (error) {
+            setIsPlaying((prev) => ({ ...prev, [index]: true }));
+            setShowPauseButton((prev) => ({ ...prev, [index]: true }));
+          } catch {
             if (video.currentTime === 0) video.currentTime = startAt || 0.1;
           }
         } else if (entry.intersectionRatio < 0.5 && video === currentPlayingVideo) {
           video.pause();
           video.muted = true;
-          setIsPlaying(prev => ({ ...prev, [index]: false }));
+          setIsPlaying((prev) => ({ ...prev, [index]: false }));
           if (currentPlayingVideo === video) {
             currentPlayingVideo = null;
             currentPlayingIndex = -1;
@@ -224,7 +237,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const observer = new IntersectionObserver(handleVideoPlayback, {
       root: container,
       threshold: [0, 0.25, 0.5, 0.75, 1.0],
-      rootMargin: "0px"
+      rootMargin: "0px",
     });
 
     const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-index]"));
@@ -232,7 +245,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     return () => {
       observer.disconnect();
-      videoRefs.current.forEach((video) => { if (video && !video.paused) video.pause(); });
+      videoRefs.current.forEach((video) => {
+        if (video && !video.paused) video.pause();
+      });
       Object.values(pauseTimeoutRefs.current).forEach((t) => t && clearTimeout(t));
     };
   }, [spliks.length, muted, spliks]);
@@ -261,11 +276,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     if (currentlyPlaying) {
       video.pause();
-      setIsPlaying(prev => ({ ...prev, [index]: false }));
-      setShowPauseButton(prev => ({ ...prev, [index]: false }));
+      setIsPlaying((prev) => ({ ...prev, [index]: false }));
+      setShowPauseButton((prev) => ({ ...prev, [index]: false }));
       if (pauseTimeoutRefs.current[index]) clearTimeout(pauseTimeoutRefs.current[index]);
       pauseTimeoutRefs.current[index] = setTimeout(() => {
-        setShowPauseButton(prev => ({ ...prev, [index]: true }));
+        setShowPauseButton((prev) => ({ ...prev, [index]: true }));
       }, 2000);
     } else {
       muteOtherVideos(index);
@@ -273,46 +288,57 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       if (startAt > 0) video.currentTime = startAt;
       video.muted = muted[index] ?? false;
       video.play().catch(console.error);
-      setIsPlaying(prev => ({ ...prev, [index]: true }));
-      setShowPauseButton(prev => ({ ...prev, [index]: true }));
+      setIsPlaying((prev) => ({ ...prev, [index]: true }));
+      setShowPauseButton((prev) => ({ ...prev, [index]: true }));
     }
   };
 
   /* -------------------------- social actions -------------------------- */
   const handleLike = async (splikId: string) => {
     if (!user?.id) {
-      toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
-    } else {
-      const isLiked = likedIds.has(splikId);
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to like videos",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const isLiked = likedIds.has(splikId);
+    setLikedIds((prev) => {
+      const ns = new Set(prev);
+      isLiked ? ns.delete(splikId) : ns.add(splikId);
+      return ns;
+    });
+
+    try {
+      if (isLiked) {
+        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
+      } else {
+        await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
+      }
+    } catch {
       setLikedIds((prev) => {
         const ns = new Set(prev);
-        isLiked ? ns.delete(splikId) : ns.add(splikId);
+        isLiked ? ns.add(splikId) : ns.delete(splikId);
         return ns;
       });
-      try {
-        if (isLiked) {
-          await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splikId);
-        } else {
-          await supabase.from("likes").insert({ user_id: user.id, splik_id: splikId });
-        }
-      } catch {
-        setLikedIds((prev) => {
-          const ns = new Set(prev);
-          isLiked ? ns.add(splikId) : ns.delete(splikId);
-          return ns;
-        });
-        toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
-      }
+      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
     }
   };
 
-  // ✅ favorites: optimistic + realtime-backed
+  // favorites: optimistic + realtime-backed
   const toggleFavorite = async (splikId: string) => {
     if (!user?.id) {
-      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save videos",
+        variant: "destructive",
+      });
       return;
     }
     if (savingIds.has(splikId)) return;
+
     setSavingIds((s) => new Set(s).add(splikId));
 
     const currentlySaved = savedIds.has(splikId);
@@ -367,19 +393,28 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   const submitComment = async () => {
     if (!showCommentsFor || !user?.id || !newComment.trim()) return;
-    try {
-      const { error } = await supabase.from("comments").insert({
-        splik_id: showCommentsFor,
-        user_id: user.id,
-        content: newComment.trim(),
+
+    const { error } = await supabase.from("comments").insert({
+      splik_id: showCommentsFor,
+      user_id: user.id,
+      content: newComment.trim(),
+    });
+
+    if (error) {
+      toast({
+        title: "Error",
+        description:
+          (error as any).code === "42501"
+            ? "You don't have permission to post comments. (RLS policy)"
+            : (error.message || "Failed to post comment"),
+        variant: "destructive",
       });
-      if (error) throw error;
-      setNewComment("");
-      const splik = spliks.find((s) => s.id === showCommentsFor);
-      if (splik) openComments(splik);
-    } catch {
-      toast({ title: "Error", description: "Failed to post comment", variant: "destructive" });
+      return;
     }
+
+    setNewComment("");
+    const splik = spliks.find((s) => s.id === showCommentsFor);
+    if (splik) openComments(splik);
   };
 
   /* ------------------------------ UI ------------------------------ */
@@ -431,7 +466,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               </div>
 
               {/* video */}
-              <div className="relative bg-black aspect-[9/16] max-h:[600px] group">
+              <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
                 <video
                   ref={(el) => (videoRefs.current[i] = el)}
@@ -459,7 +494,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       <button
                         aria-label="Pause"
                         className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
-                        onClick={(e) => { e.stopPropagation(); handlePlayPause(i); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePlayPause(i);
+                        }}
                       >
                         <Pause className="h-10 w-10 text-white drop-shadow-lg" />
                       </button>
@@ -468,7 +506,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     <button
                       aria-label="Play"
                       className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
-                      onClick={(e) => { e.stopPropagation(); handlePlayPause(i); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePlayPause(i);
+                      }}
                     >
                       <Play className="h-8 w-8 text-white ml-1" />
                     </button>
@@ -477,10 +518,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
                 {/* mute toggle */}
                 <button
-                  onClick={(e) => { e.stopPropagation(); toggleMute(i); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleMute(i);
+                  }}
                   className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
                 >
-                  {muted[i] ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
+                  {muted[i] ? (
+                    <VolumeX className="h-4 w-4 text-white" />
+                  ) : (
+                    <Volume2 className="h-4 w-4 text-white" />
+                  )}
                 </button>
 
                 {/* title overlay */}
@@ -520,7 +568,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/,'')}/splik/${s.id}`;
+                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
@@ -530,7 +578,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     </Button>
                   </div>
 
-                  {/* ✅ Save / Saved with indicator */}
+                  {/* Save / Saved with indicator */}
                   <Button
                     size="icon"
                     variant="ghost"
@@ -557,7 +605,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               {/* comments inline */}
               {showCommentsFor === s.id && (
                 <div className="px-3 pb-4">
-                  <div className="border-top pt-3 space-y-3">
+                  <div className="border-t pt-3 space-y-3">
                     {loadingComments ? (
                       <div className="text-sm text-muted-foreground">Loading…</div>
                     ) : comments.length === 0 ? (
@@ -565,9 +613,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     ) : (
                       comments.map((c) => (
                         <div key={c.id} className="text-sm">
-                          <span className="font-semibold mr-2">
-                            {c.profiles?.first_name || "User"}
-                          </span>
+                          <span className="font-semibold mr-2">{c.profiles?.first_name || "User"}</span>
                           {c.content}
                         </div>
                       ))
