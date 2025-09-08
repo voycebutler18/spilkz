@@ -660,7 +660,7 @@ const CreatorDashboard = () => {
           {/* My Videos Tab */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
-              <VideoManagementGrid spliks={spliks} onDelete={handleDeleteVideo} />
+              <EnhancedVideoGridWithDelete spliks={spliks} onDelete={handleDeleteVideo} />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
                 <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
