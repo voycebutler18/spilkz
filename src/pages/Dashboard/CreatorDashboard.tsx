@@ -71,7 +71,7 @@ interface SplikRow {
   likes_count?: number | null;
   comments_count?: number | null;
   views_count?: number | null;
-  trim_start?: number | null; // ✅ ensure 3s loop starts where the creator set it
+  trim_start?: number | null;
   trim_end?: number | null;
   profile?: {
     username?: string | null;
@@ -93,7 +93,6 @@ interface CommentRow {
   splik_id: string;
   body: string;
   created_at: string;
-  // Optional denormalized/user-joined fields if you store them
   user_username?: string | null;
   user_display_name?: string | null;
   user_avatar_url?: string | null;
@@ -109,7 +108,7 @@ function CommentsManager({
   open: boolean;
   onClose: () => void;
   splik: SplikRow;
-  onCountChange?: (delta: number) => void; // update dashboard count after delete
+  onCountChange?: (delta: number) => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState<CommentRow[]>([]);
@@ -118,11 +117,9 @@ function CommentsManager({
   const fetchComments = async () => {
     try {
       setLoading(true);
-      // If you have a "comments" view that joins user fields, use that.
-      // Fallback: raw comments, and you can display user_id only.
       const { data, error } = await supabase
         .from("comments")
-        .select("id, user_id, splik_id, body, created_at")
+        .select("id,user_id,splik_id,body,created_at")
         .eq("splik_id", splik.id)
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -139,15 +136,13 @@ function CommentsManager({
     if (!open) return;
     fetchComments();
 
-    // Realtime: reflect new/deleted comments live
     const ch = supabase
       .channel(`comments-${splik.id}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
         (payload) => {
-          const row = payload.new as CommentRow;
-          setComments((prev) => [row, ...prev]);
+          setComments((prev) => [payload.new as CommentRow, ...prev]);
           onCountChange?.(1);
         }
       )
@@ -155,28 +150,26 @@ function CommentsManager({
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
         (payload) => {
-          const deletedId = (payload.old as any)?.id as string;
-          setComments((prev) => prev.filter((c) => c.id !== deletedId));
+          const id = (payload.old as any).id as string;
+          setComments((prev) => prev.filter((c) => c.id !== id));
           onCountChange?.(-1);
         }
       )
       .subscribe();
 
     unsubRef.current = () => supabase.removeChannel(ch);
-
     return () => {
       if (unsubRef.current) unsubRef.current();
       unsubRef.current = undefined;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, splik.id]);
+  }, [open, splik.id, onCountChange]);
 
   const handleDelete = async (commentId: string) => {
     try {
       const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
       if (error) throw error;
-      // Realtime will update list & count via channel
       toast.success("Comment deleted");
+      // realtime updates the list and count
     } catch (e) {
       console.error(e);
       toast.error("Failed to delete comment");
@@ -237,146 +230,123 @@ function CommentsManager({
   );
 }
 
-/* ----------------------------- Video Management Grid (Manual Play) ----------------------------- */
-const VideoManagementGrid = ({
-  spliks,
+/* ----------------------------- Feed Item (plays on tap) ----------------------------- */
+function CreatorFeedItem({
+  splik,
   onDelete,
   onCommentCountAdjust,
 }: {
-  spliks: SplikRow[];
+  splik: SplikRow;
   onDelete: (id: string) => void;
-  onCommentCountAdjust: (splikId: string, delta: number) => void;
-}) => {
-  const [selectedVideos, setSelectedVideos] = useState(new Set<string>());
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
-  const [hoveredVideo, setHoveredVideo] = useState<string | null>(null);
+  onCommentCountAdjust: (id: string, delta: number) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [showComments, setShowComments] = useState(false);
 
-  const [commentsFor, setCommentsFor] = useState<SplikRow | null>(null);
+  const start = Math.max(0, Number(splik.trim_start ?? 0));
+  const loopEnd = start + 3;
 
-  const handleBulkDelete = () => {
-    selectedVideos.forEach((id) => onDelete(id));
-    setSelectedVideos(new Set());
-  };
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
 
-  const handleSelectAll = () => {
-    if (selectedVideos.size === spliks.length) {
-      setSelectedVideos(new Set());
-    } else {
-      setSelectedVideos(new Set(spliks.map((s) => s.id)));
-    }
-  };
+    v.playsInline = true;
+    v.setAttribute("playsinline", "true");
+    // @ts-expect-error iOS vendor
+    v.setAttribute("webkit-playsinline", "true");
+    v.muted = true;
+    v.setAttribute("muted", "true");
+    v.controls = false;
+    v.preload = "metadata";
+    v.disablePictureInPicture = true;
+    // @ts-expect-error
+    v.disableRemotePlayback = true;
 
-  function VideoItem({ s }: { s: SplikRow }) {
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [isMuted, setIsMuted] = useState(true);
-
-    const start = Math.max(0, Number(s.trim_start ?? 0));
-    const loopEnd = start + 3;
-
-    useEffect(() => {
-      const v = videoRef.current;
-      if (!v) return;
-
-      v.playsInline = true;
-      v.setAttribute("playsinline", "true");
-      // @ts-expect-error
-      v.setAttribute("webkit-playsinline", "true");
-      v.muted = true;
-      v.setAttribute("muted", "true");
-      v.controls = false;
-      v.preload = "metadata";
-      v.disablePictureInPicture = true;
-      // @ts-expect-error
-      v.disableRemotePlayback = true;
-
-      const onLoaded = () => {
+    const onLoaded = () => {
+      try {
+        v.currentTime = start;
+      } catch {}
+    };
+    const onTimeUpdate = () => {
+      if (v.currentTime >= loopEnd || v.currentTime < start) {
         try {
           v.currentTime = start;
         } catch {}
-      };
-      const onTimeUpdate = () => {
-        if (v.currentTime >= loopEnd || v.currentTime < start) {
-          try {
-            v.currentTime = start;
-          } catch {}
-        }
-      };
-
-      v.addEventListener("loadedmetadata", onLoaded);
-      v.addEventListener("timeupdate", onTimeUpdate);
-      return () => {
-        v.removeEventListener("loadedmetadata", onLoaded);
-        v.removeEventListener("timeupdate", onTimeUpdate);
-        try {
-          v.pause();
-        } catch {}
-      };
-    }, [start, loopEnd]);
-
-    const togglePlayPause = async () => {
-      const v = videoRef.current;
-      if (!v) return;
-
-      if (isPlaying) {
-        try {
-          v.pause();
-        } catch {}
-        setIsPlaying(false);
-      } else {
-        try {
-          v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01));
-        } catch {}
-        v.muted = isMuted;
-        if (isMuted) v.setAttribute("muted", "true");
-        else v.removeAttribute("muted");
-        try {
-          await v.play(); // ✅ manual user gesture → should always start
-          setIsPlaying(true);
-        } catch (e) {
-          console.error("Play failed:", e);
-          setIsPlaying(false);
-        }
       }
     };
 
-    const toggleMute = (e: React.MouseEvent) => {
-      e.stopPropagation(); // don’t toggle play
-      const v = videoRef.current;
-      if (!v) return;
-      const next = !isMuted;
-      v.muted = next;
-      if (next) v.setAttribute("muted", "true");
-      else v.removeAttribute("muted");
-      setIsMuted(next);
+    v.addEventListener("loadedmetadata", onLoaded);
+    v.addEventListener("timeupdate", onTimeUpdate);
+    return () => {
+      v.removeEventListener("loadedmetadata", onLoaded);
+      v.removeEventListener("timeupdate", onTimeUpdate);
+      try {
+        v.pause();
+      } catch {}
     };
+  }, [start, loopEnd]);
 
-    return (
-      <div
-        key={s.id}
-        className="group relative bg-gray-900 rounded-xl border border-gray-800 overflow-hidden hover:border-gray-600 transition-all duration-200"
-        onMouseEnter={() => setHoveredVideo(s.id)}
-        onMouseLeave={() => setHoveredVideo(null)}
-      >
-        {/* Video area (manual play only) */}
-        <div className="relative aspect-[9/16] bg-black overflow-hidden">
-          {s.video_url ? (
+  const togglePlayPause = async () => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (isPlaying) {
+      try {
+        v.pause();
+      } catch {}
+      setIsPlaying(false);
+    } else {
+      try {
+        v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01));
+      } catch {}
+      v.muted = isMuted;
+      if (isMuted) v.setAttribute("muted", "true");
+      else v.removeAttribute("muted");
+      try {
+        await v.play();
+        setIsPlaying(true);
+      } catch (e) {
+        console.error("Play failed:", e);
+        setIsPlaying(false);
+      }
+    }
+  };
+
+  const toggleMute = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const v = videoRef.current;
+    if (!v) return;
+    const next = !isMuted;
+    v.muted = next;
+    if (next) v.setAttribute("muted", "true");
+    else v.removeAttribute("muted");
+    setIsMuted(next);
+  };
+
+  return (
+    <div className="w-full flex justify-center">
+      <div className="w-full max-w-[480px] bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        {/* Video (9:16) */}
+        <div className="relative w-full" style={{ paddingBottom: "177.78%" }}>
+          {splik.video_url ? (
             <>
               <video
                 ref={videoRef}
-                src={s.video_url}
-                poster={s.thumbnail_url || undefined}
+                src={splik.video_url}
+                poster={splik.thumbnail_url || undefined}
                 className="absolute inset-0 w-full h-full object-cover"
                 muted
                 playsInline
-                // @ts-expect-error vendor attr
+                // @ts-expect-error
                 webkit-playsinline="true"
                 preload="metadata"
                 controls={false}
                 controlsList="nodownload noplaybackrate noremoteplayback"
-                onClick={togglePlayPause} // ✅ tap anywhere to play/pause
+                onClick={togglePlayPause} // tap anywhere to play/pause
               />
-              {/* Visible PLAY/PAUSE button in the middle that actually works */}
+              {/* Center Play/Pause button that WORKS */}
               <button
                 aria-label={isPlaying ? "Pause" : "Play"}
                 onClick={togglePlayPause}
@@ -394,201 +364,123 @@ const VideoManagementGrid = ({
                   )}
                 </div>
               </button>
+
+              {/* Top-right Delete (doesn't stop play) */}
+              <div className="absolute top-3 right-3">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(splik.id);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Bottom-right Mute */}
+              <button
+                onClick={toggleMute}
+                className="absolute bottom-3 right-3 z-10 bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
+                aria-label={isMuted ? "Unmute" : "Mute"}
+              >
+                {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+              </button>
+
+              {/* Stats bar */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+                <div className="flex items-center justify-between text-white text-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1">
+                      <Eye className="h-4 w-4" />
+                      <span>{splik.views_count || 0}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Heart className="h-4 w-4" />
+                      <span>{splik.likes_count || 0}</span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowComments(true);
+                      }}
+                      className="flex items-center gap-1 hover:opacity-80"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      <span>{splik.comments_count || 0}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
               <Video className="h-12 w-12 text-gray-600" />
             </div>
           )}
-
-          {/* Top-left: Select checkbox (doesn't cancel play) */}
-          <div
-            className={`absolute top-3 left-3 transition-opacity duration-200 ${
-              hoveredVideo === s.id || selectedVideos.has(s.id) ? "opacity-100" : "opacity-0"
-            }`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <input
-              type="checkbox"
-              className="w-5 h-5 rounded border-2 border-white bg-black/50 text-blue-500 focus:ring-blue-500"
-              checked={selectedVideos.has(s.id)}
-              onChange={(e) => {
-                const next = new Set(selectedVideos);
-                if (e.target.checked) next.add(s.id);
-                else next.delete(s.id);
-                setSelectedVideos(next);
-              }}
-            />
-          </div>
-
-          {/* Top-right: Delete (doesn't cancel play) */}
-          <div
-            className={`absolute top-3 right-3 transition-opacity duration-200 ${
-              hoveredVideo === s.id ? "opacity-100" : "opacity-0"
-            }`}
-          >
-            <Button
-              size="sm"
-              variant="destructive"
-              className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowDeleteConfirm(s.id);
-              }}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-
-          {/* Bottom-right: Mute toggle (doesn't cancel play) */}
-          <button
-            onClick={toggleMute}
-            className="absolute bottom-3 right-3 z-10 bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
-            aria-label={isMuted ? "Unmute" : "Mute"}
-          >
-            {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
-          </button>
-
-          {/* Bottom overlay: stats and open comments manager */}
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
-            <div className="flex items-center justify-between text-white text-sm">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1">
-                  <Eye className="h-4 w-4" />
-                  <span>{s.views_count || 0}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Heart className="h-4 w-4" />
-                  <span>{s.likes_count || 0}</span>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCommentsFor(s);
-                  }}
-                  className="flex items-center gap-1 hover:opacity-80"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  <span>{s.comments_count || 0}</span>
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
 
-        {/* Info */}
+        {/* Meta */}
         <div className="p-4">
-          <h4 className="font-semibold text-white truncate mb-1">
-            {s.title || `Video ${s.id.slice(0, 8)}`}
-          </h4>
-          {s.description && <p className="text-sm text-gray-400 line-clamp-2 mb-2">{s.description}</p>}
-          <p className="text-xs text-gray-500">{new Date(s.created_at).toLocaleDateString()}</p>
-          {/* Manage comments button (optional second entry point) */}
+          <h4 className="font-semibold text-white">{splik.title || `Video ${splik.id.slice(0, 6)}`}</h4>
+          {splik.description && (
+            <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
+          )}
+          <div className="mt-2 text-xs text-gray-500">
+            {new Date(splik.created_at).toLocaleDateString()} •
+            <span className="ml-1">
+              Trimmed: {Math.max(0, Math.round((splik.trim_start ?? 0) * 10) / 10)}s –{" "}
+              {Math.round((Math.max(0, (splik.trim_start ?? 0)) + 3) * 10) / 10}s
+            </span>
+          </div>
+
           <div className="mt-3">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setCommentsFor(s)}
-              className="gap-2"
-            >
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowComments(true)}>
               <MessageCircle className="h-4 w-4" />
               Manage comments
             </Button>
           </div>
         </div>
 
-        {/* Comments Manager Modal for this card */}
-        {commentsFor?.id === s.id && (
+        {/* Comments modal */}
+        {showComments && (
           <CommentsManager
-            open={!!commentsFor}
-            onClose={() => setCommentsFor(null)}
-            splik={s}
-            onCountChange={(delta) => onCommentCountAdjust(s.id, delta)}
+            open={showComments}
+            onClose={() => setShowComments(false)}
+            splik={splik}
+            onCountChange={(delta) => onCommentCountAdjust(splik.id, delta)}
           />
         )}
       </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Management Header */}
-      <div className="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl border border-gray-800">
-        <div className="flex items-center gap-4">
-          <h3 className="text-lg font-semibold text-white">Video Management</h3>
-          <Badge variant="outline" className="bg-gray-800 text-gray-300 border-gray-700">
-            {spliks.length} videos
-          </Badge>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {spliks.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSelectAll}
-              className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
-            >
-              {selectedVideos.size === spliks.length ? "Deselect All" : "Select All"}
-            </Button>
-          )}
-
-          {selectedVideos.size > 0 && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleBulkDelete}
-              className="bg-red-900 hover:bg-red-800"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete {selectedVideos.size} selected
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {spliks.map((s) => (
-          <VideoItem key={s.id} s={s} />
-        ))}
-      </div>
-
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md mx-4 bg-gray-900 border-gray-800">
-            <CardHeader>
-              <CardTitle className="text-white">Delete Video</CardTitle>
-              <CardDescription className="text-gray-400">
-                Are you sure you want to delete this video? This action cannot be undone.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex gap-2">
-              <Button
-                variant="destructive"
-                onClick={() => {
-                  onDelete(showDeleteConfirm);
-                  setShowDeleteConfirm(null);
-                }}
-                className="flex-1 bg-red-900 hover:bg-red-800"
-              >
-                Delete
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowDeleteConfirm(null)}
-                className="flex-1 bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
-              >
-                Cancel
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </div>
   );
-};
+}
+
+/* ----------------------------- Feed (single column) ----------------------------- */
+function CreatorFeed({
+  spliks,
+  onDelete,
+  onCommentCountAdjust,
+}: {
+  spliks: SplikRow[];
+  onDelete: (id: string) => void;
+  onCommentCountAdjust: (id: string, delta: number) => void;
+}) {
+  return (
+    <div className="space-y-8">
+      {spliks.map((s) => (
+        <CreatorFeedItem
+          key={s.id}
+          splik={s}
+          onDelete={onDelete}
+          onCommentCountAdjust={onCommentCountAdjust}
+        />
+      ))}
+    </div>
+  );
+}
 
 /* ----------------------------- Main Component ----------------------------- */
 const CreatorDashboard = () => {
@@ -629,7 +521,6 @@ const CreatorDashboard = () => {
       }
       setCurrentUserId(uid);
 
-      // admin check
       try {
         const { data: adminRow } = await supabase
           .from("admin_users")
@@ -693,21 +584,6 @@ const CreatorDashboard = () => {
           const deletedId = (payload.old as any)?.id as string;
           setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
           recomputeStatsFromList((prev) => prev.filter((s) => s.id !== deletedId));
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "comments" },
-        (_payload) => {
-          // some video got a new comment — bump its count if we have it
-          // (exact per-video bump handled in CommentsManager realtime too)
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "comments" },
-        (_payload) => {
-          // handled locally in CommentsManager for active video
         }
       )
       .on(
@@ -816,7 +692,7 @@ const CreatorDashboard = () => {
       const { error } = await supabase.from("spliks").delete().eq("id", videoId).eq("user_id", currentUserId);
       if (error) throw error;
       toast.success("Video deleted successfully");
-      // Realtime will handle UI update
+      // realtime will remove from feed
     } catch (error) {
       console.error("Error deleting video:", error);
       toast.error("Failed to delete video");
@@ -901,14 +777,10 @@ const CreatorDashboard = () => {
 
             {/* Actions */}
             <div className="flex items-center gap-3">
-              <Button
-                onClick={() => setUploadModalOpen(true)}
-                className="bg-blue-600 hover:bg-blue-700 gap-2"
-              >
+              <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
                 <Plus className="h-4 w-4" />
                 Upload Video
               </Button>
-
               {isAdmin && (
                 <Button
                   variant="outline"
@@ -924,8 +796,9 @@ const CreatorDashboard = () => {
         </div>
       </div>
 
+      {/* Body */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
+        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card className="bg-gray-900 border-gray-800">
             <CardHeader className="pb-3">
@@ -988,7 +861,7 @@ const CreatorDashboard = () => {
           </Card>
         </div>
 
-        {/* Content Tabs */}
+        {/* Tabs */}
         <Tabs defaultValue="videos" className="w-full">
           <TabsList className="grid w-full grid-cols-3 bg-gray-900 border-gray-800">
             <TabsTrigger value="videos" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
@@ -1002,10 +875,10 @@ const CreatorDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* My Videos */}
+          {/* My Videos — FEED STYLE */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
-              <VideoManagementGrid
+              <CreatorFeed
                 spliks={spliks}
                 onDelete={handleDeleteVideo}
                 onCommentCountAdjust={handleCommentCountAdjust}
@@ -1036,9 +909,7 @@ const CreatorDashboard = () => {
                     <p className="text-sm text-gray-400">This Week's Reactions</p>
                     <p className="text-2xl font-bold text-white">{stats.totalReactions}</p>
                   </div>
-                  <Badge variant="secondary" className="bg-green-900 text-green-300">
-                    Live
-                  </Badge>
+                  <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
                 </div>
 
                 <CreatorAnalytics spliks={spliks} stats={stats} />
@@ -1054,101 +925,134 @@ const CreatorDashboard = () => {
                 <CardDescription className="text-gray-400">Manage your creator profile</CardDescription>
               </CardHeader>
               <CardContent>
-                {/* Keep your existing profile editing UI here.
-                    Below is a compact version to match your original structure. */}
-                <div className="space-y-6">
-                  <div>
-                    <p className="text-sm text-gray-400 mb-2">Profile Photo</p>
-                    <AvatarUploader
-                      value={formData.avatar_url || profile?.avatar_url}
-                      onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
-                    />
-                    <p className="text-xs text-gray-500 mt-2">
-                      JPG/PNG recommended. We'll compress for faster loading.
-                    </p>
-                  </div>
+                {editingProfile ? (
+                  <div className="space-y-6">
+                    <div>
+                      <p className="text-sm text-gray-400 mb-2">Profile Photo</p>
+                      <AvatarUploader
+                        value={formData.avatar_url || profile?.avatar_url}
+                        onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
+                      />
+                      <p className="text-xs text-gray-500 mt-2">JPG/PNG recommended. We'll compress for faster loading.</p>
+                    </div>
 
-                  <div>
-                    <Label htmlFor="username" className="text-gray-300">Username</Label>
-                    <Input
-                      id="username"
-                      value={formData.username}
-                      onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                      placeholder="@username"
-                      className="bg-gray-800 border-gray-700 text-white"
-                    />
-                  </div>
+                    <div>
+                      <Label htmlFor="username" className="text-gray-300">Username</Label>
+                      <Input
+                        id="username"
+                        value={formData.username}
+                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                        placeholder="@username"
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
 
-                  <div>
-                    <Label htmlFor="display_name" className="text-gray-300">Display Name</Label>
-                    <Input
-                      id="display_name"
-                      value={formData.display_name}
-                      onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
-                      placeholder="Your display name"
-                      className="bg-gray-800 border-gray-700 text-white"
-                    />
-                  </div>
+                    <div>
+                      <Label htmlFor="display_name" className="text-gray-300">Display Name</Label>
+                      <Input
+                        id="display_name"
+                        value={formData.display_name}
+                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                        placeholder="Your display name"
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
 
-                  <div>
-                    <Label htmlFor="bio" className="text-gray-300">Bio</Label>
-                    <Textarea
-                      id="bio"
-                      value={formData.bio}
-                      onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                      placeholder="Tell us about yourself"
-                      rows={4}
-                      className="bg-gray-800 border-gray-700 text-white"
-                    />
-                  </div>
+                    <div>
+                      <Label htmlFor="bio" className="text-gray-300">Bio</Label>
+                      <Textarea
+                        id="bio"
+                        value={formData.bio}
+                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                        placeholder="Tell us about yourself"
+                        rows={4}
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
 
-                  <div className="flex gap-2">
-                    <Button onClick={handleProfileUpdate} className="bg-blue-600 hover:bg-blue-700">
-                      Save Changes
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button onClick={handleProfileUpdate} className="bg-blue-600 hover:bg-blue-700">
+                        Save Changes
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setEditingProfile(false)}
+                        className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-4">
+                      <Avatar className="h-16 w-16 ring-2 ring-blue-500/20">
+                        <AvatarImage src={profile?.avatar_url || undefined} />
+                        <AvatarFallback className="bg-gray-800 text-xl">
+                          {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm text-gray-400">Signed in as</p>
+                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-sm text-gray-400 mb-1">Display Name</p>
+                        <p className="font-medium text-white">{profile?.display_name || "Not set"}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-400 mb-1">Username</p>
+                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-sm text-gray-400 mb-1">Bio</p>
+                      <p className="font-medium text-white break-words">{profile?.bio || "No bio yet"}</p>
+                    </div>
+
+                    <div className="border-t border-gray-800 pt-6 space-y-4">
+                      <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
+                        <div>
+                          <p className="font-medium text-white text-sm">Followers List</p>
+                          <p className="text-xs text-gray-400">
+                            {profile?.followers_private ? "Private — Only you" : "Public — Everyone"}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={profile?.followers_private || false}
+                          onCheckedChange={() => togglePrivacy("followers_private")}
+                          className="data-[state=checked]:bg-blue-600"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
+                        <div>
+                          <p className="font-medium text-white text-sm">Following List</p>
+                          <p className="text-xs text-gray-400">
+                            {profile?.following_private ? "Private — Only you" : "Public — Everyone"}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={profile?.following_private || false}
+                          onCheckedChange={() => togglePrivacy("following_private")}
+                          className="data-[state=checked]:bg-blue-600"
+                        />
+                      </div>
+                    </div>
+
                     <Button
-                      variant="outline"
-                      onClick={() => setEditingProfile(false)}
-                      className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
+                      onClick={() => setEditingProfile(true)}
+                      className="bg-gray-800 hover:bg-gray-700 border border-gray-700 gap-2"
                     >
-                      Cancel
+                      <Settings className="mr-2 h-4 w-4" />
+                      Edit Profile
                     </Button>
                   </div>
-
-                  <div className="border-t border-gray-800 pt-6 space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
-                      <div>
-                        <p className="font-medium text-white text-sm">Followers List</p>
-                        <p className="text-xs text-gray-400">
-                          {profile?.followers_private
-                            ? "Private — Only you can see your followers"
-                            : "Public — Anyone can see your followers"}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={profile?.followers_private || false}
-                        onCheckedChange={() => togglePrivacy("followers_private")}
-                        className="data-[state=checked]:bg-blue-600"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
-                      <div>
-                        <p className="font-medium text-white text-sm">Following List</p>
-                        <p className="text-xs text-gray-400">
-                          {profile?.following_private
-                            ? "Private — Only you can see who you follow"
-                            : "Public — Anyone can see who you follow"}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={profile?.following_private || false}
-                        onCheckedChange={() => togglePrivacy("following_private")}
-                        className="data-[state=checked]:bg-blue-600"
-                      />
-                    </div>
-                  </div>
-                </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
