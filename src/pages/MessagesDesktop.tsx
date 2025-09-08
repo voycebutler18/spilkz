@@ -2,12 +2,10 @@ import { Card } from "@/components/ui/card";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import InboxPane from "@/components/DM/InboxPane";
-import ThreadPane from "@/components/DM/ThreadPane";
 import DetailsPane from "@/components/DM/DetailsPane";
-import { useParams } from "react-router-dom";
+import { Outlet, useParams } from "react-router-dom";
 
 export default function MessagesDesktop() {
-  // when the URL is /messages/:otherId, this exists
   const { otherId } = useParams();
 
   return (
@@ -24,21 +22,22 @@ export default function MessagesDesktop() {
           <InboxPane />
         </Card>
 
-        {/* Center: Thread (always center) */}
+        {/* Center: this is controlled by nested routes */}
         <Card className="overflow-hidden border">
-          {/* key forces clean remount when switching threads */}
-          <ThreadPane key={otherId || "no-thread"} />
+          {/* When route is /messages -> index element renders (select prompt)
+              When route is /messages/:otherId -> MessageThread renders */}
+          <Outlet key={otherId || "index"} />
         </Card>
 
-        {/* Right: Details */}
+        {/* Right: Details/actions for selected user */}
         <Card className="overflow-hidden border">
           <DetailsPane />
         </Card>
       </div>
 
-      {/* Mobile note (desktop layout only) */}
+      {/* Message for small screens (we’ll do mobile later) */}
       <div className="lg:hidden max-w-xl mx-auto px-4 py-10 text-center text-muted-foreground">
-        The wide messaging layout shows on large screens. Use mobile messages for now.
+        The wide messaging layout shows on larger screens. Mobile layout coming soon.
       </div>
 
       <Footer />
