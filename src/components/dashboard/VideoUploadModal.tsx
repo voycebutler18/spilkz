@@ -1,5 +1,6 @@
 // src/components/dashboard/VideoUploadModal.tsx
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
@@ -148,6 +149,8 @@ async function uploadBlob(bucket: string, path: string, blob: Blob): Promise<{ p
 }
 
 export default function VideoUploadModal({ open, onClose, onUploadComplete }: VideoUploadModalProps) {
+  const navigate = useNavigate();
+
   const [file, setFile] = useState<File | null>(null);
 
   // The thing we actually upload (mp4 if transcoded from mov)
@@ -230,6 +233,22 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       sub?.subscription.unsubscribe();
     };
   }, []);
+
+  // === NEW: a single place to close + redirect to Profile ==================
+  const goToProfile = useCallback(async () => {
+    // make sure we have a uid even if state hasn’t caught up
+    let uid = currentUser?.id as string | undefined;
+    if (!uid) {
+      const { data } = await supabase.auth.getUser();
+      uid = data.user?.id;
+    }
+    onClose();
+    // let the dialog unmount before navigating
+    setTimeout(() => {
+      navigate(uid ? `/profile/${uid}` : "/profile");
+    }, 0);
+  }, [currentUser?.id, navigate, onClose]);
+  // ========================================================================
 
   useEffect(() => {
     return () => {
@@ -685,8 +704,24 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   })();
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog
+      open={open}
+      // if the dialog is closed (X, overlay click, ESC), go to Profile
+      onOpenChange={(v) => {
+        if (!v) goToProfile();
+      }}
+    >
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        {/* Manual close button in the corner (routes to Profile) */}
+        <button
+          type="button"
+          onClick={goToProfile}
+          className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20"
+          aria-label="Close and go to profile"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
         <DialogHeader className="sticky top-0 bg-background z-10 pb-2">
           <DialogTitle>Upload Your 3-Second Splik</DialogTitle>
           <DialogDescription>Pick any moment; we always save a 3.0s clip.</DialogDescription>
