@@ -117,8 +117,7 @@ export default function SplikCard(props: SplikCardProps) {
   /* ---------- Share URL (OG function) ---------- */
   const SHARE_BASE =
     import.meta.env.VITE_OG_FUNCTION_BASE ||
-    `${window.location.origin.replace(/\/$/, "")}/video`; // fallback to your SPA route
-
+    `${window.location.origin.replace(/\/$/, "")}/video`; // fallback to SPA route
   const shareUrl = `${SHARE_BASE}/${splik.id}`;
 
   /* ---------- helpers for smooth video transitions ---------- */
@@ -503,6 +502,40 @@ export default function SplikCard(props: SplikCardProps) {
     setIsMuted(next);
   };
 
+  // ⭐ FIX: Implement toggleFavorite (and we'll stop event propagation in the button)
+  const toggleFavorite = useCallback(async () => {
+    if (saving) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to save videos",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSaving(true);
+    const next = !isSaved;
+    setIsSaved(next); // optimistic
+
+    try {
+      if (next) {
+        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
+        toast({ title: "Added to favorites", description: "Video saved to your favorites" });
+      } else {
+        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
+        toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
+      }
+    } catch {
+      setIsSaved(!next); // rollback
+      toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }, [saving, isSaved, splik.id, toast]);
+
   /* ------ SHARE / COPY with correct OG link ------ */
   const handleCopyLink = () => {
     navigator.clipboard.writeText(shareUrl);
@@ -514,7 +547,6 @@ export default function SplikCard(props: SplikCardProps) {
       if (navigator.share) {
         await navigator.share({ title: splik.title || "Splikz", url: shareUrl });
       } else {
-        // Fallback: open your modal
         setShowShareModal(true);
         await navigator.clipboard.writeText(shareUrl);
         toast({ title: "Link copied", description: "Paste it anywhere to share" });
@@ -738,7 +770,7 @@ export default function SplikCard(props: SplikCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={toggleFavorite}
+            onClick={(e) => { e.stopPropagation(); toggleFavorite(); }}
             disabled={saving}
             className={cn("flex items-center gap-2 transition-colors",
               isSaved ? "text-yellow-400 hover:text-yellow-500" : "")}
@@ -774,8 +806,7 @@ export default function SplikCard(props: SplikCardProps) {
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || "Check out this video"}
-        // If your ShareModal supports it, pass the resolved URL to ensure it uses the OG link:
-        // @ts-ignore (safe if prop doesn't exist)
+        // @ts-ignore — pass resolved OG link if the modal supports it
         shareUrl={shareUrl}
       />
 
