@@ -26,7 +26,8 @@ export default function AppLayout() {
 
   return (
     <div className="min-h-[100svh] bg-background">
-      {/* Mobile top bar (desktop keeps your existing header/sidebar) */}
+      {/* -------------------- MOBILE TOP BAR -------------------- */}
+      {/* Visible on mobile only; desktop keeps your existing chrome */}
       <div className="md:hidden sticky top-0 z-40 h-12 border-b bg-background/95 backdrop-blur px-3 flex items-center justify-between">
         <button
           aria-label="Open menu"
@@ -41,20 +42,25 @@ export default function AppLayout() {
         <div className="w-8" />
       </div>
 
-      {/* Main content; bottom padding so tab bar doesn’t overlap on mobile */}
+      {/* -------------------- MAIN CONTENT -------------------- */}
+      {/* Add bottom padding on mobile so the fixed tab bar doesn’t overlap */}
       <main className="pb-24 md:pb-0">
         <Outlet />
       </main>
 
-      {/* Mobile-only bottom tabs */}
-      <MobileTabBar
-        onUploadClick={() => openUpload({ onCompleteNavigateTo: "/dashboard" })}
-        isAuthed={!!user}
-        profilePath={profilePath}
-      />
+      {/* -------------------- MOBILE BOTTOM TABS -------------------- */}
+      <div className="md:hidden">
+        <MobileTabBar
+          onUploadClick={() => openUpload({ onCompleteNavigateTo: "/dashboard" })}
+          isAuthed={!!user}
+          profilePath={profilePath}
+        />
+      </div>
 
-      {/* Slide-out menu (left sheet) */}
-      <MobileMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
+      {/* -------------------- MOBILE SLIDE-OUT MENU -------------------- */}
+      <div className="md:hidden">
+        <MobileMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
+      </div>
     </div>
   );
 }
