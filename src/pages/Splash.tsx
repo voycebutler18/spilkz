@@ -46,7 +46,6 @@ const getAnonId = () => {
     }
     return id;
   } catch {
-    // If storage is blocked/unavailable, fall back to non-persistent anon id
     return "anon";
   }
 };
@@ -92,41 +91,45 @@ export default function Splash() {
 
         setProgress(20);
 
-        // 1) Fetch spliks (recent first) + boosted subset in parallel
+        // 1) Fetch spliks (must succeed) + boosted (optional, non-fatal)
         const nowIso = new Date().toISOString();
-        const [allResp, boostedResp] = await Promise.all([
-          supabase
+
+        const allResp = await supabase
+          .from("spliks")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(150);
+
+        let boostedData: any[] = [];
+        try {
+          const boostedResp = await supabase
             .from("spliks")
-            .select("*")
-            .order("created_at", { ascending: false })
-            .limit(150),
-          supabase
-            .from("spliks")
-            .select(
-              `
+            .select(`
               *,
               boosted_videos!inner(
                 boost_level,
                 end_date,
                 status
               )
-            `
-            )
+            `)
             .gt("boost_score", 0)
             .eq("boosted_videos.status", "active")
             .gt("boosted_videos.end_date", nowIso)
             .order("boost_score", { ascending: false })
-            .limit(15),
-        ]);
+            .limit(15);
+
+          if (boostedResp.data) boostedData = boostedResp.data;
+        } catch {
+          boostedData = [];
+        }
 
         if (cancelled) return;
         if (allResp.error) throw allResp.error;
-        if (boostedResp.error) throw boostedResp.error;
 
         setProgress(40);
 
-        // 2) Build feed (fast; keep as-is)
-        const feed = createHomeFeed(allResp.data || [], boostedResp.data || [], {
+        // 2) Build feed (pass boostedData)
+        const feed = createHomeFeed(allResp.data || [], boostedData, {
           userId: auth?.user?.id,
           feedType: "home",
           maxResults: 60,
@@ -151,13 +154,16 @@ export default function Splash() {
         setProgress(55);
 
         // 5) Attach profiles in ONE query (avoid N+1)
-        const uniqueUserIds = Array.from(new Set(shuffled.map((s) => s.user_id)));
-        const { data: profilesData, error: profileErr } = await supabase
-          .from("profiles")
-          .select("id, username, display_name, first_name, avatar_url")
-          .in("id", uniqueUserIds);
-        if (profileErr) throw profileErr;
-
+        const uniqueUserIds = Array.from(new Set(shuffled.map((s) => s.user_id).filter(Boolean)));
+        let profilesData: any[] = [];
+        if (uniqueUserIds.length > 0) {
+          const { data, error: profileErr } = await supabase
+            .from("profiles")
+            .select("id, username, display_name, first_name, avatar_url")
+            .in("id", uniqueUserIds);
+          if (profileErr) throw profileErr;
+          profilesData = data || [];
+        }
         const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
         const withProfiles = shuffled.map((s) => ({ ...s, profile: pmap.get(s.user_id) }));
 
@@ -195,7 +201,6 @@ export default function Splash() {
       <div className="max-w-sm w-[90%] text-center">
         {/* Logo / mark */}
         <div className="mx-auto h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center shadow-sm mb-4 animate-pulse">
-          {/* replace with your SVG/Logo */}
           <span className="text-2xl font-black text-primary">S</span>
         </div>
 
@@ -212,7 +217,6 @@ export default function Splash() {
           />
         </div>
 
-        {/* tips / fun caption */}
         <p className="text-[11px] text-muted-foreground mt-3">
           Pro tip: videos start cached as you scroll ✨
         </p>
