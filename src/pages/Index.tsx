@@ -12,6 +12,9 @@ import { createHomeFeed, forceNewRotation } from "@/lib/feed";
 
 type SplikWithProfile = any;
 
+// Toggle pinning behavior. When false, the first card will be from the shuffled set.
+const PIN_NEWEST = false;
+
 // Rolling window: keep 5 videos “live” at any time
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
@@ -23,6 +26,7 @@ const Index = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0); // who’s mostly visible
+  const [shuffleEpoch, setShuffleEpoch] = useState(0); // forces remounts on shuffle
 
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -87,13 +91,15 @@ const Index = () => {
         maxResults: 60,
       }) as SplikWithProfile[];
 
-      // 4) PIN newest at the very top
-      const newest = (allSpliks || [])[0];
-      if (newest) {
-        const idx = feed.findIndex((x: any) => x.id === newest.id);
-        if (idx > 0) {
-          const [item] = feed.splice(idx, 1);
-          feed = [item, ...feed];
+      // 4) optionally PIN newest at the very top
+      if (PIN_NEWEST) {
+        const newest = (allSpliks || [])[0];
+        if (newest) {
+          const idx = feed.findIndex((x: any) => x.id === newest.id);
+          if (idx > 0) {
+            const [item] = feed.splice(idx, 1);
+            feed = [item, ...feed];
+          }
         }
       }
 
@@ -116,8 +122,14 @@ const Index = () => {
         })
       );
 
+      // 🔁 bump epoch so React remounts items (prevents DOM reuse masking new order)
+      const epoch = Date.now();
+      setShuffleEpoch(epoch);
+
       setSpliks(withProfiles);
-      setActiveIndex(0); // reset window to the first item
+
+      // Start window at top of list (which is now truly shuffled unless PIN_NEWEST)
+      setActiveIndex(0);
 
       if (showToast) {
         toast({
@@ -127,6 +139,9 @@ const Index = () => {
             : "Updated with latest content",
         });
       }
+
+      // Debug log: verify order is changing
+      // console.log("🧪 order", withProfiles.map((x) => x.id).join(","));
     } catch (e) {
       console.error("Error fetching dynamic feed:", e);
       toast({
@@ -249,13 +264,13 @@ const Index = () => {
           <div className="w-full px-2 sm:px-4">
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
               <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • Newest is pinned • Rest are shuffled
+                Showing {spliks.length} videos • {PIN_NEWEST ? "Newest pinned • Rest shuffled" : "All shuffled"}
               </p>
             </div>
 
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
               {spliks.map((splik: any, index: number) => (
-                <div key={`${splik.id}-${index}`} className="relative">
+                <div key={`${splik.id}-${shuffleEpoch}`} className="relative">
                   <SplikCard
                     index={index}
                     shouldLoad={shouldLoadIndex(index)}
