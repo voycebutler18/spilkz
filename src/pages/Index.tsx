@@ -1,5 +1,5 @@
 // src/pages/Index.tsx
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
@@ -9,6 +9,7 @@ import { Loader2, RefreshCw, Play } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { createHomeFeed, forceNewRotation } from "@/lib/feed";
+import { useFeedStore } from "@/store/feedStore";
 
 type SplikWithProfile = any;
 
@@ -16,85 +17,20 @@ type SplikWithProfile = any;
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
 
-/* --------------------- seeded shuffle helpers --------------------- */
-const strToSeed = (s: string) => {
-  // FNV-1a 32-bit
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0);
-};
-
-const mulberry32 = (a: number) => () => {
-  let t = a += 0x6D2B79F5;
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
-
-const shuffleWithSeed = <T,>(arr: T[], seed: number): T[] => {
-  const a = arr.slice();
-  const rand = mulberry32(seed >>> 0);
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-};
-
-const getAnonId = () => {
-  const KEY = "feed:anon-id";
-  let id = localStorage.getItem(KEY);
-  if (!id) {
-    id =
-      (typeof crypto !== "undefined" && "randomUUID" in crypto)
-        ? (crypto as any).randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(KEY, id);
-  }
-  return id;
-};
-
-/* ================================================================== */
-
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [spliks, setSpliks] = useState<SplikWithProfile[]>([]);
+  const [localSpliks, setLocalSpliks] = useState<SplikWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0); // who’s mostly visible
-  const [shuffleEpoch, setShuffleEpoch] = useState<number>(0); // forces remounts on each build
+  const [shuffleEpoch, setShuffleEpoch] = useState(0);
 
+  const feedStore = useFeedStore();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Detect whether this page load is a real browser reload.
-  const isReload = useMemo(() => {
-    const nav = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined);
-    return nav?.type === "reload";
-  }, []);
-
-  // On each page load (including reload), generate a fresh session seed.
-  // This makes the order change when the user refreshes the page.
-  const sessionSeed = useMemo(() => {
-    const seed =
-      (typeof crypto !== "undefined" && (crypto as any).getRandomValues)
-        ? (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0)
-        : Math.floor(Math.random() * 2 ** 32) >>> 0;
-    sessionStorage.setItem("feed:session-seed", String(seed));
-    return seed;
-  }, []);
-
-  // Pin newest ON during a non-reload navigation; OFF after a full reload.
-  // This satisfies: “new video is top until the page is refreshed, then it shuffles.”
-  const pinNewestThisSession = useMemo(() => !isReload, [isReload]);
-
-  useEffect(() => {
-    document.title = "Splikz - Short Video Platform";
-  }, []);
+  useEffect(() => { document.title = "Splikz - Short Video Platform"; }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
@@ -104,10 +40,36 @@ const Index = () => {
     return () => subscription.unsubscribe();
   }, []);
 
+  // On mount, try to use preloaded store or session cache for instant paint
   useEffect(() => {
-    fetchDynamicFeed();
+    const cached = feedStore.feed.length
+      ? feedStore.feed
+      : (() => {
+          try {
+            const raw = sessionStorage.getItem("feed:cached");
+            return raw ? JSON.parse(raw) : [];
+          } catch { return []; }
+        })();
+
+    if (cached.length) {
+      setLocalSpliks(cached);
+      setLoading(false);
+      setShuffleEpoch(Date.now());
+    } else {
+      // No preloaded feed (direct visit to /home): do a fast fetch
+      fetchDynamicFeed(false, false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, []);
+
+  useEffect(() => {
+    // keep store and local in sync if splash populated after this page mounted
+    if (feedStore.feed.length) {
+      setLocalSpliks(feedStore.feed);
+      setLoading(false);
+      setShuffleEpoch(Date.now());
+    }
+  }, [feedStore.feed]);
 
   const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
     if (showToast) setRefreshing(true);
@@ -116,82 +78,60 @@ const Index = () => {
     try {
       if (forceNewShuffle) forceNewRotation();
 
-      // 1) all spliks (recent first)
-      const { data: allSpliks, error: spliksError } = await supabase
-        .from("spliks")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(150);
-      if (spliksError) throw spliksError;
+      const nowIso = new Date().toISOString();
 
-      // 2) boosted subset
-      const { data: boostedSpliks } = await supabase
-        .from("spliks")
-        .select(
+      const [allResp, boostedResp] = await Promise.all([
+        supabase.from("spliks").select("*").order("created_at", { ascending: false }).limit(150),
+        supabase
+          .from("spliks")
+          .select(
+            `
+            *,
+            boosted_videos!inner(
+              boost_level,
+              end_date,
+              status
+            )
           `
-          *,
-          boosted_videos!inner(
-            boost_level,
-            end_date,
-            status
           )
-        `
-        )
-        .gt("boost_score", 0)
-        .eq("boosted_videos.status", "active")
-        .gt("boosted_videos.end_date", new Date().toISOString())
-        .order("boost_score", { ascending: false })
-        .limit(15);
+          .gt("boost_score", 0)
+          .eq("boosted_videos.status", "active")
+          .gt("boosted_videos.end_date", nowIso)
+          .order("boost_score", { ascending: false })
+          .limit(15),
+      ]);
+      if (allResp.error) throw allResp.error;
+      if (boostedResp.error) throw boostedResp.error;
 
-      // 3) build feed body (createHomeFeed may include its own ordering; we'll re-shuffle deterministically)
-      let feed = createHomeFeed(allSpliks || [], boostedSpliks || [], {
+      // Build + (re)shuffle via your helper
+      let feed = createHomeFeed(allResp.data || [], boostedResp.data || [], {
         userId: user?.id,
         feedType: "home",
         maxResults: 60,
       }) as SplikWithProfile[];
 
-      // Personalization seed: combine user (or anon) with this page-load's session seed.
-      const who = user?.id || getAnonId();
-      const personalizedSeed = (strToSeed(who) ^ sessionSeed) >>> 0;
+      // Attach profiles in ONE query
+      const ids = Array.from(new Set(feed.map((s: any) => s.user_id)));
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, first_name, avatar_url")
+        .in("id", ids);
 
-      // Deterministic shuffle for the session, personalized per user/device.
-      let shuffled = shuffleWithSeed(feed, personalizedSeed);
+      const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
+      const withProfiles = feed.map((s: any) => ({ ...s, profile: pmap.get(s.user_id) }));
 
-      // 4) Pin newest at the top for THIS session only (until full page reload)
-      if (pinNewestThisSession) {
-        const newest = (allSpliks || [])[0];
-        if (newest) {
-          const idx = shuffled.findIndex((x: any) => x.id === newest.id);
-          if (idx > 0) {
-            const [item] = shuffled.splice(idx, 1);
-            shuffled = [item, ...shuffled];
-          }
-        }
-      }
+      setLocalSpliks(withProfiles);
+      setShuffleEpoch(Date.now());
+      useFeedStore.getState().setFeed(withProfiles);
+      useFeedStore.getState().setLastFetchedAt(Date.now());
+      sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
 
-      // 5) impressions for boosted
-      shuffled
+      // impressions for boosted (fire-and-forget)
+      withProfiles
         .filter((s: any) => s.isBoosted)
         .forEach((s: any) =>
           supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
         );
-
-      // 6) attach profiles
-      const withProfiles = await Promise.all(
-        shuffled.map(async (s: any) => {
-          const { data: profileData } = await supabase
-            .from("profiles")
-            .select("*")
-            .eq("id", s.user_id)
-            .maybeSingle();
-          return { ...s, profile: profileData || undefined };
-        })
-      );
-
-      // Force remounts so React doesn't recycle first card across reshuffles
-      setShuffleEpoch(Date.now());
-      setSpliks(withProfiles);
-      setActiveIndex(0);
 
       if (showToast) {
         toast({
@@ -201,9 +141,6 @@ const Index = () => {
             : "Updated with latest content",
         });
       }
-
-      // Debug: verify personalization + order
-      // console.log("seed", personalizedSeed, "order:", withProfiles.map((x) => x.id).join(","));
     } catch (e) {
       console.error("Error fetching dynamic feed:", e);
       toast({
@@ -211,7 +148,7 @@ const Index = () => {
         description: "Failed to load videos. Please try again.",
         variant: "destructive",
       });
-      setSpliks([]);
+      setLocalSpliks([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -258,12 +195,11 @@ const Index = () => {
     }
   };
 
-  // compute which indices should have a real <video src=...> attached
   const shouldLoadIndex = (i: number) => {
-    if (!spliks.length) return false;
-    if (activeIndex <= HALF) return i <= Math.min(spliks.length - 1, LOAD_WINDOW - 1);
+    if (!localSpliks.length) return false;
+    if (activeIndex <= HALF) return i <= Math.min(localSpliks.length - 1, LOAD_WINDOW - 1);
     const start = Math.max(0, activeIndex - HALF);
-    const end = Math.min(spliks.length - 1, activeIndex + HALF);
+    const end = Math.min(localSpliks.length - 1, activeIndex + HALF);
     return i >= start && i <= end;
   };
 
@@ -303,7 +239,7 @@ const Index = () => {
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
             <p className="text-sm text-muted-foreground">Loading your personalized feed...</p>
           </div>
-        ) : spliks.length === 0 ? (
+        ) : localSpliks.length === 0 ? (
           <Card className="max-w-md mx-auto mx-4">
             <CardContent className="p-8 text-center">
               <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -326,12 +262,12 @@ const Index = () => {
           <div className="w-full px-2 sm:px-4">
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
               <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • {pinNewestThisSession ? "Newest pinned (until reload)" : "All shuffled"}
+                Showing {localSpliks.length} videos • Personalized & cached
               </p>
             </div>
 
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {spliks.map((splik: any, index: number) => (
+              {localSpliks.map((splik: any, index: number) => (
                 <div key={`${splik.id}-${shuffleEpoch}`} className="relative">
                   <SplikCard
                     index={index}
@@ -376,10 +312,11 @@ const Index = () => {
           onClose={() => setUploadModalOpen(false)}
           onUploadComplete={() => {
             setUploadModalOpen(false);
+            // refresh but keep instant paint
             fetchDynamicFeed();
             toast({
               title: "Upload successful!",
-              description: "Your video is now live and appears at the top of feeds (until reload).",
+              description: "Your video is now live and appears at the top (until reload).",
             });
           }}
         />
