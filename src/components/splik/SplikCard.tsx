@@ -55,7 +55,9 @@ interface SplikCardProps {
 /* ---- global play/pause coordination ---- */
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
 const playExclusive = async (el: HTMLVideoElement) => {
-  if (CURRENT_PLAYING && CURRENT_PLAYING !== el) { try { CURRENT_PLAYING.pause(); } catch {} }
+  if (CURRENT_PLAYING && CURRENT_PLAYING !== el) {
+    try { CURRENT_PLAYING.pause(); } catch {}
+  }
   CURRENT_PLAYING = el;
   try { await el.play(); } catch {}
 };
@@ -75,7 +77,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  // Poster overlay state (prevents black flash)
+  // Poster overlay state
   const [posterVisible, setPosterVisible] = useState(true);
 
   const [isLiked, setIsLiked] = useState(false);
@@ -114,18 +116,18 @@ export default function SplikCard(props: SplikCardProps) {
   const END = Math.max(START, Math.min(START + 3, RAW_END));
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
-  /* ---------- URLs for sharing ---------- */
+  /* ---------- Share URLs ---------- */
+  // Human-friendly URL (what users see/click)
   const PUBLIC_SITE_URL =
-    import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin.replace(/\/$/, "");
-  const OG_FUNCTION_BASE = (import.meta.env.VITE_OG_FUNCTION_BASE || "").replace(/\/$/, "");
+    import.meta.env.VITE_PUBLIC_SITE_URL ||
+    window.location.origin.replace(/\/$/, "");
+  const humanUrl = `${PUBLIC_SITE_URL}/video/${splik.id}`;
 
-  // Human-friendly page (good for in-app copy/links)
-  const VIEW_URL = `${PUBLIC_SITE_URL}/video/${splik.id}`;
-
-  // Crawler-friendly URL (Edge Function that returns OG tags w/ correct cover)
-  const OG_URL = OG_FUNCTION_BASE
-    ? `${OG_FUNCTION_BASE}/${splik.id}`
-    : `https://izeheflwfguwinizihmx.supabase.co/functions/v1/clever-worker/${splik.id}`;
+  // Crawler URL (Edge Function that serves OG meta); only used if you want a “copy preview link”
+  const OG_FUNCTION_BASE = import.meta.env.VITE_OG_FUNCTION_BASE || "";
+  const crawlerUrl = OG_FUNCTION_BASE
+    ? `${OG_FUNCTION_BASE.replace(/\/$/, "")}/${splik.id}`
+    : humanUrl;
 
   /* ---------- helpers for smooth video transitions ---------- */
   const seekTo = (v: HTMLVideoElement, t: number) =>
@@ -509,7 +511,7 @@ export default function SplikCard(props: SplikCardProps) {
     setIsMuted(next);
   };
 
-  // Save/unsave (favorites)
+  // Save / Favorite
   const toggleFavorite = useCallback(async () => {
     if (saving) return;
 
@@ -543,21 +545,19 @@ export default function SplikCard(props: SplikCardProps) {
     }
   }, [saving, isSaved, splik.id, toast]);
 
-  /* ------ SHARE / COPY with correct URLs ------ */
-  // Copy: give the nice human page
+  /* ------ SHARE / COPY (use the human URL so users never see the white OG HTML) ------ */
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(VIEW_URL);
+    navigator.clipboard.writeText(humanUrl);
     toast({ title: "Link copied", description: "Share link copied to clipboard" });
   };
 
-  // Share: give the crawler-friendly OG URL (Edge Function) for real cover previews
   const handleShare = async () => {
     try {
       if (navigator.share) {
-        await navigator.share({ title: splik.title || "Splikz", url: OG_URL });
+        await navigator.share({ title: splik.title || "Splikz", url: humanUrl });
       } else {
         setShowShareModal(true);
-        await navigator.clipboard.writeText(OG_URL);
+        await navigator.clipboard.writeText(humanUrl);
         toast({ title: "Link copied", description: "Paste it anywhere to share" });
       }
       onShare?.();
@@ -615,7 +615,7 @@ export default function SplikCard(props: SplikCardProps) {
           </div>
         )}
 
-        {/* Poster overlay that fades when first frame paints */}
+        {/* Poster overlay that fades out when the first frame paints */}
         {splik.thumbnail_url && (
           <img
             src={splik.thumbnail_url}
@@ -641,7 +641,6 @@ export default function SplikCard(props: SplikCardProps) {
           // @ts-expect-error
           webkit-playsinline="true"
           disablePictureInPicture
-          // correct attribute:
           disableRemotePlayback
           controlsList="nodownload noplaybackrate noremoteplayback"
           preload={load ? "auto" : "metadata"}
@@ -765,7 +764,7 @@ export default function SplikCard(props: SplikCardProps) {
             <span className="text-xs font-medium">{(viewsCount ?? 0).toLocaleString()}</span>
           </div>
 
-          {/* Share (uses OG_URL for correct social card) */}
+          {/* Share */}
           <Button
             variant="ghost"
             size="sm"
@@ -816,11 +815,12 @@ export default function SplikCard(props: SplikCardProps) {
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || "Check out this video"}
-        // Provide both: OG link for social, and pretty link if your modal shows both
+        // Prefer the human link so users always land on the actual video page:
         // @ts-ignore
-        shareUrl={OG_URL}
+        shareUrl={humanUrl}
+        // Optional: provide crawlerUrl if your modal exposes a “Copy social preview link” action
         // @ts-ignore
-        viewUrl={VIEW_URL}
+        ogUrl={crawlerUrl}
       />
 
       <CommentsModal
