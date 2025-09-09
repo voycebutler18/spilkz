@@ -11,6 +11,20 @@
     <link rel="canonical" href="https://www.splikz.com/" />
     <meta name="theme-color" content="#7c3aed" />
 
+    <!-- ✅ Content Security Policy -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      base-uri 'self';
+      img-src 'self' data: blob: https:;
+      media-src 'self' data: blob: https:;
+      font-src 'self' data:;
+      style-src 'self' 'unsafe-inline';
+      script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval';
+      worker-src 'self' blob:;
+      connect-src 'self' https://*.supabase.co https://*.supabase.in wss://*.supabase.co wss://*.supabase.in ws:;
+      frame-ancestors 'self';
+    ">
+
     <!-- Open Graph (Facebook, iMessage, Discord, etc.) -->
     <meta property="og:site_name" content="Splikz" />
     <meta property="og:title" content="Splikz — Share your perfect 3-second moment" />
