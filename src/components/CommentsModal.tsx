@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// src/components/CommentsModal.tsx
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -45,8 +46,19 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Accurate count independent of what's rendered
+  const [count, setCount] = useState(0);
+
+  // Auth state (avoid “Please log in” flicker)
+  const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id: string; profile?: Profile } | null>(null);
+
   const { toast } = useToast();
+
+  // De-dup set for realtime/optimistic updates
+  const seenIds = useRef<Set<string>>(new Set());
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const buildProfilePath = (p?: Profile | null, fallbackUserId?: string) =>
     p?.username ? `/creator/${p.username}` : `/profile/${p?.id || fallbackUserId}`;
@@ -57,63 +69,100 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
   const initials = (p?: Profile | null) =>
     (displayName(p).substring(0, 2) || "UU").toUpperCase();
 
-  // Load current user + profile
+  // ---- Auth (session) -----------------------------------------------------
   useEffect(() => {
     if (!isOpen) return;
+
+    let cancelled = false;
+
     (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      if (auth.user) {
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+
+      if (data.session?.user) {
+        const uid = data.session.user.id;
         const { data: profile } = await supabase
           .from("profiles")
           .select("id,display_name,first_name,last_name,username,avatar_url")
-          .eq("id", auth.user.id)
+          .eq("id", uid)
           .maybeSingle();
-        setCurrentUser({ id: auth.user.id, profile: (profile as Profile) || undefined });
+        setCurrentUser({ id: uid, profile: (profile as Profile) || undefined });
       } else {
         setCurrentUser(null);
       }
+
+      setAuthReady(true);
     })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (session?.user) {
+        setCurrentUser((prev) => ({
+          id: session.user!.id,
+          profile: prev?.profile, // keep until we re-fetch
+        }));
+      } else {
+        setCurrentUser(null);
+      }
+      setAuthReady(true);
+    });
+
+    return () => {
+      sub?.subscription.unsubscribe();
+      cancelled = true;
+    };
   }, [isOpen]);
 
-  // Load comments (no FK join; batch fetch profiles)
+  // ---- Initial load: comments + accurate count ----------------------------
   useEffect(() => {
     if (!isOpen) return;
+
+    let cancelled = false;
+    setLoading(true);
+
     (async () => {
-      setLoading(true);
       try {
-        // 1) comments
+        // Comments (newest first for UX)
         const { data: rows, error } = await supabase
           .from("comments")
           .select("id, content, created_at, user_id")
           .eq("splik_id", splikId)
-          .order("created_at", { ascending: false }); // ?order=created_at.desc
+          .order("created_at", { ascending: false });
+
         if (error) throw error;
 
         const list = rows || [];
+        list.forEach((r: any) => seenIds.current.add(r.id)); // mark as seen
 
-        // 2) unique user ids
-        const ids = Array.from(new Set(list.map((r) => r.user_id).filter(Boolean)));
-        let profilesById = new Map<string, Profile>();
+        // Count via head request (never over-counts)
+        const { count: exact } = await supabase
+          .from("comments")
+          .select("id", { count: "exact", head: true })
+          .eq("splik_id", splikId);
 
-        if (ids.length > 0) {
-          const { data: profs, error: pErr } = await supabase
-            .from("profiles")
-            .select("id,display_name,first_name,last_name,username,avatar_url")
-            .in("id", ids);
-          if (pErr) throw pErr;
-          (profs || []).forEach((p: any) => profilesById.set(p.id, p as Profile));
+        if (!cancelled) {
+          setCount(exact ?? list.length);
+
+          // Fetch profiles in batch and hydrate
+          const ids = Array.from(new Set(list.map((r: any) => r.user_id).filter(Boolean)));
+          let profilesById = new Map<string, Profile>();
+          if (ids.length > 0) {
+            const { data: profs } = await supabase
+              .from("profiles")
+              .select("id,display_name,first_name,last_name,username,avatar_url")
+              .in("id", ids);
+            (profs || []).forEach((p: any) => profilesById.set(p.id, p as Profile));
+          }
+
+          const hydrated: CommentRow[] = list.map((c: any) => ({
+            id: c.id,
+            content: c.content,
+            created_at: c.created_at,
+            user_id: c.user_id,
+            profile: profilesById.get(c.user_id) ?? null,
+          }));
+
+          setComments(hydrated);
         }
-
-        // 3) merge
-        const hydrated: CommentRow[] = list.map((c: any) => ({
-          id: c.id,
-          content: c.content,
-          created_at: c.created_at,
-          user_id: c.user_id,
-          profile: profilesById.get(c.user_id) ?? null,
-        }));
-
-        setComments(hydrated);
       } catch (e) {
         console.error(e);
         toast({
@@ -122,11 +171,75 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
           variant: "destructive",
         });
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, splikId, toast]);
 
+  // ---- Realtime (INSERT/DELETE), de-duplicated ----------------------------
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+
+    const ch = supabase
+      .channel(`comments-${splikId}`)
+      .on(
+        "postgres_changes",
+        { schema: "public", table: "comments", event: "INSERT", filter: `splik_id=eq.${splikId}` },
+        async (payload) => {
+          const row = payload.new as any;
+          if (!row?.id || seenIds.current.has(row.id)) return;
+          seenIds.current.add(row.id);
+
+          // Fetch profile for the new commenter (small one-off)
+          let prof: Profile | null = null;
+          const { data: p } = await supabase
+            .from("profiles")
+            .select("id,display_name,first_name,last_name,username,avatar_url")
+            .eq("id", row.user_id)
+            .maybeSingle();
+          prof = (p as Profile) || null;
+
+          setComments((prev) => [
+            { id: row.id, content: row.content, created_at: row.created_at, user_id: row.user_id, profile: prof },
+            ...prev,
+          ]);
+          setCount((c) => c + 1);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { schema: "public", table: "comments", event: "DELETE", filter: `splik_id=eq.${splikId}` },
+        (payload) => {
+          const row = payload.old as any;
+          if (!row?.id || seenIds.current.has(`del:${row.id}`)) return;
+          seenIds.current.add(`del:${row.id}`);
+          setComments((prev) => prev.filter((c) => c.id !== row.id));
+          setCount((c) => Math.max(0, c - 1));
+        }
+      )
+      .subscribe();
+
+    channelRef.current = ch;
+
+    // Cleanup on close/unmount
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [isOpen, splikId]);
+
+  // ---- Submit --------------------------------------------------------------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUser) return;
@@ -142,12 +255,19 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
         })
         .select("id, content, created_at, user_id")
         .single();
+
       if (error) throw error;
 
-      setComments((prev) => [
-        { ...(data as any), profile: currentUser.profile || null },
-        ...prev,
-      ]);
+      // Optimistic add (guard against double-add when realtime arrives)
+      if (data && !seenIds.current.has(data.id)) {
+        seenIds.current.add(data.id);
+        setComments((prev) => [
+          { ...(data as any), profile: currentUser.profile || null },
+          ...prev,
+        ]);
+        setCount((c) => c + 1);
+      }
+
       setNewComment("");
       toast({ title: "Comment posted!", description: "Your comment has been added" });
     } catch (e) {
@@ -164,7 +284,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
         <DialogHeader>
           <DialogTitle>Comments</DialogTitle>
           <DialogDescription>
-            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+            {count} {count === 1 ? "comment" : "comments"}
           </DialogDescription>
         </DialogHeader>
 
@@ -207,7 +327,13 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
             )}
           </ScrollArea>
 
-          {currentUser ? (
+          {/* Composer */}
+          {!authReady ? (
+            <div className="text-center py-4 border-t text-muted-foreground text-sm">
+              <Loader2 className="h-4 w-4 inline mr-2 animate-spin" />
+              Checking session…
+            </div>
+          ) : currentUser ? (
             <form onSubmit={handleSubmit} className="flex items-center space-x-2 pt-4 border-t">
               <Link to={buildProfilePath(currentUser.profile, currentUser.id)} className="shrink-0">
                 <Avatar className="h-8 w-8">
