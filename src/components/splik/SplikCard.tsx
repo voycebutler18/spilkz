@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
-import { FollowButton } from "@/components/FollowButton";
+import FollowButton from "@/components/FollowButton";
 import ShareModal from "@/components/ShareModal";
 import CommentsModal from "@/components/CommentsModal";
 import ReportModal from "@/components/ReportModal";
@@ -44,9 +44,8 @@ interface SplikCardProps {
   onReact?: () => void;
   onShare?: () => void;
 
-  /** Optional: Home can pass these for rolling window loading; other pages can ignore. */
   index?: number;
-  shouldLoad?: boolean;                 // default = true (back-compat)
+  shouldLoad?: boolean;
   onPrimaryVisible?: (index: number) => void;
 }
 
@@ -67,7 +66,7 @@ const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c
 export default function SplikCard(props: SplikCardProps) {
   const { splik, onSplik, onReact, onShare } = props;
   const idx = props.index ?? 0;
-  const load = props.shouldLoad ?? true; // ← back-compat for pages that don’t pass it
+  const load = props.shouldLoad ?? true;
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
@@ -108,7 +107,6 @@ export default function SplikCard(props: SplikCardProps) {
     const el = cardRef.current;
     if (!video || !el) return;
 
-    // If this card is “parked” (no src yet), ensure it’s paused/muted and just observe visibility.
     if (!load) {
       pauseIfCurrent(video);
       video.muted = true;
@@ -144,10 +142,8 @@ export default function SplikCard(props: SplikCardProps) {
         entries.forEach(async (entry) => {
           const mostlyVisible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
 
-          // Always report to parent (Home uses this to slide the 5-window)
           if (mostlyVisible && props.onPrimaryVisible) props.onPrimaryVisible(idx);
-
-          if (!load) return; // don't try to play if we haven't attached src yet
+          if (!load) return;
 
           if (mostlyVisible) {
             try { if (!primedRef.current) primeToStart(); else video.currentTime = SEEK_SAFE; } catch {}
@@ -210,6 +206,7 @@ export default function SplikCard(props: SplikCardProps) {
       if (!mounted) return;
       setCurrentUser(user);
 
+      // initial likes & favorites state for this user
       if (user) {
         const { data: likeRow } = await supabase
           .from("likes").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
@@ -220,46 +217,74 @@ export default function SplikCard(props: SplikCardProps) {
           .from("favorites").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
         if (!mounted) return;
         setIsSaved(!!favRow);
-
-        const favChannel = supabase
-          .channel(`fav-${user.id}-${splik.id}`)
-          .on(
-            "postgres_changes",
-            { schema: "public", table: "favorites", event: "INSERT", filter: `user_id=eq.${user.id}` },
-            (payload) => { if (payload.new?.splik_id === splik.id) setIsSaved(true); }
-          )
-          .on(
-            "postgres_changes",
-            { schema: "public", table: "favorites", event: "DELETE", filter: `user_id=eq.${user.id}` },
-            (payload) => { if ((payload.old as any)?.splik_id === splik.id) setIsSaved(false); }
-          )
-          .subscribe();
-
-        const countersChannel = supabase
-          .channel(`splik-${splik.id}`)
-          .on(
-            "postgres_changes",
-            { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${splik.id}` },
-            (p) => {
-              const next = p.new as any;
-              setLikesCount(next.likes_count || 0);
-              setCommentsCount(next.comments_count || 0);
-            }
-          )
-          .subscribe();
-
-        return () => {
-          supabase.removeChannel(favChannel);
-          supabase.removeChannel(countersChannel);
-        };
       }
+
+      // Always refresh counts from source of truth:
+      // Likes will keep coming from spliks updates; comments we count exactly + listen to row-level changes.
+      setLikesCount(splik.likes_count || 0);
+
+      // Accurate comment count (overrides any stale value on the card)
+      const { count: initialComments } = await supabase
+        .from("comments")
+        .select("*", { count: "exact", head: true })
+        .eq("splik_id", splik.id);
+      if (!mounted) return;
+      setCommentsCount(initialComments ?? 0);
+
+      // Favorites live (per-user)
+      const favChannel = user
+        ? supabase
+            .channel(`fav-${user.id}-${splik.id}`)
+            .on(
+              "postgres_changes",
+              { schema: "public", table: "favorites", event: "INSERT", filter: `user_id=eq.${user.id}` },
+              (payload) => { if (payload.new?.splik_id === splik.id) setIsSaved(true); }
+            )
+            .on(
+              "postgres_changes",
+              { schema: "public", table: "favorites", event: "DELETE", filter: `user_id=eq.${user.id}` },
+              (payload) => { if ((payload.old as any)?.splik_id === splik.id) setIsSaved(false); }
+            )
+            .subscribe()
+        : null;
+
+      // Likes live via spliks row updates (don’t adjust comments here to avoid double-bumps)
+      const likeCountersChannel = supabase
+        .channel(`splik-likes-${splik.id}`)
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${splik.id}` },
+          (p) => {
+            const next = p.new as any;
+            if (typeof next.likes_count === "number") setLikesCount(next.likes_count);
+          }
+        )
+        .subscribe();
+
+      // Comments live via row-level changes to comments table
+      const commentsChannel = supabase
+        .channel(`comments-${splik.id}`)
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "comments", event: "INSERT", filter: `splik_id=eq.${splik.id}` },
+          () => setCommentsCount((c) => (c ?? 0) + 1)
+        )
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "comments", event: "DELETE", filter: `splik_id=eq.${splik.id}` },
+          () => setCommentsCount((c) => Math.max(0, (c ?? 0) - 1))
+        )
+        .subscribe();
+
+      return () => {
+        if (favChannel) supabase.removeChannel(favChannel);
+        supabase.removeChannel(likeCountersChannel);
+        supabase.removeChannel(commentsChannel);
+      };
     })();
 
-    setLikesCount(splik.likes_count || 0);
-    setCommentsCount(splik.comments_count || 0);
-
     return () => { mounted = false; };
-  }, [splik.id]);
+  }, [splik.id, splik.likes_count]);
 
   /* ---------- LIKE: idempotent + snap-to-DB ---------- */
   const handleSplik = async (e?: React.MouseEvent) => {
@@ -350,7 +375,7 @@ export default function SplikCard(props: SplikCardProps) {
 
   const handlePlayToggle = async () => {
     const video = videoRef.current;
-    if (!video || !load) return; // if not loaded yet, ignore taps
+    if (!video || !load) return;
     if (isPlaying) {
       if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
       pauseIfCurrent(video); setIsPlaying(false);
@@ -419,7 +444,6 @@ export default function SplikCard(props: SplikCardProps) {
 
         <video
           ref={videoRef}
-          /* attach src only when shouldLoad=true */
           src={load ? splik.video_url : undefined}
           poster={splik.thumbnail_url || undefined}
           className="block w-full h-full object-cover"
@@ -529,7 +553,12 @@ export default function SplikCard(props: SplikCardProps) {
             <span className="text-xs font-medium">{(likesCount ?? 0).toLocaleString()}</span>
           </Button>
 
-          <Button variant="ghost" size="sm" onClick={() => { setShowCommentsModal(true); onReact?.(); }} className="flex items-center space-x-2 flex-1 hover:text-blue-500">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setShowCommentsModal(true); onReact?.(); }}
+            className="flex items-center space-x-2 flex-1 hover:text-blue-500"
+          >
             <MessageCircle className="h-4 w-4" />
             <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
           </Button>
@@ -579,7 +608,7 @@ export default function SplikCard(props: SplikCardProps) {
           </Button>
         </div>
 
-        {/* DESCRIPTION (visible on all pages using this card) */}
+        {/* DESCRIPTION */}
         {splik.description && (
           <p className="mt-2 text-sm">{splik.description}</p>
         )}
