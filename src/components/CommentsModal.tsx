@@ -39,9 +39,11 @@ interface CommentsModalProps {
   onClose: () => void;
   splikId: string;
   splikTitle?: string;
+  /** Notify parent to adjust the visible count immediately (+1 on insert, -1 on delete) */
+  onCountDelta?: (delta: number) => void;
 }
 
-const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
+const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModalProps) => {
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(false);
@@ -213,6 +215,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
             ...prev,
           ]);
           setCount((c) => c + 1);
+          onCountDelta?.(1); // notify parent exactly once
         }
       )
       .on(
@@ -224,6 +227,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
           seenIds.current.add(`del:${row.id}`);
           setComments((prev) => prev.filter((c) => c.id !== row.id));
           setCount((c) => Math.max(0, c - 1));
+          onCountDelta?.(-1); // notify parent exactly once
         }
       )
       .subscribe();
@@ -237,7 +241,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
         channelRef.current = null;
       }
     };
-  }, [isOpen, splikId]);
+  }, [isOpen, splikId, onCountDelta]);
 
   // ---- Submit --------------------------------------------------------------
   const handleSubmit = async (e: React.FormEvent) => {
@@ -266,6 +270,7 @@ const CommentsModal = ({ isOpen, onClose, splikId }: CommentsModalProps) => {
           ...prev,
         ]);
         setCount((c) => c + 1);
+        onCountDelta?.(1); // instant bump on the card
       }
 
       setNewComment("");
