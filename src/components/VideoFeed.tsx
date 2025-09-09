@@ -103,52 +103,67 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  /* --------- YOUR shuffled-load effect (with profiles aliased) --------- */
+  /* --------- Enhanced load effect with seen videos tracking --------- */
   useEffect(() => {
     const load = async () => {
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select(
-            `
-            id,
-            title,
-            description,
-            video_url,
-            thumbnail_url,
-            user_id,
-            likes_count,
-            comments_count,
-            created_at,
-            trim_start,
+          .select(`
+            id, user_id, title, description, video_url, thumbnail_url,
+            trim_start, trim_end,
+            likes_count, comments_count, created_at,
             profile:profiles(
-              username,
-              first_name,
-              last_name,
-              display_name,
-              avatar_url
+              id, username, display_name, first_name, avatar_url
             )
-          `
-          );
-        // ⬆️ intentionally no .order('created_at') — we shuffle below
-
+          `); // ⚠️ no .order() so we can shuffle
+        
         if (error) throw error;
+        
+        const allVideos = [...((data as Splik[]) || [])];
+        
+        // Get seen videos from sessionStorage (persists during browser session)
+        const SEEN_KEY = "feed:seen-videos";
+        const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
+        const seenVideoIds = seenVideosJson ? new Set(JSON.parse(seenVideosJson)) : new Set<string>();
+        
+        // Filter out videos that have been seen in this session
+        const unseenVideos = allVideos.filter(video => !seenVideoIds.has(video.id));
+        
+        // If no unseen videos remain, reset the seen list and use all videos (fresh start)
+        const videosToShow = unseenVideos.length > 0 ? unseenVideos : allVideos;
+        
+        if (unseenVideos.length === 0) {
+          // Reset seen videos when we've seen everything
+          sessionStorage.removeItem(SEEN_KEY);
+          console.log("All videos seen, resetting for fresh algorithm shuffle");
+        }
 
-        // --- shuffle on each refresh (Fisher–Yates, crypto-backed when available) ---
-        const list = [ ...((data as Splik[]) || []) ];
+        // ---- Fisher–Yates shuffle (crypto-backed when available) ----
+        const list = [...videosToShow];
         const rand = () =>
-          typeof crypto !== "undefined" && (crypto as any).getRandomValues
-            ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
+          typeof crypto !== "undefined" && crypto.getRandomValues
+            ? crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32
             : Math.random();
-
+            
         for (let i = list.length - 1; i > 0; i--) {
           const j = Math.floor(rand() * (i + 1));
           [list[i], list[j]] = [list[j], list[i]];
         }
+        
+        // 👇 Ensure the first item isn't the same as the previous refresh
+        const LAST_FIRST_KEY = "feed:last-first-id";
+        const prevFirst = sessionStorage.getItem(LAST_FIRST_KEY);
+        if (list.length > 1 && prevFirst && list[0]?.id === prevFirst) {
+          const j = 1 + Math.floor(rand() * (list.length - 1));
+          [list[0], list[j]] = [list[j], list[0]];
+        }
+        if (list[0]) sessionStorage.setItem(LAST_FIRST_KEY, list[0].id);
+        
         setSpliks(list);
-        // ---------------------------------------------------------------------------
-
-        // init mute/pause UI as you already do
+        // -------------------------------------------------------------
+        
+        // init mute/pause UI for the shuffled list
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
         list.forEach((_, index) => {
@@ -157,8 +172,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         });
         setMuted(mutedState);
         setShowPauseButton(pauseState);
-
-        // preload likes + favorites…
+        
+        // preload likes + favorites for this user
         if (user?.id) {
           const [{ data: likes }, { data: favs }] = await Promise.all([
             supabase.from("likes").select("splik_id").eq("user_id", user.id),
@@ -175,6 +190,18 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
     load();
   }, [user?.id]);
+
+  // Track when videos are viewed (mark as seen)
+  const markVideoAsSeen = (videoId: string) => {
+    const SEEN_KEY = "feed:seen-videos";
+    const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
+    const seenVideoIds = seenVideosJson ? new Set(JSON.parse(seenVideosJson)) : new Set<string>();
+    
+    if (!seenVideoIds.has(videoId)) {
+      seenVideoIds.add(videoId);
+      sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seenVideoIds]));
+    }
+  };
 
   /* ---------- realtime sync for favorites (this user) ---------- */
   useEffect(() => {
@@ -219,7 +246,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay with intersection observer ========== */
+  /* ========== Enhanced Autoplay with seen tracking ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -234,6 +261,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
+          // Mark this video as seen when it comes into view
+          const splik = spliks[index];
+          if (splik) {
+            markVideoAsSeen(splik.id);
+          }
+
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
