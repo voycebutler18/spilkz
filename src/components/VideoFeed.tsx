@@ -103,14 +103,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  /* --------- Enhanced load effect with seen videos tracking --------- */
+  // remember which index to jump to on mount (randomized)
+  const initialScrollIndexRef = useRef<number | null>(null);
+
+  /* --------- Enhanced load effect with seen videos tracking + random start --------- */
   useEffect(() => {
     const load = async () => {
       try {
-        // Add cache-busting timestamp to ensure fresh data
-        const cacheBreaker = Date.now();
-        console.log("🔄 Loading videos with cache breaker:", cacheBreaker);
-        
         const { data, error } = await supabase
           .from("spliks")
           .select(`
@@ -120,42 +119,34 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
-          `); // ⚠️ no .order() so we can shuffle
-        
+          `); // no .order() — we shuffle
+
         if (error) throw error;
-        
+
         const allVideos = [...((data as Splik[]) || [])];
-        
-        // Get seen videos from sessionStorage (persists during browser session)
+
+        // session seen list
         const SEEN_KEY = "feed:seen-videos";
         const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
-        const seenVideoIds = seenVideosJson ? new Set(JSON.parse(seenVideosJson)) : new Set<string>();
-        
-        // Filter out videos that have been seen in this session
-        const unseenVideos = allVideos.filter(video => !seenVideoIds.has(video.id));
-        
-        // If no unseen videos remain, reset the seen list and use all videos (fresh start)
-        const videosToShow = unseenVideos.length > 0 ? unseenVideos : allVideos;
-        
-        if (unseenVideos.length === 0) {
-          // Reset seen videos when we've seen everything
-          sessionStorage.removeItem(SEEN_KEY);
-          console.log("All videos seen, resetting for fresh algorithm shuffle");
-        }
+        const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
 
-        // ---- Fisher–Yates shuffle (crypto-backed when available) ----
-        const list = [...videosToShow];
+        const unseen = allVideos.filter((v) => !seenVideoIds.has(v.id));
+        const pool = unseen.length > 0 ? unseen : allVideos;
+        if (unseen.length === 0) sessionStorage.removeItem(SEEN_KEY);
+
+        // Fisher–Yates (crypto-backed)
+        const list = [...pool];
         const rand = () =>
-          typeof crypto !== "undefined" && crypto.getRandomValues
-            ? crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32
+          typeof crypto !== "undefined" && (crypto as any).getRandomValues
+            ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
             : Math.random();
-            
+
         for (let i = list.length - 1; i > 0; i--) {
           const j = Math.floor(rand() * (i + 1));
           [list[i], list[j]] = [list[j], list[i]];
         }
-        
-        // 👇 Ensure the first item isn't the same as the previous refresh
+
+        // avoid repeating the same *first* card as last time
         const LAST_FIRST_KEY = "feed:last-first-id";
         const prevFirst = sessionStorage.getItem(LAST_FIRST_KEY);
         if (list.length > 1 && prevFirst && list[0]?.id === prevFirst) {
@@ -163,11 +154,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           [list[0], list[j]] = [list[j], list[0]];
         }
         if (list[0]) sessionStorage.setItem(LAST_FIRST_KEY, list[0].id);
-        
+
         setSpliks(list);
-        // -------------------------------------------------------------
-        
-        // init mute/pause UI for the shuffled list
+
+        // init mute/pause UI
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
         list.forEach((_, index) => {
@@ -176,7 +166,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         });
         setMuted(mutedState);
         setShowPauseButton(pauseState);
-        
+
+        // choose a randomized starting index to scroll to (not the same as last time)
+        if (list.length > 0) {
+          const START_IDX_KEY = "feed:last-start-index";
+          const prevIdxStr = sessionStorage.getItem(START_IDX_KEY);
+          const prevIdx = prevIdxStr ? parseInt(prevIdxStr, 10) : -1;
+
+          let initIndex = Math.floor(rand() * list.length);
+          if (list.length > 1 && initIndex === prevIdx) {
+            initIndex = (initIndex + 1) % list.length;
+          }
+          sessionStorage.setItem(START_IDX_KEY, String(initIndex));
+          initialScrollIndexRef.current = initIndex;
+        }
+
         // preload likes + favorites for this user
         if (user?.id) {
           const [{ data: likes }, { data: favs }] = await Promise.all([
@@ -195,12 +199,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     load();
   }, [user?.id]);
 
+  // After the list renders and the observer attaches, jump to the randomized start index
+  useEffect(() => {
+    if (!spliks.length) return;
+    const idx = initialScrollIndexRef.current;
+    if (idx == null) return;
+
+    // allow one tick for DOM + observer to be ready
+    const t = setTimeout(() => {
+      const root = containerRef.current;
+      if (!root) return;
+      const child = root.querySelector<HTMLElement>(`[data-index="${idx}"]`);
+      if (child) child.scrollIntoView({ behavior: "instant", block: "start" as ScrollLogicalPosition });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [spliks.length]);
+
   // Track when videos are viewed (mark as seen)
   const markVideoAsSeen = (videoId: string) => {
     const SEEN_KEY = "feed:seen-videos";
     const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
-    const seenVideoIds = seenVideosJson ? new Set(JSON.parse(seenVideosJson)) : new Set<string>();
-    
+    const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
     if (!seenVideoIds.has(videoId)) {
       seenVideoIds.add(videoId);
       sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seenVideoIds]));
@@ -265,11 +284,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
-          // Mark this video as seen when it comes into view
+          // Mark as seen
           const splik = spliks[index];
-          if (splik) {
-            markVideoAsSeen(splik.id);
-          }
+          if (splik) markVideoAsSeen(splik.id);
 
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
@@ -284,9 +301,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const startAt = Number(spliks[index]?.trim_start ?? 0);
           if (startAt > 0) video.currentTime = startAt;
 
+          // tight 3s loop at trim_start
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) video.currentTime = startAt;
           };
+          // ensure we do not stack listeners
+          video.onplaying = video.onplaying; // no-op to keep TS happy
           video.removeEventListener("timeupdate", onTimeUpdate);
           video.addEventListener("timeupdate", onTimeUpdate);
 
