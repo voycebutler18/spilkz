@@ -15,19 +15,12 @@ import ShareModal from "@/components/ShareModal";
 import CommentsModal from "@/components/CommentsModal";
 import ReportModal from "@/components/ReportModal";
 import BoostModal from "@/components/BoostModal";
+import LikesModal from "@/components/LikesModal"; // ← NEW import
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 /* ------------------------- Types ------------------------- */
 type Splik = {
@@ -38,7 +31,7 @@ type Splik = {
   video_url: string;
   thumbnail_url?: string | null;
 
-  // these may be present on the row; we’ll use them for instant display
+  // seed counts from row for instant display
   likes_count?: number | null;
   comments_count?: number | null;
 
@@ -73,85 +66,6 @@ const pauseIfCurrent = (el: HTMLVideoElement | null) => {
 };
 const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-/* ---------------- Likes list modal (read-only) ---------------- */
-type LikeRow = {
-  user_id: string;
-  created_at: string;
-  profiles?: {
-    id: string;
-    username?: string | null;
-    display_name?: string | null;
-    first_name?: string | null;
-    avatar_url?: string | null;
-  } | null;
-};
-const LikesModal: React.FC<{ isOpen: boolean; onClose: () => void; splikId: string }> = ({
-  isOpen, onClose, splikId
-}) => {
-  const [rows, setRows] = useState<LikeRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("likes")
-          .select(`
-            user_id, created_at,
-            profiles:profiles!likes_user_id_fkey(
-              id, username, display_name, first_name, avatar_url
-            )
-          `)
-          .eq("splik_id", splikId)
-          .order("created_at", { ascending: false });
-        if (error) throw error;
-        setRows(data || []);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [isOpen, splikId]);
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Likes</DialogTitle>
-        </DialogHeader>
-        <ScrollArea className="max-h-[60vh] pr-4">
-          {loading ? (
-            <div className="py-8 text-center text-muted-foreground">Loading…</div>
-          ) : rows.length === 0 ? (
-            <div className="py-8 text-center text-muted-foreground">No likes yet</div>
-          ) : (
-            <div className="space-y-3">
-              {rows.map((r) => {
-                const p = r.profiles;
-                const name = p?.display_name || p?.first_name || p?.username || "Unknown";
-                const initials = (name.substring(0, 2) || "UU").toUpperCase();
-                const href = p?.username ? `/creator/${p.username}` : `/profile/${p?.id || r.user_id}`;
-                return (
-                  <Link key={`${r.user_id}-${r.created_at}`} to={href} className="flex items-center gap-3 hover:opacity-80">
-                    <Avatar className="h-8 w-8">
-                      {p?.avatar_url ? <AvatarImage src={p.avatar_url} /> : null}
-                      <AvatarFallback>{initials}</AvatarFallback>
-                    </Avatar>
-                    <div className="text-sm">{name}</div>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
 /* ============================ Card ============================ */
 export default function SplikCard(props: SplikCardProps) {
   const { splik, onSplik, onReact, onShare } = props;
@@ -162,7 +76,6 @@ export default function SplikCard(props: SplikCardProps) {
   const [isMuted, setIsMuted] = useState(true);
 
   const [isLiked, setIsLiked] = useState(false);
-  // seed counters from row to avoid “0 flash”, then hydrate from exact counts
   const [likesCount, setLikesCount] = useState<number>(splik.likes_count ?? 0);
   const [commentsCount, setCommentsCount] = useState<number>(splik.comments_count ?? 0);
 
@@ -174,7 +87,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
-  const [showLikesModal, setShowLikesModal] = useState(false);
+  const [showLikesModal, setShowLikesModal] = useState(false); // ← NEW state
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -202,7 +115,7 @@ export default function SplikCard(props: SplikCardProps) {
       setLikesCount(likes0 ?? 0);
       setCommentsCount(comments0 ?? 0);
     } catch {
-      // keep previous values if count fails
+      // keep prior values on failure
     }
   }, [splik.id]);
 
@@ -300,7 +213,7 @@ export default function SplikCard(props: SplikCardProps) {
     }
   }, [load]);
 
-  /* ---- state: user + exact counts + realtime (recount, not +/-1) ---- */
+  /* ---- state: user + exact counts + realtime recount ---- */
   useEffect(() => {
     let mounted = true;
 
@@ -309,7 +222,6 @@ export default function SplikCard(props: SplikCardProps) {
       if (!mounted) return;
       setCurrentUser(user);
 
-      // user-specific flags
       if (user) {
         const { data: likeRow } = await supabase
           .from("likes").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
@@ -325,10 +237,8 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // hydrate exact counts right away (after showing row's values)
       await fetchExactCounts();
 
-      // realtime listeners that re-count (no drift / no double add)
       const likesChannel = supabase
         .channel(`likes-${splik.id}`)
         .on(
@@ -605,10 +515,9 @@ export default function SplikCard(props: SplikCardProps) {
             aria-pressed={isLiked}
           >
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            {/* open likes list when clicking the number */}
             <span
-              className="text-xs font-medium hover:underline"
-              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }}
+              className="text-xs font-medium cursor-pointer hover:underline underline-offset-4"
+              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }} // ← opens Likes modal
               title="View who liked"
             >
               {(likesCount ?? 0).toLocaleString()}
@@ -681,7 +590,7 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showCommentsModal}
         onClose={async () => {
           setShowCommentsModal(false);
-          await fetchExactCounts(); // keep the number in sync with what the modal actually shows
+          await fetchExactCounts(); // stay in sync with modal truth
         }}
         splikId={splik.id}
         splikTitle={splik.title}
@@ -709,6 +618,7 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showLikesModal}
         onClose={() => setShowLikesModal(false)}
         splikId={splik.id}
+        onCountDelta={(d) => setLikesCount((c) => Math.max(0, (c ?? 0) + d))} // ← live sync
       />
     </div>
   );
