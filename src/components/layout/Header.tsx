@@ -1,9 +1,8 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Menu, Home, MessageSquare, Upload } from "lucide-react";
+import { Sparkles, LogOut, Home, MessageSquare, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetTrigger, SheetContent } from "@/components/ui/sheet";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -13,6 +12,7 @@ import {
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+import RightProfileMenu from "@/components/layout/RightProfileMenu";
 
 // Type-ahead search (make sure this file exists)
 import SearchOmni from "@/components/search/SearchOmni";
@@ -24,27 +24,7 @@ type Profile = {
   avatar_url?: string | null;
 };
 
-const NavLink: React.FC<
-  React.PropsWithChildren<{ to: string; exact?: boolean; onClick?: () => void }>
-> = ({ to, exact = false, children, onClick }) => {
-  const { pathname, search } = useLocation();
-  const isActive = exact ? pathname === to : (pathname + search).startsWith(to);
-  return (
-    <Link
-      to={to}
-      onClick={onClick}
-      className={cn(
-        "text-sm font-medium text-foreground/80 hover:text-foreground transition-colors",
-        isActive && "text-foreground"
-      )}
-    >
-      {children}
-    </Link>
-  );
-};
-
 const Header: React.FC = () => {
-  const [open, setOpen] = React.useState(false); // mobile drawer
   const [user, setUser] = React.useState<any>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
   const navigate = useNavigate();
@@ -94,7 +74,6 @@ const Header: React.FC = () => {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    setOpen(false);
     navigate("/");
   };
 
@@ -221,121 +200,9 @@ const Header: React.FC = () => {
           )}
         </nav>
 
-        {/* Mobile: Drawer menu */}
-        <div className="md:hidden ml-auto">
-          <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Open menu">
-                <Menu className="h-5 w-5" />
-              </Button>
-            </SheetTrigger>
-
-            <SheetContent
-              side="left"
-              className="z-[110] w-[18rem] bg-background p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
-            >
-              <div className="flex items-center gap-2 px-4 py-3 border-b">
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
-                  <Sparkles className="h-4 w-4 text-white" />
-                </span>
-                <span className="bg-clip-text text-lg font-semibold text-transparent bg-gradient-to-r from-purple-600 to-cyan-500">
-                  Splikz
-                </span>
-              </div>
-
-              <nav className="flex flex-col gap-3 p-4">
-                {/* Primary */}
-                <NavLink to="/" exact onClick={() => setOpen(false)}>
-                  Home
-                </NavLink>
-                {user && (
-                  <NavLink to="/dashboard" onClick={() => setOpen(false)}>
-                    Creator Dashboard
-                  </NavLink>
-                )}
-                <Button
-                  className="justify-start gap-2"
-                  onClick={() => {
-                    setOpen(false);
-                    user ? navigate("/upload") : navigate("/login");
-                  }}
-                >
-                  <Upload className="h-4 w-4" /> Upload
-                </Button>
-
-                <div className="mt-2 h-px bg-border" />
-
-                {/* Browse */}
-                <div className="text-[11px] tracking-wide text-muted-foreground">
-                  Browse
-                </div>
-                <NavLink to="/explore" onClick={() => setOpen(false)}>
-                  Discover
-                </NavLink>
-                <NavLink to="/food" onClick={() => setOpen(false)}>
-                  Food
-                </NavLink>
-                <NavLink to="/brands" onClick={() => setOpen(false)}>
-                  For Brands
-                </NavLink>
-                <NavLink to="/help" onClick={() => setOpen(false)}>
-                  Help
-                </NavLink>
-                <NavLink to="/about" onClick={() => setOpen(false)}>
-                  About
-                </NavLink>
-
-                <div className="h-px bg-border" />
-
-                {/* Me */}
-                <div className="text-[11px] tracking-wide text-muted-foreground">
-                  Me
-                </div>
-                {user && (
-                  <>
-                    <NavLink
-                      to="/dashboard/favorites"
-                      onClick={() => setOpen(false)}
-                    >
-                      My Favorites
-                    </NavLink>
-                    <NavLink to="/messages" onClick={() => setOpen(false)}>
-                      Messages
-                    </NavLink>
-                  </>
-                )}
-
-                <div className="mt-2 h-px bg-border" />
-
-                {user ? (
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      await handleSignOut();
-                      setOpen(false);
-                    }}
-                    className="mt-1 justify-start"
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    Sign out
-                  </Button>
-                ) : (
-                  <>
-                    <NavLink to="/login" onClick={() => setOpen(false)}>
-                      Log in
-                    </NavLink>
-                    <Button
-                      asChild
-                      className="bg-gradient-to-r from-purple-600 to-cyan-500 text-white"
-                      onClick={() => setOpen(false)}
-                    >
-                      <Link to="/signup">Sign up</Link>
-                    </Button>
-                  </>
-                )}
-              </nav>
-            </SheetContent>
-          </Sheet>
+        {/* Right actions for mobile */}
+        <div className="flex items-center gap-1 md:hidden ml-auto">
+          <RightProfileMenu />
         </div>
       </div>
     </header>
