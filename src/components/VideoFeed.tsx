@@ -34,10 +34,14 @@ interface Splik {
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
-  profiles?: {
-    first_name?: string | null;
-    last_name?: string | null;
+  trim_end?: number | null;
+  /** joined profile for the creator */
+  profile?: {
+    id?: string;
     username?: string | null;
+    display_name?: string | null;
+    first_name?: string | null;
+    avatar_url?: string | null;
   } | null;
 }
 
@@ -55,7 +59,10 @@ interface VideoFeedProps {
 
 /* ---------- helpers ---------- */
 const nameFor = (s: Splik) =>
-  (s.profiles?.first_name || s.profiles?.username || "Anonymous User")!.toString();
+  (s.profile?.display_name ||
+    s.profile?.first_name ||
+    s.profile?.username ||
+    "Anonymous User")!.toString();
 
 const initialsFor = (s: Splik) =>
   nameFor(s)
@@ -75,7 +82,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   // social UI
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
-  // guard to prevent double-firing while request in-flight
   const [likePendingIds, setLikePendingIds] = useState<Set<string>>(new Set());
 
   // favorites UI
@@ -101,13 +107,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select(
-            "id,title,description,video_url,thumbnail_url,user_id,likes_count,comments_count,created_at,trim_start,profiles(username,first_name,last_name)"
-          )
+          .select(`
+            id, user_id, title, description, video_url, thumbnail_url,
+            trim_start, trim_end,
+            likes_count, comments_count,
+            profile:profiles(
+              id, username, display_name, first_name, avatar_url
+            ),
+            created_at
+          `)
           .order("created_at", { ascending: false });
 
         if (error) throw error;
-        setSpliks(data || []);
+        setSpliks((data as Splik[]) || []);
 
         // init mute/pause UI
         const mutedState: Record<number, boolean> = {};
@@ -306,7 +318,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return;
     }
 
-    // prevent double-click / double-render races
     if (likePendingIds.has(splikId)) return;
     setLikePendingIds((prev) => new Set(prev).add(splikId));
 
@@ -319,7 +330,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return ns;
     });
 
-    // optimistic counter change in local spliks
+    // optimistic counter change
     setSpliks((prev) =>
       prev.map((s) =>
         s.id === splikId
@@ -340,7 +351,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           .eq("splik_id", splikId);
         if (error) throw error;
       } else {
-        // idempotent like: respects unique (user_id,splik_id)
         const { error } = await supabase
           .from("likes")
           .upsert(
@@ -350,7 +360,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (error) throw error;
       }
 
-      // snap to the real count from DB so UI can’t drift
+      // snap to the real count from DB
       const { count } = await supabase
         .from("likes")
         .select("*", { head: true, count: "exact" })
@@ -508,7 +518,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               {/* header */}
               <div className="flex items-center justify-between p-3 border-b">
                 <Link
-                  to={`/creator/${s.profiles?.username || s.user_id}`}
+                  to={`/creator/${s.profile?.username || s.user_id}`}
                   className="flex items-center gap-3 hover:opacity-80 transition-opacity"
                 >
                   <Avatar className="h-8 w-8">
