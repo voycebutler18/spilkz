@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   Heart, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles,
+  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles, Eye,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ type Splik = {
   // seed counts from row for instant display
   likes_count?: number | null;
   comments_count?: number | null;
+  views_count?: number | null; // ← NEW (seed if your row has it)
 
   profile?: any;
   mood?: string | null;
@@ -78,6 +79,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState<number>(splik.likes_count ?? 0);
   const [commentsCount, setCommentsCount] = useState<number>(splik.comments_count ?? 0);
+  const [viewsCount, setViewsCount] = useState<number>(splik.views_count ?? 0); // ← NEW
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -92,11 +94,10 @@ export default function SplikCard(props: SplikCardProps) {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const primedRef = useRef(false);
 
-  // ✨ No-black-flash poster overlay controls
-  const [posterVisible, setPosterVisible] = useState(true);
-  const primedRef = useRef(false);                 // already sought to SEEK_SAFE?
-  const primePromiseRef = useRef<Promise<void> | null>(null);
+  // prevent double-count in one session
+  const hasCountedViewRef = useRef(false);
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -112,122 +113,153 @@ export default function SplikCard(props: SplikCardProps) {
   /* ---------- helpers ---------- */
   const fetchExactCounts = useCallback(async () => {
     try {
-      const [{ count: likes0 }, { count: comments0 }] = await Promise.all([
+      const [likesQ, commentsQ] = await Promise.all([
         supabase.from("likes").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
         supabase.from("comments").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
       ]);
-      setLikesCount(likes0 ?? 0);
-      setCommentsCount(comments0 ?? 0);
+      if (!likesQ.error) setLikesCount(likesQ.count ?? 0);
+      if (!commentsQ.error) setCommentsCount(commentsQ.count ?? 0);
+
+      // Views: try table count; if table missing, keep existing / seed
+      try {
+        const viewsQ = await supabase
+          .from("views")
+          .select("*", { count: "exact", head: true })
+          .eq("splik_id", splik.id);
+        if (!viewsQ.error && typeof viewsQ.count === "number") {
+          setViewsCount(viewsQ.count);
+        } else if (typeof splik.views_count === "number") {
+          setViewsCount(splik.views_count ?? 0);
+        }
+      } catch {
+        if (typeof splik.views_count === "number") setViewsCount(splik.views_count ?? 0);
+      }
     } catch {
       // keep prior values on failure
     }
-  }, [splik.id]);
+  }, [splik.id, splik.views_count]);
 
-  // Smooth seek helper: wait for seek to land to avoid black frame
-  const seekTo = (v: HTMLVideoElement, t: number) =>
-    new Promise<void>((resolve) => {
-      const done = () => { v.removeEventListener("seeked", done); resolve(); };
-      v.addEventListener("seeked", done, { once: true });
-      try { v.currentTime = t; } catch { resolve(); }
-    });
-
-  // Prime once to the first frame we'll show
-  const primeToStart = async (v: HTMLVideoElement) => {
-    if (primedRef.current) return;
-    if (v.readyState < 1) {
-      await new Promise<void>((res) => {
-        const on = () => { v.removeEventListener("loadedmetadata", on); res(); };
-        v.addEventListener("loadedmetadata", on, { once: true });
-      });
-    }
-    await seekTo(v, SEEK_SAFE);
-    primedRef.current = true;
-  };
-
-  // Fade poster away only after the first painted frame
-  const hidePosterWhenPainted = (v: HTMLVideoElement) => {
-    // @ts-ignore
-    if (v.requestVideoFrameCallback) {
-      // @ts-ignore
-      v.requestVideoFrameCallback(() => setPosterVisible(false));
-    } else {
-      const onPlaying = () => { setPosterVisible(false); v.removeEventListener("playing", onPlaying); };
-      v.addEventListener("playing", onPlaying, { once: true });
+  const markViewedInSession = (id: string) => {
+    try {
+      const key = "views:counted";
+      const raw = sessionStorage.getItem(key);
+      const set = raw ? new Set<string>(JSON.parse(raw)) : new Set<string>();
+      if (set.has(id)) return true;
+      set.add(id);
+      sessionStorage.setItem(key, JSON.stringify(Array.from(set)));
+      return false;
+    } catch {
+      return false;
     }
   };
+
+  const registerView = useCallback(async () => {
+    if (hasCountedViewRef.current) return;
+
+    // session de-dupe
+    const already = markViewedInSession(splik.id);
+    if (already) {
+      hasCountedViewRef.current = true;
+      return;
+    }
+
+    hasCountedViewRef.current = true;
+
+    // Optimistic +1
+    setViewsCount((v) => v + 1);
+
+    try {
+      // Prefer RPC if you have it
+      const rpc = await supabase.rpc("increment_view_count", { p_splik_id: splik.id });
+      if (rpc.error) {
+        // fallback to plain insert (create a `views` table with RLS if needed)
+        const { data: { user } } = await supabase.auth.getUser();
+        const ins = await supabase.from("views").insert({
+          splik_id: splik.id,
+          user_id: user?.id ?? null,
+        });
+        if (ins.error) throw ins.error;
+      }
+      // Snap to truth (best effort)
+      fetchExactCounts();
+    } catch {
+      // keep optimistic value; background recount will fix later
+    }
+  }, [splik.id, fetchExactCounts]);
 
   /* ---- autoplay / visibility ---- */
   useEffect(() => {
-    const v = videoRef.current;
+    const video = videoRef.current;
     const el = cardRef.current;
-    if (!v || !el) return;
+    if (!video || !el) return;
 
     if (!load) {
-      pauseIfCurrent(v);
-      v.muted = true;
-      v.setAttribute("muted", "true");
+      pauseIfCurrent(video);
+      video.muted = true;
       setIsPlaying(false);
     }
 
-    v.playsInline = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "true");
     // @ts-expect-error
-    v.setAttribute("webkit-playsinline", "true");
-    v.muted = isMuted;
-    if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
-    v.controls = false;
+    video.setAttribute("webkit-playsinline", "true");
+    video.muted = isMuted;
+    if (isMuted) video.setAttribute("muted", "true");
+    video.controls = false;
 
     const onVisibilityChange = () => {
       if (document.hidden) {
-        pauseIfCurrent(v);
+        pauseIfCurrent(video);
         setIsPlaying(false);
-        setPosterVisible(true);
       }
+    };
+
+    const primeToStart = () => {
+      if (!video.duration || video.duration <= 0) return;
+      try { video.currentTime = SEEK_SAFE; primedRef.current = true; } catch {}
+    };
+
+    const onLoadedMetadata = () => {
+      if (load) primeToStart();
     };
 
     const io = new IntersectionObserver(
       async (entries) => {
-        for (const entry of entries) {
+        entries.forEach(async (entry) => {
           const mostlyVisible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
           if (mostlyVisible && props.onPrimaryVisible) props.onPrimaryVisible(idx);
-          if (!load) continue;
+          if (!load) return;
 
           if (mostlyVisible) {
-            try {
-              if (!primedRef.current) {
-                const p = primePromiseRef.current || primeToStart(v);
-                primePromiseRef.current = p;
-                await p;
-              }
-            } catch {}
+            // count a view once per session
+            registerView();
 
-            try {
-              await playExclusive(v);
-              setIsPlaying(true);
-              hidePosterWhenPainted(v); // fade poster after first real frame
-            } catch {
-              setIsPlaying(false);
-            }
+            try { if (!primedRef.current) primeToStart(); else video.currentTime = SEEK_SAFE; } catch {}
+            video.muted = isMuted;
+            if (isMuted) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
+            try { await playExclusive(video); setIsPlaying(true); } catch { setIsPlaying(false); }
           } else {
-            pauseIfCurrent(v);
-            // park the head at SEEK_SAFE so next play is instant
-            try { if (primedRef.current) v.currentTime = SEEK_SAFE; } catch {}
+            pauseIfCurrent(video);
+            video.muted = true; video.setAttribute("muted", "true");
             setIsPlaying(false);
-            setPosterVisible(true);
           }
-        }
+        });
       },
       { threshold: [0, 0.25, 0.5, 0.7, 1], rootMargin: "0px 0px -10% 0px" }
     );
 
     io.observe(el);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
 
     return () => {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      pauseIfCurrent(v);
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
+      pauseIfCurrent(video);
+      primedRef.current = false;
     };
-  }, [isMuted, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
+  }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible, registerView]);
 
   // enforce 3s loop
   useEffect(() => {
@@ -242,17 +274,15 @@ export default function SplikCard(props: SplikCardProps) {
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
   }, [START, END, SEEK_SAFE]);
 
-  // IMPORTANT: DO NOT force v.load() when shouldLoad toggles (causes black flash)
   useEffect(() => {
-    if (!load) {
+    if (load) {
+      primedRef.current = false;
+      hasCountedViewRef.current = false; // reset when card unloads/reloads
+      try { videoRef.current?.load(); } catch {}
+    } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
-      setPosterVisible(true);
-      return;
     }
-    // new item entering the load window: allow re-prime on next visibility
-    primedRef.current = false;
-    primePromiseRef.current = null;
   }, [load]);
 
   /* ---- state: user + exact counts + realtime recount ---- */
@@ -299,9 +329,20 @@ export default function SplikCard(props: SplikCardProps) {
         )
         .subscribe();
 
+      // Views realtime (optional; safe if table missing—just won't fire)
+      const viewsChannel = supabase
+        .channel(`views-${splik.id}`)
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "views", event: "INSERT", filter: `splik_id=eq.${splik.id}` },
+          fetchExactCounts
+        )
+        .subscribe();
+
       return () => {
         supabase.removeChannel(likesChannel);
         supabase.removeChannel(commentsChannel);
+        supabase.removeChannel(viewsChannel);
       };
     })();
 
@@ -347,27 +388,22 @@ export default function SplikCard(props: SplikCardProps) {
   };
 
   const handlePlayToggle = async () => {
-    const v = videoRef.current;
-    if (!v || !load) return;
+    const video = videoRef.current;
+    if (!video || !load) return;
     if (isPlaying) {
-      if (isMuted) { v.muted = false; v.removeAttribute("muted"); setIsMuted(false); return; }
-      pauseIfCurrent(v); setIsPlaying(false);
-      setPosterVisible(true);
+      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
+      pauseIfCurrent(video); setIsPlaying(false);
     } else {
-      try {
-        if (!primedRef.current) { await primeToStart(v); }
-      } catch {}
-      if (isMuted) { v.muted = false; v.removeAttribute("muted"); setIsMuted(false); }
-      await playExclusive(v);
-      setIsPlaying(true);
-      hidePosterWhenPainted(v);
+      try { video.currentTime = SEEK_SAFE; } catch {}
+      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); }
+      await playExclusive(video); setIsPlaying(true);
     }
   };
 
   const toggleMute = () => {
-    const v = videoRef.current; if (!v) return;
-    const next = !isMuted; v.muted = next;
-    if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
+    const video = videoRef.current; if (!video) return;
+    const next = !isMuted; video.muted = next;
+    if (next) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
     setIsMuted(next);
   };
 
@@ -424,8 +460,6 @@ export default function SplikCard(props: SplikCardProps) {
         onClick={handlePlayToggle}
       >
         <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
-
-        {/* label */}
         <div className="absolute top-2 left-3 z-30 pointer-events-none">
           <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
             <Sparkles className="h-4 w-4 text-white/80" />
@@ -454,24 +488,11 @@ export default function SplikCard(props: SplikCardProps) {
           </div>
         )}
 
-        {/* ✨ Poster overlay that fades away only after first frame paints */}
-        {splik.thumbnail_url && (
-          <img
-            src={splik.thumbnail_url}
-            alt=""
-            className={cn(
-              "absolute inset-0 w-full h-full object-cover transition-opacity duration-150 pointer-events-none z-[12]",
-              posterVisible ? "opacity-100" : "opacity-0"
-            )}
-            draggable={false}
-          />
-        )}
-
         <video
           ref={videoRef}
           src={load ? splik.video_url : undefined}
           poster={splik.thumbnail_url || undefined}
-          className="block w-full h-full object-cover z-[10]"
+          className="block w-full h-full object-cover"
           autoPlay={false}
           loop={false}
           muted={isMuted}
@@ -482,8 +503,9 @@ export default function SplikCard(props: SplikCardProps) {
           disablePictureInPicture
           disableRemotePlayback
           controlsList="nodownload noplaybackrate noremoteplayback"
-          preload={load ? "auto" : "metadata"}   // pre-decode in-window videos
+          preload={load ? "metadata" : "none"}
           data-splik-id={splik.id}
+          data-video-id={splik.id}
         />
 
         {/* Mute/Unmute */}
@@ -538,7 +560,7 @@ export default function SplikCard(props: SplikCardProps) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={5}>
-              {currentUser?.id === splik.user_id && (
+              {isOwner && (
                 <DropdownMenuItem onClick={() => setShowBoostModal(true)} className="cursor-pointer text-primary">
                   <Rocket className="h-4 w-4 mr-2" />
                   Promote Video
@@ -565,47 +587,53 @@ export default function SplikCard(props: SplikCardProps) {
 
         {/* ACTIONS */}
         <div className="flex items-center justify-between gap-1">
-          {/* Like toggle (heart) */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleSplik}
-            disabled={likePending}
-            className={cn("flex items-center gap-2 transition-colors",
-              isLiked && "text-red-500 hover:text-red-600")}
-            aria-pressed={isLiked}
-          >
-            <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            <span
-              className="text-xs font-medium cursor-pointer hover:underline underline-offset-4"
-              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }}
-              title="View who liked"
+          {/* Left cluster: Like, Comments, Views, Share */}
+          <div className="flex items-center gap-1 sm:gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSplik}
+              disabled={likePending}
+              className={cn("flex items-center gap-2 transition-colors",
+                isLiked && "text-red-500 hover:text-red-600")}
+              aria-pressed={isLiked}
             >
-              {(likesCount ?? 0).toLocaleString()}
-            </span>
-          </Button>
+              <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
+              <span
+                className="text-xs font-medium cursor-pointer hover:underline underline-offset-4"
+                onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }}
+                title="View who liked"
+              >
+                {(likesCount ?? 0).toLocaleString()}
+              </span>
+            </Button>
 
-          {/* Comments */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { setShowCommentsModal(true); onReact?.(); }}
-            className="flex items-center gap-2 hover:text-blue-500"
-          >
-            <MessageCircle className="h-4 w-4" />
-            <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
-          </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setShowCommentsModal(true); onReact?.(); }}
+              className="flex items-center gap-2 hover:text-blue-500"
+            >
+              <MessageCircle className="h-4 w-4" />
+              <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
+            </Button>
 
-          {/* Share */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { setShowShareModal(true); onShare?.(); }}
-            className="flex items-center gap-2 hover:text-green-500"
-          >
-            <Share2 className="h-4 w-4" />
-            <span className="text-xs font-medium">Share</span>
-          </Button>
+            {/* Views (read-only) */}
+            <div className="flex items-center gap-1 px-2 py-1 text-muted-foreground">
+              <Eye className="h-4 w-4" />
+              <span className="text-xs font-medium">{(viewsCount ?? 0).toLocaleString()}</span>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { setShowShareModal(true); onShare?.(); }}
+              className="flex items-center gap-2 hover:text-green-500"
+            >
+              <Share2 className="h-4 w-4" />
+              <span className="text-xs font-medium">Share</span>
+            </Button>
+          </div>
 
           {/* Save */}
           <Button
@@ -622,8 +650,10 @@ export default function SplikCard(props: SplikCardProps) {
           </Button>
         </div>
 
-        {/* 🔤 TITLE first, then description (both optional) */}
-        {splik.title && <p className="mt-2 text-sm font-semibold">{splik.title}</p>}
+        {/* Title & Description */}
+        {splik.title && (
+          <p className="mt-2 text-sm font-semibold">{splik.title}</p>
+        )}
         {splik.description && <p className="mt-1 text-sm">{splik.description}</p>}
 
         {splik.mood && (
@@ -634,7 +664,7 @@ export default function SplikCard(props: SplikCardProps) {
           </div>
         )}
 
-        {(likesCount ?? 0) === 0 && (commentsCount ?? 0) === 0 && (
+        {(likesCount ?? 0) === 0 && (commentsCount ?? 0) === 0 && (viewsCount ?? 0) === 0 && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
             Be the first to react! 💜
           </div>
@@ -653,7 +683,7 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showCommentsModal}
         onClose={async () => {
           setShowCommentsModal(false);
-          await fetchExactCounts(); // stay in sync with modal truth
+          await fetchExactCounts();
         }}
         splikId={splik.id}
         splikTitle={splik.title}
@@ -676,7 +706,6 @@ export default function SplikCard(props: SplikCardProps) {
         />
       )}
 
-      {/* Likes list (works logged out) */}
       <LikesModal
         isOpen={showLikesModal}
         onClose={() => setShowLikesModal(false)}
