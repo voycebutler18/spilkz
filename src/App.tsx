@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
 
-// Pages (site)
+// Pages
 import Splash from "./pages/Splash";
 import Index from "./pages/Index";
 import About from "./pages/About";
@@ -48,10 +48,8 @@ import CreatorProfile from "./pages/CreatorProfile";
 import VideoPage from "./pages/VideoPage";
 import Search from "./pages/Search";
 
-// Messaging - NEW COMBINED COMPONENT
+// Messaging
 import CombinedMessages from "./pages/CombinedMessages";
-
-// Mobile fallback messaging (keep for mobile responsiveness)
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
 
@@ -63,31 +61,24 @@ import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalConte
 
 const queryClient = new QueryClient();
 
-/** Back-compat: /upload opens the global upload modal and then routes home */
 function UploadRoute() {
   const { openUpload, isOpen } = useUploadModal();
   const navigate = useNavigate();
-
   useEffect(() => {
     openUpload({ onCompleteNavigateTo: "/dashboard" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   useEffect(() => {
     if (!isOpen) {
       const t = setTimeout(() => navigate("/", { replace: true }), 150);
       return () => clearTimeout(t);
     }
   }, [isOpen, navigate]);
-
   return null;
 }
 
-/** Force the window to the top on route changes (fixes "pages start at bottom") */
 function ScrollToTop() {
   const { pathname, hash } = useLocation();
-
-  // Set manual restoration once
   useEffect(() => {
     try {
       if ("scrollRestoration" in window.history) {
@@ -95,26 +86,19 @@ function ScrollToTop() {
       }
     } catch {}
   }, []);
-
   useEffect(() => {
-    // Keep anchor links (/#section) working
     if (hash) return;
-
-    // Reset window + doc scroll
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
   }, [pathname, hash]);
-
   return null;
 }
 
-/** Hook to detect desktop for routing the messages experience */
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
     typeof window !== "undefined" ? window.matchMedia("(min-width: 1024px)").matches : true
   );
-
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -122,11 +106,9 @@ function useIsDesktop() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
-
   return isDesktop;
 }
 
-/** Route element that picks desktop (combined) vs mobile (separate pages) */
 function MessagesIndexRoute() {
   const isDesktop = useIsDesktop();
   return isDesktop ? <CombinedMessages /> : <MessagesInbox />;
@@ -143,12 +125,10 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        {/* 🔝 ensure new routes start at the top */}
         <ScrollToTop />
-
         <UploadModalProvider>
           <Routes>
-            {/* Auth screens (no layout) */}
+            {/* Auth (no layout) */}
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
@@ -157,13 +137,14 @@ const App = () => (
             {/* Admin (no public layout) */}
             <Route path="/admin" element={<Admin />} />
 
-            {/* Back-compat upload route (opens modal) */}
+            {/* Back-compat upload (no layout) */}
             <Route path="/upload" element={<UploadRoute />} />
 
-            {/* Site with global layout */}
+            {/* Splash OUTSIDE layout to avoid heavy/global code before it renders */}
+            <Route path="/" element={<Splash />} />
+
+            {/* Everything else uses the global layout */}
             <Route element={<AppLayout />}>
-              {/* Core */}
-              <Route path="/" element={<Splash />} />
               <Route path="/home" element={<Index />} />
               <Route path="/about" element={<About />} />
               <Route path="/explore" element={<Explore />} />
@@ -185,22 +166,14 @@ const App = () => (
               <Route path="/profile/:id" element={<Profile />} />
               <Route path="/creator/:slug" element={<CreatorProfile />} />
               <Route path="/video/:id" element={<VideoPage />} />
-              <Route path="/search" element={<Search />} />
               <Route path="/splik/:id" element={<SplikPage />} />
+              <Route path="/search" element={<Search />} />
 
-              {/* Messaging - Responsive Layout */}
+              {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
               <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
 
-              {/* Legal / community */}
-              <Route path="/terms" element={<Terms />} />
-              <Route path="/privacy" element={<Privacy />} />
-              <Route path="/dmca" element={<DMCA />} />
-              <Route path="/guidelines" element={<Guidelines />} />
-              <Route path="/safety" element={<Safety />} />
-              <Route path="/accessibility" element={<Accessibility />} />
-
-              {/* 404 (with layout) */}
+              {/* 404 */}
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
