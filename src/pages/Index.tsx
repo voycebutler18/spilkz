@@ -1,6 +1,5 @@
 // src/pages/Index.tsx
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import SplikCard from "@/components/splik/SplikCard";
@@ -74,7 +73,6 @@ const Index = () => {
 
   const feedStore = useFeedStore();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   useEffect(() => {
     document.title = "Splikz - Short Video Platform";
@@ -106,7 +104,11 @@ const Index = () => {
 
     if (cached.length) {
       // No newest info here, so we just shuffle the cached feed to avoid same-first on refresh
-      const arranged = arrangeFeedOnce({ feed: cached, newestId: null, userId: user?.id });
+      const arranged = arrangeFeedOnce({
+        feed: cached,
+        newestId: null,
+        userId: user?.id,
+      });
       setLocalSpliks(arranged);
       setLoading(false);
       setShuffleEpoch(Date.now());
@@ -120,7 +122,11 @@ const Index = () => {
   // If Splash populated after this page mounted, we still re-arrange to avoid identical first item
   useEffect(() => {
     if (feedStore.feed.length) {
-      const arranged = arrangeFeedOnce({ feed: feedStore.feed, newestId: null, userId: user?.id });
+      const arranged = arrangeFeedOnce({
+        feed: feedStore.feed,
+        newestId: null,
+        userId: user?.id,
+      });
       setLocalSpliks(arranged);
       setLoading(false);
       setShuffleEpoch(Date.now());
@@ -128,7 +134,10 @@ const Index = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedStore.feed]);
 
-  const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
+  const fetchDynamicFeed = async (
+    showToast = false,
+    forceNewShuffle = false
+  ) => {
     if (showToast) setRefreshing(true);
     else setLoading(true);
 
@@ -200,7 +209,9 @@ const Index = () => {
       }
 
       // --- Attach profiles in ONE query (optional) ---
-      const ids = Array.from(new Set(feed.map((s: any) => s.user_id).filter(Boolean)));
+      const ids = Array.from(
+        new Set(feed.map((s: any) => s.user_id).filter(Boolean))
+      );
       let withProfiles = feed;
       if (ids.length > 0) {
         try {
@@ -210,8 +221,13 @@ const Index = () => {
             .in("id", ids);
           if (pErr) throw pErr;
 
-          const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
-          withProfiles = feed.map((s: any) => ({ ...s, profile: pmap.get(s.user_id) }));
+          const pmap = new Map(
+            (profilesData || []).map((p: any) => [p.id, p])
+          );
+          withProfiles = feed.map((s: any) => ({
+            ...s,
+            profile: pmap.get(s.user_id),
+          }));
         } catch (e) {
           console.warn("Profiles batch fetch failed; proceeding without profiles:", e);
           withProfiles = feed;
@@ -220,7 +236,11 @@ const Index = () => {
 
       // --- Arrange: pin newest ONCE per session, else shuffle ---
       const newestId = allSpliks?.[0]?.id ?? null;
-      const arranged = arrangeFeedOnce({ feed: withProfiles, newestId, userId: user?.id || null });
+      const arranged = arrangeFeedOnce({
+        feed: withProfiles,
+        newestId,
+        userId: user?.id || null,
+      });
 
       setShuffleEpoch(Date.now());
       setLocalSpliks(arranged);
@@ -240,7 +260,9 @@ const Index = () => {
         arranged
           .filter((s: any) => s.isBoosted)
           .forEach((s: any) =>
-            supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
+            supabase
+              .rpc("increment_boost_impression", { p_splik_id: s.id })
+              .catch(() => {})
           );
       } catch (e) {
         console.warn("Impression RPC failed (ignored):", e);
@@ -305,14 +327,19 @@ const Index = () => {
         toast({ title: "Link copied!", description: "Copied to clipboard" });
       }
     } catch {
-      toast({ title: "Failed to share", description: "Please try again", variant: "destructive" });
+      toast({
+        title: "Failed to share",
+        description: "Please try again",
+        variant: "destructive",
+      });
     }
   };
 
   // compute which indices should have a real <video src=...> attached
   const shouldLoadIndex = (i: number) => {
     if (!localSpliks.length) return false;
-    if (activeIndex <= HALF) return i <= Math.min(localSpliks.length - 1, LOAD_WINDOW - 1);
+    if (activeIndex <= HALF)
+      return i <= Math.min(localSpliks.length - 1, LOAD_WINDOW - 1);
     const start = Math.max(0, activeIndex - HALF);
     const end = Math.min(localSpliks.length - 1, activeIndex + HALF);
     return i >= start && i <= end;
@@ -330,7 +357,9 @@ const Index = () => {
             disabled={refreshing || loading}
             className="text-xs text-muted-foreground hover:text-primary transition-colors"
           >
-            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
+            />
             {refreshing ? "Updating..." : "Update"}
           </Button>
           <div className="h-4 w-px bg-border" />
@@ -339,9 +368,11 @@ const Index = () => {
             size="sm"
             onClick={refreshFeed}
             disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover{text-primary transition-colors"
+            className="text-xs text-muted-foreground hover:text-primary transition-colors"
           >
-            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
+            />
             {refreshing ? "Shuffling..." : "Shuffle"}
           </Button>
         </div>
@@ -352,14 +383,18 @@ const Index = () => {
         {loading ? (
           <div className="flex flex-col items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-muted-foreground">Loading your personalized feed...</p>
+            <p className="text-sm text-muted-foreground">
+              Loading your personalized feed...
+            </p>
           </div>
         ) : localSpliks.length === 0 ? (
           <Card className="max-w-md mx-auto mx-4">
             <CardContent className="p-8 text-center">
               <Play className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
-              <p className="text-muted-foreground mb-4">Be the first to post a splik!</p>
+              <p className="text-muted-foreground mb-4">
+                Be the first to post a splik!
+              </p>
               <div className="flex flex-col sm:flex-row gap-2 justify-center">
                 <Button onClick={refreshContent} variant="outline" disabled={refreshing}>
                   {refreshing ? "Loading..." : "Get Latest"}
@@ -397,7 +432,9 @@ const Index = () => {
               ))}
 
               <div className="text-center py-6 border-t border-border/40">
-                <p className="text-sm text-muted-foreground mb-3">Want to see more?</p>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Want to see more?
+                </p>
                 <div className="flex flex-col sm:flex-row gap-2 justify-center">
                   <Button
                     onClick={refreshContent}
@@ -405,11 +442,19 @@ const Index = () => {
                     disabled={refreshing}
                     className="flex items-center gap-2"
                   >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                    <RefreshCw
+                      className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                    />
                     {refreshing ? "Loading..." : "Get Latest"}
                   </Button>
-                  <Button onClick={refreshFeed} disabled={refreshing} className="flex items-center gap-2">
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                  <Button
+                    onClick={refreshFeed}
+                    disabled={refreshing}
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw
+                      className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                    />
                     {refreshing ? "Shuffling..." : "Shuffle Feed"}
                   </Button>
                   <Button onClick={handleUploadClick}>Upload</Button>
@@ -431,7 +476,8 @@ const Index = () => {
             fetchDynamicFeed();
             toast({
               title: "Upload successful!",
-              description: "Your video is now live (pinned once), then joins the shuffle.",
+              description:
+                "Your video is now live (pinned once), then joins the shuffle.",
             });
           }}
         />
