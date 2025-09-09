@@ -12,7 +12,6 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: any) {
-    // You can send this to Sentry/Logflare/etc.
     console.error("[App ErrorBoundary] error:", error, "info:", info);
   }
 
@@ -25,18 +24,21 @@ export default class ErrorBoundary extends Component<Props, State> {
           minHeight: "100vh",
           display: "grid",
           placeItems: "center",
-          padding: "24px",
+          padding: 24,
           background: "#0b0b0f",
           color: "#eaeaea",
           textAlign: "center",
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+          fontFamily:
+            "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
         }}
       >
         <div style={{ maxWidth: 680 }}>
-          <h1 style={{ fontSize: 22, marginBottom: 8 }}>Something went wrong 😵‍💫</h1>
+          <h1 style={{ fontSize: 22, marginBottom: 8 }}>
+            Something went wrong 😵‍💫
+          </h1>
           <p style={{ opacity: 0.85, marginBottom: 16 }}>
-            The UI crashed while rendering. Check the browser console for the error right
-            above the <code>[App ErrorBoundary]</code> line.
+            The UI crashed while rendering. Check the console near the line
+            starting with <code>[App ErrorBoundary]</code>.
           </p>
           {this.state.error?.message ? (
             <pre
