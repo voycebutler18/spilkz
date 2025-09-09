@@ -34,10 +34,10 @@ interface Profile {
 const isUuid = (v: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 
-export function CreatorProfile() {
+export default function CreatorProfile() {
   const { slug = "" } = useParams();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams(); // ⬅️ read ?video=<id>
+  const [searchParams] = useSearchParams();
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
@@ -48,7 +48,6 @@ export function CreatorProfile() {
   const [showFollowersList, setShowFollowersList] = useState(false);
   const [showFollowingList, setShowFollowingList] = useState(false);
 
-  // keep a single live subscription; clean up when profile id changes or on unmount
   const unsubRef = useRef<null | (() => void)>(null);
 
   useEffect(() => {
@@ -57,16 +56,35 @@ export function CreatorProfile() {
     });
   }, []);
 
-  // Resolve the slug to a profile (username first, then id). Canonicalize to /creator/:username.
+  // 🔧 Robustly resolve slug:
+  // - If slug is empty and the user is logged in, redirect to their canonical profile
+  // - Try username (case-insensitive), then id (uuid)
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
-      if (!slug || !slug.trim()) {
+      const s = (slug || "").trim();
+
+      // If the route is /creator/ (no slug), send the logged-in user to their profile
+      if (!s) {
+        const { data: session } = await supabase.auth.getSession();
+        const uid = session?.session?.user?.id;
+        if (uid) {
+          const { data: me } = await supabase
+            .from("profiles")
+            .select("username")
+            .eq("id", uid)
+            .maybeSingle();
+          if (me?.username) {
+            navigate(`/creator/${me.username}`, { replace: true });
+          } else {
+            // Fall back to legacy /profile/:id page if no username yet
+            navigate(`/profile/${uid}`, { replace: true });
+          }
+          return;
+        }
         setLoading(false);
         setProfile(null);
-        setSpliks([]);
-        setLikedSpliks([]);
         return;
       }
 
@@ -76,24 +94,35 @@ export function CreatorProfile() {
       setLikedSpliks([]);
 
       try {
-        // 1) try username
+        // 1) Try username case-insensitively
         let { data, error } = await supabase
           .from("profiles")
           .select("*")
-          .eq("username", slug)
+          .ilike("username", s) // case-insensitive exact (no % wildcards used)
           .maybeSingle<Profile>();
 
-        // 2) if not found and slug looks like a UUID, try id
-        if (!data && isUuid(slug)) {
+        // If ilike somehow didn’t find it (or usernames are stored lowercased), try strict lower
+        if (!data) {
+          const sLower = s.toLowerCase();
+          const byLower = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("username", sLower)
+            .maybeSingle<Profile>();
+          data = byLower.data || null;
+        }
+
+        // 2) If not found and slug looks like a UUID, try id
+        if (!data && isUuid(s)) {
           const byId = await supabase
             .from("profiles")
             .select("*")
-            .eq("id", slug)
+            .eq("id", s)
             .maybeSingle<Profile>();
           data = byId.data || null;
 
           // redirect to canonical /creator/:username when we can
-          if (data?.username && slug !== data.username) {
+          if (data?.username && s !== data.username) {
             navigate(`/creator/${data.username}`, { replace: true });
             return;
           }
@@ -124,9 +153,8 @@ export function CreatorProfile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  // Setup realtime only when we actually have a profile id; clean up old one first
+  // Realtime subscriptions scoped to this profile id
   useEffect(() => {
-    // clean previous subscription
     if (unsubRef.current) {
       try {
         unsubRef.current();
@@ -137,25 +165,21 @@ export function CreatorProfile() {
 
     const channel = supabase
       .channel(`creator-${profile.id}`)
-      // profile updates
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "profiles", filter: `id=eq.${profile.id}` },
         (payload) => setProfile(payload.new as Profile)
       )
-      // their uploaded spliks change
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "spliks", filter: `user_id=eq.${profile.id}` },
         () => fetchSpliks(profile.id)
       )
-      // followers/following counters change
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
-      // likes they create/remove (for Liked tab)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "likes", filter: `user_id=eq.${profile.id}` },
@@ -163,10 +187,7 @@ export function CreatorProfile() {
       )
       .subscribe();
 
-    unsubRef.current = () => {
-      supabase.removeChannel(channel);
-    };
-
+    unsubRef.current = () => supabase.removeChannel(channel);
     return () => {
       if (unsubRef.current) {
         try {
@@ -218,12 +239,10 @@ export function CreatorProfile() {
     }
   };
 
-  // ---- Liked videos loader (with order by like time + profiles) ----
   const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
     try {
       setLikedLoading(true);
 
-      // 1) get the liked splik ids for this user (most recent first)
       const { data: likesRows, error: likesErr } = await supabase
         .from("likes")
         .select("splik_id, created_at")
@@ -239,7 +258,6 @@ export function CreatorProfile() {
 
       const ids = likesRows.map((r) => r.splik_id);
 
-      // 2) fetch the spliks in those ids
       const { data: splikRows, error: spliksErr } = await supabase
         .from("spliks")
         .select("*")
@@ -247,7 +265,6 @@ export function CreatorProfile() {
 
       if (spliksErr) throw spliksErr;
 
-      // 3) attach each splik's uploader profile (username/avatar)
       const withProfiles = await Promise.all(
         (splikRows || []).map(async (s) => {
           const { data: p } = await supabase
@@ -259,7 +276,6 @@ export function CreatorProfile() {
         })
       );
 
-      // 4) keep the order by like time
       const orderIndex: Record<string, number> = {};
       likesRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
       withProfiles.sort((a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0));
@@ -273,7 +289,7 @@ export function CreatorProfile() {
     }
   };
 
-  /* ---------- NEW: honor ?video=<id> deep links ---------- */
+  // Deep link: ?video=<id>
   useEffect(() => {
     const deepId = searchParams.get("video");
     if (!deepId || !spliks.length) return;
@@ -288,7 +304,6 @@ export function CreatorProfile() {
         const p = vid.play();
         if (p && typeof (p as any).catch === "function") {
           (p as Promise<void>).catch(() => {
-            // fallback to muted autoplay if the browser blocks sound
             vid.muted = true;
             vid.play().catch(() => {});
           });
@@ -298,42 +313,28 @@ export function CreatorProfile() {
 
     const attempt = () => {
       if (cancelled) return;
-
-      // Look for a tile your grid marks; support several selectors.
       const selectors = [
         `[data-splik-id="${deepId}"]`,
         `#splik-${deepId}`,
         `[data-video-id="${deepId}"]`,
         `[data-id="${deepId}"]`,
       ];
-
       let host: HTMLElement | null = null;
       for (const s of selectors) {
         const el = document.querySelector<HTMLElement>(s);
-        if (el) {
-          host = el;
-          break;
-        }
+        if (el) { host = el; break; }
       }
-
       if (host) {
         host.scrollIntoView({ behavior: "smooth", block: "center" });
         const vid = host.querySelector("video") as HTMLVideoElement | null;
-        if (vid) {
-          setTimeout(() => tryPlayUnmuted(vid), 80);
-        }
-        return; // success
+        if (vid) setTimeout(() => tryPlayUnmuted(vid), 80);
+        return;
       }
-
-      if (tries++ < maxTries) {
-        setTimeout(attempt, 120);
-      }
+      if (tries++ < maxTries) setTimeout(attempt, 120);
     };
 
     attempt();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [searchParams, spliks.length]);
 
   const formatDate = (date: string) =>
@@ -364,6 +365,8 @@ export function CreatorProfile() {
     );
   }
 
+  const nameOrUsername = profile.display_name || profile.username || "User";
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -374,19 +377,17 @@ export function CreatorProfile() {
             <Avatar className="h-32 w-32">
               <AvatarImage src={profile.avatar_url || ""} />
               <AvatarFallback className="text-3xl">
-                {profile.display_name?.charAt(0) ||
-                  profile.username?.charAt(0) ||
-                  "?"}
+                {nameOrUsername.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
 
             <div className="flex-1">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h1 className="text-3xl font-bold">
-                    {profile.display_name || profile.username}
-                  </h1>
-                  <p className="text-muted-foreground">@{profile.username}</p>
+                  <h1 className="text-3xl font-bold">{nameOrUsername}</h1>
+                  {profile.username && (
+                    <p className="text-muted-foreground">@{profile.username}</p>
+                  )}
                 </div>
 
                 {currentUserId !== profile.id && (
@@ -493,7 +494,7 @@ export function CreatorProfile() {
           <TabsContent value="about" className="mt-6">
             <Card className="p-6">
               <h3 className="text-lg font-semibold mb-4">
-                About {profile.display_name || profile.username}
+                About {nameOrUsername}
               </h3>
               <div className="space-y-4">
                 {profile.bio && (
@@ -579,5 +580,3 @@ export function CreatorProfile() {
     </div>
   );
 }
-
-export default CreatorProfile;
