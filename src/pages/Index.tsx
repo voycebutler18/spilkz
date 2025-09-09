@@ -1,5 +1,5 @@
 // src/pages/Index.tsx
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
@@ -13,65 +13,9 @@ import { useFeedStore } from "@/store/feedStore";
 
 type SplikWithProfile = any;
 
-// Rolling window: keep 7 videos “live”
-const LOAD_WINDOW = 7;
+// Rolling window: keep 5 videos “live” at any time
+const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
-
-// ---------- DEBUG HELPERS ----------
-declare global {
-  interface Window {
-    __SPLIKZ_DEBUG?: boolean;
-  }
-}
-const DEBUG = typeof window !== "undefined" ? (window.__SPLIKZ_DEBUG ?? true) : true;
-const dlog = (...args: any[]) => DEBUG && console.log("[Index]", ...args);
-const dwarn = (...args: any[]) => DEBUG && console.warn("[Index]", ...args);
-const derror = (...args: any[]) => DEBUG && console.error("[Index]", ...args);
-// -----------------------------------
-
-const rand = () =>
-  typeof crypto !== "undefined" && (crypto as any).getRandomValues
-    ? (crypto.getRandomValues(new Uint32Array(1))[0] as number) / 2 ** 32
-    : Math.random();
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-/**
- * Pin the newest splik ONCE per user session, otherwise shuffle.
- * We remember the newest id in sessionStorage under a user-scoped key.
- */
-function arrangeFeedOnce({
-  feed,
-  newestId,
-  userId,
-}: {
-  feed: any[];
-  newestId?: string | null;
-  userId?: string | null;
-}) {
-  const key = `pinned:newestShown:${userId || "anon"}`;
-  const already = sessionStorage.getItem(key);
-
-  if (newestId && already !== newestId) {
-    const a = feed.slice();
-    const idx = a.findIndex((x) => x?.id === newestId);
-    if (idx > 0) {
-      const [it] = a.splice(idx, 1);
-      a.unshift(it);
-    }
-    sessionStorage.setItem(key, newestId);
-    return a;
-  }
-
-  return shuffle(feed);
-}
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -86,53 +30,21 @@ const Index = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Global error hooks (helps catch runtime breaks that cause black screens)
-  useEffect(() => {
-    const onErr = (event: ErrorEvent) => {
-      derror("Global error:", {
-        message: event.message,
-        source: event.filename,
-        line: event.lineno,
-        col: event.colno,
-        stack: event.error?.stack,
-      });
-    };
-    const onRej = (event: PromiseRejectionEvent) => {
-      derror("Unhandled rejection:", event.reason);
-    };
-    window.addEventListener("error", onErr);
-    window.addEventListener("unhandledrejection", onRej);
-    return () => {
-      window.removeEventListener("error", onErr);
-      window.removeEventListener("unhandledrejection", onRej);
-    };
-  }, []);
-
   useEffect(() => {
     document.title = "Splikz - Short Video Platform";
-    dlog("Mounted Index");
   }, []);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      dlog("supabase.auth.getUser()", { hasUser: !!user });
-      setUser(user);
-    });
+    supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      dlog("onAuthStateChange", {
-        event: _event,
-        hasSession: !!session,
-        userId: session?.user?.id,
-      });
-      setUser(session?.user ?? null);
-    });
+    } = supabase.auth.onAuthStateChange((_event, session) =>
+      setUser(session?.user ?? null)
+    );
     return () => subscription.unsubscribe();
   }, []);
 
-  // On mount, try to use preloaded store or session cache for instant paint,
-  // but always re-arrange (pin-once or shuffle) so refresh isn't identical.
+  // On mount, try to use preloaded store or session cache for instant paint
   useEffect(() => {
     const cached = feedStore.feed.length
       ? feedStore.feed
@@ -140,50 +52,42 @@ const Index = () => {
           try {
             const raw = sessionStorage.getItem("feed:cached");
             return raw ? JSON.parse(raw) : [];
-          } catch (e) {
-            dwarn("failed to parse session cached feed", e);
+          } catch {
             return [];
           }
         })();
 
     if (cached.length) {
-      dlog("Using cached feed (preloaded or session)", { count: cached.length });
-      const arranged = arrangeFeedOnce({ feed: cached, newestId: null, userId: user?.id });
-      setLocalSpliks(arranged);
+      setLocalSpliks(cached);
       setLoading(false);
       setShuffleEpoch(Date.now());
     } else {
-      dlog("No cached feed, fetching fresh…");
+      // No preloaded feed (direct visit to /home): do a fast fetch
       fetchDynamicFeed(false, false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // If Splash populated after this page mounted, we still re-arrange to avoid identical first item
   useEffect(() => {
+    // keep store and local in sync if splash populated after this page mounted
     if (feedStore.feed.length) {
-      dlog("feedStore.feed updated", { count: feedStore.feed.length });
-      const arranged = arrangeFeedOnce({ feed: feedStore.feed, newestId: null, userId: user?.id });
-      setLocalSpliks(arranged);
+      setLocalSpliks(feedStore.feed);
       setLoading(false);
       setShuffleEpoch(Date.now());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedStore.feed]);
 
   const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
     if (showToast) setRefreshing(true);
     else setLoading(true);
 
-    dlog("fetchDynamicFeed:start", { showToast, forceNewShuffle });
-
     try {
+      // Don't let a helper blow up the whole fetch
       if (forceNewShuffle) {
         try {
           forceNewRotation();
-          dlog("forceNewRotation ok");
         } catch (e) {
-          dwarn("forceNewRotation failed:", e);
+          console.warn("forceNewRotation failed:", e);
         }
       }
 
@@ -197,11 +101,10 @@ const Index = () => {
         .limit(150);
 
       if (allResp.error) {
-        derror("All spliks query failed:", allResp.error);
+        console.error("All spliks query failed:", allResp.error);
         throw allResp.error; // no feed without this
       }
       const allSpliks = allResp.data || [];
-      dlog("allSpliks count", allSpliks.length);
 
       // --- Fetch boosted (optional, never fatal) ---
       let boostedSpliks: any[] = [];
@@ -226,9 +129,9 @@ const Index = () => {
 
         if (boostedResp.error) throw boostedResp.error;
         boostedSpliks = boostedResp.data || [];
-        dlog("boostedSpliks count", boostedSpliks.length);
       } catch (e) {
-        dwarn("Boosted query failed (continuing without boosted):", e);
+        // RLS / missing relation / column? Just carry on without boosted.
+        console.warn("Boosted query failed (continuing without boosted):", e);
         boostedSpliks = [];
       }
 
@@ -240,9 +143,8 @@ const Index = () => {
           feedType: "home",
           maxResults: 60,
         }) as any[];
-        dlog("createHomeFeed ok", { count: feed.length });
       } catch (e) {
-        dwarn("createHomeFeed failed; using allSpliks:", e);
+        console.warn("createHomeFeed failed; using allSpliks:", e);
         feed = allSpliks.slice(0, 60);
       }
 
@@ -259,41 +161,34 @@ const Index = () => {
 
           const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
           withProfiles = feed.map((s: any) => ({ ...s, profile: pmap.get(s.user_id) }));
-          dlog("profiles attached", { profiles: profilesData?.length ?? 0 });
         } catch (e) {
-          dwarn("Profiles batch fetch failed; proceeding without profiles:", e);
+          console.warn("Profiles batch fetch failed; proceeding without profiles:", e);
           withProfiles = feed;
         }
       }
 
-      // --- Arrange: pin newest ONCE per session, else shuffle ---
-      const newestId = allSpliks?.[0]?.id ?? null;
-      const arranged = arrangeFeedOnce({ feed: withProfiles, newestId, userId: user?.id || null });
-
       setShuffleEpoch(Date.now());
-      setLocalSpliks(arranged);
+      setLocalSpliks(withProfiles);
       setActiveIndex(0);
 
       // keep store + cache fresh for instant paints
       try {
-        useFeedStore.getState().setFeed(arranged);
+        useFeedStore.getState().setFeed(withProfiles);
         useFeedStore.getState().setLastFetchedAt(Date.now());
-        sessionStorage.setItem("feed:cached", JSON.stringify(arranged));
+        sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
       } catch (e) {
-        dwarn("Caching feed failed (store/sessionStorage):", e);
+        console.warn("Caching feed failed (store/sessionStorage):", e);
       }
 
       // Fire-and-forget impressions; never fail the fetch
       try {
-        arranged
+        withProfiles
           .filter((s: any) => s.isBoosted)
           .forEach((s: any) =>
-            supabase
-              .rpc("increment_boost_impression", { p_splik_id: s.id })
-              .catch(() => {})
+            supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
           );
       } catch (e) {
-        dwarn("Impression RPC failed (ignored):", e);
+        console.warn("Impression RPC failed (ignored):", e);
       }
 
       if (showToast) {
@@ -304,15 +199,14 @@ const Index = () => {
             : "Updated with latest content",
         });
       }
-
-      dlog("fetchDynamicFeed:done", { arranged: arranged.length });
     } catch (e: any) {
-      derror("fetchDynamicFeed fatal:", e);
+      console.error("fetchDynamicFeed fatal:", e);
       toast({
         title: "Error",
         description: e?.message || "Failed to load videos. Please try again.",
         variant: "destructive",
       });
+      // Don’t wipe out current list on error—leave existing feed if any.
       setLocalSpliks((prev) => prev ?? []);
     } finally {
       setLoading(false);
@@ -360,7 +254,6 @@ const Index = () => {
     }
   };
 
-  // compute which indices should have a real <video src=...> attached
   const shouldLoadIndex = (i: number) => {
     if (!localSpliks.length) return false;
     if (activeIndex <= HALF) return i <= Math.min(localSpliks.length - 1, LOAD_WINDOW - 1);
@@ -368,17 +261,6 @@ const Index = () => {
     const end = Math.min(localSpliks.length - 1, activeIndex + HALF);
     return i >= start && i <= end;
   };
-
-  // Debug breadcrumbs
-  useEffect(() => {
-    dlog("state:update", {
-      loading,
-      refreshing,
-      userId: user?.id ?? null,
-      localSpliks: localSpliks.length,
-      activeIndex,
-    });
-  }, [loading, refreshing, user?.id, localSpliks.length, activeIndex]);
 
   return (
     <div className="w-full">
@@ -493,7 +375,7 @@ const Index = () => {
             fetchDynamicFeed();
             toast({
               title: "Upload successful!",
-              description: "Your video is now live (pinned once), then joins the shuffle.",
+              description: "Your video is now live and appears at the top (until reload).",
             });
           }}
         />
