@@ -107,6 +107,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   useEffect(() => {
     const load = async () => {
       try {
+        // Add cache-busting timestamp to ensure fresh data
+        const cacheBreaker = Date.now();
+        console.log("🔄 Loading videos with cache breaker:", cacheBreaker);
+        
         const { data, error } = await supabase
           .from("spliks")
           .select(`
