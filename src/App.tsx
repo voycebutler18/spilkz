@@ -9,7 +9,8 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 
 // Pages (site)
-import Index from "./pages/Index";
+import Index from "./pages/Index";              // ← feed is now mounted at /home
+import Splash from "./pages/Splash";            // ← NEW: instant-loading splash at /
 import About from "./pages/About";
 import Explore from "./pages/Explore";
 import Food from "./pages/Food";
@@ -74,7 +75,7 @@ function UploadRoute() {
 
   useEffect(() => {
     if (!isOpen) {
-      const t = setTimeout(() => navigate("/", { replace: true }), 150);
+      const t = setTimeout(() => navigate("/home", { replace: true }), 150); // ← go to /home now
       return () => clearTimeout(t);
     }
   }, [isOpen, navigate]);
@@ -159,10 +160,13 @@ const App = () => (
             {/* Back-compat upload route (opens modal) */}
             <Route path="/upload" element={<UploadRoute />} />
 
+            {/* Splash (no layout) — loads instantly and preloads the feed */}
+            <Route path="/" element={<Splash />} />
+
             {/* Site with global layout */}
             <Route element={<AppLayout />}>
               {/* Core */}
-              <Route path="/" element={<Index />} />
+              <Route path="/home" element={<Index />} /> {/* ← feed now lives here */}
               <Route path="/about" element={<About />} />
               <Route path="/explore" element={<Explore />} />
               <Route path="/food" element={<Food />} />
