@@ -1,4 +1,5 @@
 // src/App.tsx
+import Splash from "./pages/Splash";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -162,7 +163,8 @@ const App = () => (
             {/* Site with global layout */}
             <Route element={<AppLayout />}>
               {/* Core */}
-              <Route path="/" element={<Index />} />
+              <Route path="/" element={<Splash />} />
+              <Route path="/home" element={<Index />} />
               <Route path="/about" element={<About />} />
               <Route path="/explore" element={<Explore />} />
               <Route path="/food" element={<Food />} />
