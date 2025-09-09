@@ -1,9 +1,9 @@
 // src/components/splik/SplikCard.tsx
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   Heart, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles,
+  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles, Eye,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import ShareModal from "@/components/ShareModal";
 import CommentsModal from "@/components/CommentsModal";
 import ReportModal from "@/components/ReportModal";
 import BoostModal from "@/components/BoostModal";
-import LikesModal from "@/components/LikesModal"; // ← NEW import
+import LikesModal from "@/components/LikesModal";
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -31,9 +31,9 @@ type Splik = {
   video_url: string;
   thumbnail_url?: string | null;
 
-  // seed counts from row for instant display
   likes_count?: number | null;
   comments_count?: number | null;
+  views_count?: number | null;      // 👈 NEW
 
   profile?: any;
   mood?: string | null;
@@ -78,6 +78,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [isLiked, setIsLiked] = useState(false);
   const [likesCount, setLikesCount] = useState<number>(splik.likes_count ?? 0);
   const [commentsCount, setCommentsCount] = useState<number>(splik.comments_count ?? 0);
+  const [viewsCount, setViewsCount] = useState<number>(splik.views_count ?? 0);   // 👈 NEW
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -87,7 +88,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
-  const [showLikesModal, setShowLikesModal] = useState(false); // ← NEW state
+  const [showLikesModal, setShowLikesModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -108,16 +109,60 @@ export default function SplikCard(props: SplikCardProps) {
   /* ---------- helpers ---------- */
   const fetchExactCounts = useCallback(async () => {
     try {
-      const [{ count: likes0 }, { count: comments0 }] = await Promise.all([
+      const [{ count: likes0 }, { count: comments0 }, { data: srow }] = await Promise.all([
         supabase.from("likes").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
         supabase.from("comments").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
+        supabase.from("spliks").select("views_count").eq("id", splik.id).maybeSingle(),
       ]);
       setLikesCount(likes0 ?? 0);
       setCommentsCount(comments0 ?? 0);
+      setViewsCount(srow?.views_count ?? 0);
     } catch {
       // keep prior values on failure
     }
   }, [splik.id]);
+
+  // 🔹 Session ID for de-dup (one view per session per video)
+  const sessionId = useMemo(() => {
+    if (typeof window === "undefined") return "server";
+    const key = "view:sid";
+    let sid = sessionStorage.getItem(key);
+    if (!sid) {
+      sid = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      sessionStorage.setItem(key, sid);
+    }
+    return sid;
+  }, []);
+
+  const viewedOnceRef = useRef(false);             // in-memory guard
+  const viewTimerRef = useRef<number | null>(null);
+
+  const markView = useCallback(async () => {
+    if (viewedOnceRef.current) return;
+    // also gate by session storage per specific splik
+    const perSplikKey = `viewed:${splik.id}`;
+    if (sessionStorage.getItem(perSplikKey) === "1") {
+      viewedOnceRef.current = true;
+      return;
+    }
+    viewedOnceRef.current = true;
+    sessionStorage.setItem(perSplikKey, "1");
+
+    // Optimistic UI
+    setViewsCount((v) => (v ?? 0) + 1);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.rpc("safe_increment_view", {
+        p_splik_id: splik.id,
+        p_session_id: sessionId,
+        p_viewer_id: user?.id ?? null,
+      });
+    } catch (e) {
+      // swallow; counter will reconcile via realtime or next fetch
+      console.warn("safe_increment_view failed:", e);
+    }
+  }, [sessionId, splik.id]);
 
   /* ---- autoplay / visibility ---- */
   useEffect(() => {
@@ -163,11 +208,23 @@ export default function SplikCard(props: SplikCardProps) {
           if (!load) return;
 
           if (mostlyVisible) {
+            // start a short timer; count a view if we stayed visible long enough
+            if (!viewedOnceRef.current) {
+              if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
+              viewTimerRef.current = window.setTimeout(() => {
+                markView();
+              }, 1200); // ≈1.2s in view → counts as a "view"
+            }
+
             try { if (!primedRef.current) primeToStart(); else video.currentTime = SEEK_SAFE; } catch {}
             video.muted = isMuted;
             if (isMuted) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
             try { await playExclusive(video); setIsPlaying(true); } catch { setIsPlaying(false); }
           } else {
+            if (!viewedOnceRef.current && viewTimerRef.current) {
+              window.clearTimeout(viewTimerRef.current);
+              viewTimerRef.current = null;
+            }
             pauseIfCurrent(video);
             video.muted = true; video.setAttribute("muted", "true");
             setIsPlaying(false);
@@ -187,8 +244,9 @@ export default function SplikCard(props: SplikCardProps) {
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       pauseIfCurrent(video);
       primedRef.current = false;
+      if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
     };
-  }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
+  }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible, markView]);
 
   // enforce 3s loop
   useEffect(() => {
@@ -257,9 +315,23 @@ export default function SplikCard(props: SplikCardProps) {
         )
         .subscribe();
 
+      // 🔴 NEW: realtime updates to views_count
+      const viewsChannel = supabase
+        .channel(`views-${splik.id}`)
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "spliks", event: "UPDATE", filter: `id=eq.${splik.id}` },
+          (payload) => {
+            const v = (payload.new as any)?.views_count;
+            if (typeof v === "number") setViewsCount(v);
+          }
+        )
+        .subscribe();
+
       return () => {
         supabase.removeChannel(likesChannel);
         supabase.removeChannel(commentsChannel);
+        supabase.removeChannel(viewsChannel);
       };
     })();
 
@@ -360,12 +432,6 @@ export default function SplikCard(props: SplikCardProps) {
   const isBoosted = Boolean((splik as any).isBoosted || (splik as any).is_currently_boosted || (((splik as any).boost_score ?? 0) > 0));
   const isOwner = currentUser && currentUser.id === splik.user_id;
 
-  const creatorDisplay =
-    splik.profile?.display_name ||
-    splik.profile?.first_name ||
-    splik.profile?.username ||
-    "Unknown User";
-
   return (
     <div
       ref={cardRef}
@@ -457,7 +523,10 @@ export default function SplikCard(props: SplikCardProps) {
               </Avatar>
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-sm group-hover:text-primary transition-colors truncate">
-                  {creatorDisplay}
+                  {splik.profile?.display_name ||
+                    splik.profile?.first_name ||
+                    splik.profile?.username ||
+                    "Unknown User"}
                 </p>
                 <p className="text-xs text-muted-foreground truncate">
                   @{splik.profile?.username || splik.profile?.handle || "unknown"}
@@ -507,7 +576,7 @@ export default function SplikCard(props: SplikCardProps) {
 
         {/* ACTIONS */}
         <div className="flex items-center justify-between gap-1">
-          {/* Like toggle (heart) */}
+          {/* Like */}
           <Button
             variant="ghost"
             size="sm"
@@ -520,7 +589,7 @@ export default function SplikCard(props: SplikCardProps) {
             <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
             <span
               className="text-xs font-medium cursor-pointer hover:underline underline-offset-4"
-              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }} // ← opens Likes modal
+              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }}
               title="View who liked"
             >
               {(likesCount ?? 0).toLocaleString()}
@@ -537,6 +606,12 @@ export default function SplikCard(props: SplikCardProps) {
             <MessageCircle className="h-4 w-4" />
             <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
           </Button>
+
+          {/* Views (read-only) */}
+          <div className="inline-flex items-center gap-2 px-2 py-1 text-muted-foreground">
+            <Eye className="h-4 w-4" />
+            <span className="text-xs font-medium">{(viewsCount ?? 0).toLocaleString()}</span>
+          </div>
 
           {/* Share */}
           <Button
@@ -564,20 +639,12 @@ export default function SplikCard(props: SplikCardProps) {
           </Button>
         </div>
 
-        {/* TITLE + DESCRIPTION (shown under actions) */}
-        {(splik.title || splik.description) && (
-          <div className="mt-2 space-y-1">
-            {splik.title && (
-              <p className="text-sm font-semibold">
-                {splik.title}
-              </p>
-            )}
-            {splik.description && (
-              <p className="text-sm text-muted-foreground">
-                {splik.description}
-              </p>
-            )}
-          </div>
+        {/* Title + Description */}
+        {splik.title && (
+          <p className="mt-2 text-sm font-semibold">{splik.title}</p>
+        )}
+        {splik.description && (
+          <p className="mt-1 text-sm">{splik.description}</p>
         )}
 
         {splik.mood && (
@@ -588,7 +655,7 @@ export default function SplikCard(props: SplikCardProps) {
           </div>
         )}
 
-        {(likesCount ?? 0) === 0 && (commentsCount ?? 0) === 0 && (
+        {(likesCount ?? 0) === 0 && (commentsCount ?? 0) === 0 && (viewsCount ?? 0) === 0 && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
             Be the first to react! 💜
           </div>
@@ -607,7 +674,7 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showCommentsModal}
         onClose={async () => {
           setShowCommentsModal(false);
-          await fetchExactCounts(); // stay in sync with modal truth
+          await fetchExactCounts();
         }}
         splikId={splik.id}
         splikTitle={splik.title}
@@ -618,7 +685,7 @@ export default function SplikCard(props: SplikCardProps) {
         onClose={() => setShowReportModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || splik.description || "Untitled Video"}
-        creatorName={creatorDisplay}
+        creatorName={splik.profile?.display_name || splik.profile?.username || "Unknown Creator"}
       />
 
       {showBoostModal && (
@@ -630,12 +697,11 @@ export default function SplikCard(props: SplikCardProps) {
         />
       )}
 
-      {/* Likes list (works logged out) */}
       <LikesModal
         isOpen={showLikesModal}
         onClose={() => setShowLikesModal(false)}
         splikId={splik.id}
-        onCountDelta={(d) => setLikesCount((c) => Math.max(0, (c ?? 0) + d))} // ← live sync
+        onCountDelta={(d) => setLikesCount((c) => Math.max(0, (c ?? 0) + d))}
       />
     </div>
   );
