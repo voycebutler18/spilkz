@@ -17,6 +17,52 @@ type SplikWithProfile = any;
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
 
+const rand = () =>
+  typeof crypto !== "undefined" && (crypto as any).getRandomValues
+    ? (crypto.getRandomValues(new Uint32Array(1))[0] as number) / 2 ** 32
+    : Math.random();
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/**
+ * Pin the newest splik ONCE per user session, otherwise shuffle.
+ * We remember the newest id in sessionStorage under a user-scoped key.
+ */
+function arrangeFeedOnce({
+  feed,
+  newestId,
+  userId,
+}: {
+  feed: any[];
+  newestId?: string | null;
+  userId?: string | null;
+}) {
+  const key = `pinned:newestShown:${userId || "anon"}`;
+  const already = sessionStorage.getItem(key);
+
+  // If we know the newest id and we haven't pinned it this session, put it first
+  if (newestId && already !== newestId) {
+    const a = feed.slice();
+    const idx = a.findIndex((x) => x?.id === newestId);
+    if (idx > 0) {
+      const [it] = a.splice(idx, 1);
+      a.unshift(it);
+    }
+    sessionStorage.setItem(key, newestId);
+    return a;
+  }
+
+  // Otherwise: full shuffle for refresh/new loads
+  return shuffle(feed);
+}
+
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -44,7 +90,8 @@ const Index = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // On mount, try to use preloaded store or session cache for instant paint
+  // On mount, try to use preloaded store or session cache for instant paint,
+  // but always re-arrange (pin-once or shuffle) so refresh isn't identical.
   useEffect(() => {
     const cached = feedStore.feed.length
       ? feedStore.feed
@@ -58,7 +105,9 @@ const Index = () => {
         })();
 
     if (cached.length) {
-      setLocalSpliks(cached);
+      // No newest info here, so we just shuffle the cached feed to avoid same-first on refresh
+      const arranged = arrangeFeedOnce({ feed: cached, newestId: null, userId: user?.id });
+      setLocalSpliks(arranged);
       setLoading(false);
       setShuffleEpoch(Date.now());
     } else {
@@ -68,13 +117,15 @@ const Index = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // If Splash populated after this page mounted, we still re-arrange to avoid identical first item
   useEffect(() => {
-    // keep store and local in sync if splash populated after this page mounted
     if (feedStore.feed.length) {
-      setLocalSpliks(feedStore.feed);
+      const arranged = arrangeFeedOnce({ feed: feedStore.feed, newestId: null, userId: user?.id });
+      setLocalSpliks(arranged);
       setLoading(false);
       setShuffleEpoch(Date.now());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedStore.feed]);
 
   const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
@@ -167,22 +218,26 @@ const Index = () => {
         }
       }
 
+      // --- Arrange: pin newest ONCE per session, else shuffle ---
+      const newestId = allSpliks?.[0]?.id ?? null;
+      const arranged = arrangeFeedOnce({ feed: withProfiles, newestId, userId: user?.id || null });
+
       setShuffleEpoch(Date.now());
-      setLocalSpliks(withProfiles);
+      setLocalSpliks(arranged);
       setActiveIndex(0);
 
       // keep store + cache fresh for instant paints
       try {
-        useFeedStore.getState().setFeed(withProfiles);
+        useFeedStore.getState().setFeed(arranged);
         useFeedStore.getState().setLastFetchedAt(Date.now());
-        sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+        sessionStorage.setItem("feed:cached", JSON.stringify(arranged));
       } catch (e) {
         console.warn("Caching feed failed (store/sessionStorage):", e);
       }
 
       // Fire-and-forget impressions; never fail the fetch
       try {
-        withProfiles
+        arranged
           .filter((s: any) => s.isBoosted)
           .forEach((s: any) =>
             supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
@@ -254,6 +309,7 @@ const Index = () => {
     }
   };
 
+  // compute which indices should have a real <video src=...> attached
   const shouldLoadIndex = (i: number) => {
     if (!localSpliks.length) return false;
     if (activeIndex <= HALF) return i <= Math.min(localSpliks.length - 1, LOAD_WINDOW - 1);
@@ -375,7 +431,7 @@ const Index = () => {
             fetchDynamicFeed();
             toast({
               title: "Upload successful!",
-              description: "Your video is now live and appears at the top (until reload).",
+              description: "Your video is now live (pinned once), then joins the shuffle.",
             });
           }}
         />
