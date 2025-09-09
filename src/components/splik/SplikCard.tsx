@@ -98,6 +98,10 @@ export default function SplikCard(props: SplikCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
   const primePromiseRef = useRef<Promise<void> | null>(null);
+  
+  // NEW: Refs for mobile loop enforcement
+  const loopTimerRef = useRef<number | null>(null);
+  const lastSeekTimeRef = useRef(0);
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -148,6 +152,48 @@ export default function SplikCard(props: SplikCardProps) {
       v.addEventListener("playing", onPlaying, { once: true });
     }
   };
+
+  /* ---------- ENHANCED loop enforcement for mobile ---------- */
+  const enforceLoop = useCallback((v: HTMLVideoElement) => {
+    if (!v) return;
+    const now = performance.now();
+    
+    // Prevent too frequent seeks (can cause stuttering)
+    if (now - lastSeekTimeRef.current < 100) return;
+    
+    const currentTime = v.currentTime;
+    if (currentTime < START || currentTime >= END) {
+      try {
+        v.currentTime = SEEK_SAFE;
+        lastSeekTimeRef.current = now;
+      } catch (e) {
+        console.warn('Failed to seek video:', e);
+      }
+    }
+  }, [START, END, SEEK_SAFE]);
+
+  // NEW: Aggressive timer-based loop enforcement for mobile
+  const startLoopTimer = useCallback((v: HTMLVideoElement) => {
+    if (loopTimerRef.current) {
+      clearInterval(loopTimerRef.current);
+    }
+    
+    // Check every 100ms on mobile, 250ms on desktop
+    const interval = isMobile ? 100 : 250;
+    
+    loopTimerRef.current = window.setInterval(() => {
+      if (v && isPlaying && !v.paused) {
+        enforceLoop(v);
+      }
+    }, interval);
+  }, [isMobile, isPlaying, enforceLoop]);
+
+  const stopLoopTimer = useCallback(() => {
+    if (loopTimerRef.current) {
+      clearInterval(loopTimerRef.current);
+      loopTimerRef.current = null;
+    }
+  }, []);
 
   /* ---------- existing helpers ---------- */
   const fetchExactCounts = useCallback(async () => {
@@ -217,6 +263,7 @@ export default function SplikCard(props: SplikCardProps) {
       pauseIfCurrent(v);
       v.muted = true;
       setIsPlaying(false);
+      stopLoopTimer();
     }
 
     v.playsInline = true;
@@ -231,6 +278,7 @@ export default function SplikCard(props: SplikCardProps) {
       if (document.hidden) {
         pauseIfCurrent(v);
         setIsPlaying(false);
+        stopLoopTimer();
       }
     };
 
@@ -264,9 +312,11 @@ export default function SplikCard(props: SplikCardProps) {
           try {
             await playExclusive(v);
             setIsPlaying(true);
+            startLoopTimer(v); // NEW: Start aggressive loop enforcement
             hidePosterWhenPainted(v); // fade poster right after the first frame actually draws
           } catch {
             setIsPlaying(false);
+            stopLoopTimer();
           }
         } else {
           if (!viewedOnceRef.current && viewTimerRef.current) {
@@ -274,6 +324,7 @@ export default function SplikCard(props: SplikCardProps) {
             viewTimerRef.current = null;
           }
           pauseIfCurrent(v);
+          stopLoopTimer(); // NEW: Stop loop timer when not visible
           // Keep the frame at SEEK_SAFE so the next play is instant without a flash
           try { if (primedRef.current) v.currentTime = SEEK_SAFE; } catch {}
           v.muted = true; v.setAttribute("muted", "true");
@@ -290,23 +341,64 @@ export default function SplikCard(props: SplikCardProps) {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       pauseIfCurrent(v);
+      stopLoopTimer(); // NEW: Cleanup timer
       primedRef.current = false;
       if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
     };
-  }, [isMuted, SEEK_SAFE, load, idx, props.onPrimaryVisible, markView]);
+  }, [isMuted, SEEK_SAFE, load, idx, props.onPrimaryVisible, markView, startLoopTimer, stopLoopTimer]);
 
-  // enforce 3s loop - UPDATED to always use SEEK_SAFE
+  // ENHANCED 3s loop enforcement - multiple mechanisms
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onTimeUpdate = () => {
-      if (v.currentTime < START || v.currentTime >= END) {
-        try { v.currentTime = SEEK_SAFE; } catch {}
+
+    // Primary mechanism: timeupdate event
+    const onTimeUpdate = () => enforceLoop(v);
+    
+    // Secondary mechanism: ended event (backup)
+    const onEnded = () => {
+      try {
+        v.currentTime = SEEK_SAFE;
+        if (isPlaying && !v.paused) {
+          v.play();
+        }
+      } catch {}
+    };
+
+    // Tertiary mechanism: seeking event (prevent manual seeking beyond bounds)
+    const onSeeking = () => {
+      const currentTime = v.currentTime;
+      if (currentTime < START || currentTime >= END) {
+        try {
+          v.currentTime = SEEK_SAFE;
+        } catch {}
       }
     };
+
     v.addEventListener("timeupdate", onTimeUpdate);
-    return () => v.removeEventListener("timeupdate", onTimeUpdate);
-  }, [START, END, SEEK_SAFE]);
+    v.addEventListener("ended", onEnded);
+    v.addEventListener("seeking", onSeeking);
+
+    return () => {
+      v.removeEventListener("timeupdate", onTimeUpdate);
+      v.removeEventListener("ended", onEnded);
+      v.removeEventListener("seeking", onSeeking);
+    };
+  }, [START, END, SEEK_SAFE, isPlaying, enforceLoop]);
+
+  // NEW: Monitor playing state changes for timer management
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (isPlaying && !v.paused) {
+      startLoopTimer(v);
+    } else {
+      stopLoopTimer();
+    }
+
+    return () => stopLoopTimer();
+  }, [isPlaying, startLoopTimer, stopLoopTimer]);
 
   // UPDATED: Don't force .load() when shouldLoad flips
   useEffect(() => {
@@ -317,8 +409,9 @@ export default function SplikCard(props: SplikCardProps) {
     } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
+      stopLoopTimer();
     }
-  }, [load]);
+  }, [load, stopLoopTimer]);
 
   /* ---- state: user + exact counts + realtime recount ---- */
   useEffect(() => {
@@ -430,11 +523,11 @@ export default function SplikCard(props: SplikCardProps) {
     if (!video || !load) return;
     if (isPlaying) {
       if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
-      pauseIfCurrent(video); setIsPlaying(false);
+      pauseIfCurrent(video); setIsPlaying(false); stopLoopTimer();
     } else {
       try { video.currentTime = SEEK_SAFE; } catch {}
       if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); }
-      await playExclusive(video); setIsPlaying(true);
+      await playExclusive(video); setIsPlaying(true); startLoopTimer(video);
     }
   };
 
@@ -552,7 +645,7 @@ export default function SplikCard(props: SplikCardProps) {
           // @ts-expect-error
           webkit-playsinline="true"
           disablePictureInPicture
-          disableRemotePlayback
+          disableRemotePlaybook
           controlsList="nodownload noplaybackrate noremoteplayback"
           preload={load ? "auto" : "metadata"}
           data-splik-id={splik.id}
