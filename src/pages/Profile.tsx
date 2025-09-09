@@ -1,5 +1,5 @@
 // src/pages/Profile.tsx
-import { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -23,16 +23,45 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import VideoGrid from "@/components/dashboard/VideoGrid";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import { ProfilePictureUpload } from "@/components/ProfilePictureUpload";
 import FollowButton from "@/components/FollowButton";
 
+// Lazy-load to prevent a child crash from blanking the whole page
+const LazyVideoGrid = React.lazy(() => import("@/components/dashboard/VideoGrid"));
+
 const isUuid = (v: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
-  );
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+
+// Tiny error boundary so a child error doesn't produce a black screen
+class LocalErrorBoundary extends React.Component<
+  { fallback?: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(err: any) {
+    // Keep a console trail for debugging
+    console.error("Profile page child crashed:", err);
+  }
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? (
+        <Card className="p-12 text-center">
+          <CardTitle className="mb-2">Something went wrong</CardTitle>
+          <CardDescription>Try reloading this section.</CardDescription>
+        </Card>
+      );
+    }
+    return this.props.children as React.ReactElement;
+  }
+}
 
 const Profile = () => {
   const { id: rawParam } = useParams();
@@ -65,18 +94,18 @@ const Profile = () => {
       try {
         setIsLoading(true);
 
-        // If someone hits /profile/:username by mistake, send them to the public creator page
+        // If someone hits /profile/:username by mistake, send to public creator route
         if (id && !isUuid(id)) {
           navigate(`/creator/${id}`, { replace: true });
           return;
         }
 
-        // Get current user
+        // Current user
         const { data: authData } = await supabase.auth.getUser();
         if (cancelled) return;
         setCurrentUser(authData.user || null);
 
-        // Fetch profile data
+        // Profile data (safe maybeSingle)
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
           .select("*")
@@ -85,7 +114,11 @@ const Profile = () => {
 
         if (cancelled) return;
 
-        if (profileError) throw profileError;
+        if (profileError) {
+          console.error("profileError:", profileError);
+          setProfile(null);
+          return;
+        }
 
         if (!profileData) {
           setProfile(null);
@@ -94,7 +127,6 @@ const Profile = () => {
 
         setProfile(profileData);
 
-        // Initialize form data
         setFormData({
           display_name: profileData.display_name || "",
           bio: profileData.bio || "",
@@ -103,28 +135,33 @@ const Profile = () => {
           profile_image_url: profileData.profile_image_url || "",
         });
 
-        // Fetch video counts (tolerate missing/empty table)
+        // Video counts: tolerate missing table/policy errors
         try {
-          const { data: contentData } = await supabase
+          const { data: contentData, error: contentErr } = await supabase
             .from("content")
             .select("content_type")
             .eq("creator_id", id);
 
           if (!cancelled) {
-            const counts =
-              contentData?.reduce(
-                (acc: any, item: any) => {
-                  if (item.content_type === "live") acc.live++;
-                  if (item.content_type === "vod") acc.vod++;
-                  if (item.content_type === "clip") acc.clips++;
-                  return acc;
-                },
-                { live: 0, vod: 0, clips: 0 }
-              ) || { live: 0, vod: 0, clips: 0 };
-
-            setVideoCounts(counts);
+            if (contentErr) {
+              // Table may not exist everywhere — don't crash the page
+              console.warn("content query error (ignored):", contentErr);
+              setVideoCounts({ live: 0, vod: 0, clips: 0 });
+            } else {
+              const counts =
+                contentData?.reduce(
+                  (acc: any, item: any) => {
+                    if (item.content_type === "live") acc.live++;
+                    if (item.content_type === "vod") acc.vod++;
+                    if (item.content_type === "clip") acc.clips++;
+                    return acc;
+                  },
+                  { live: 0, vod: 0, clips: 0 }
+                ) || { live: 0, vod: 0, clips: 0 };
+              setVideoCounts(counts);
+            }
           }
-        } catch {
+        } catch (e) {
           if (!cancelled) setVideoCounts({ live: 0, vod: 0, clips: 0 });
         }
       } catch (error) {
@@ -290,10 +327,7 @@ const Profile = () => {
                       </p>
 
                       {isOwnProfile ? (
-                        <Button
-                          onClick={() => setIsEditing(true)}
-                          className="w-full"
-                        >
+                        <Button onClick={() => setIsEditing(true)} className="w-full">
                           Edit Profile
                         </Button>
                       ) : (
@@ -306,6 +340,23 @@ const Profile = () => {
                               </Link>
                             </Button>
                           )}
+                          <div className="mt-2 flex items-center gap-2 justify-center md:justify-start">
+                            <FollowButton
+                              profileId={profile.id}
+                              username={profile.username}
+                              variant="default"
+                              size="lg"
+                            />
+                            <Button
+                              variant="secondary"
+                              size="lg"
+                              onClick={() => navigate(`/messages/${profile.id}`)}
+                              className="flex items-center gap-2"
+                            >
+                              <MessageSquare className="h-4 w-4" />
+                              Message
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </>
@@ -313,17 +364,12 @@ const Profile = () => {
                     <>
                       <div className="w-full space-y-4">
                         <div>
-                          <label className="text-sm font-medium">
-                            Display Name
-                          </label>
+                          <label className="text-sm font-medium">Display Name</label>
                           <input
                             type="text"
                             value={formData.display_name}
                             onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                display_name: e.target.value,
-                              })
+                              setFormData({ ...formData, display_name: e.target.value })
                             }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
                           />
@@ -343,26 +389,18 @@ const Profile = () => {
                             type="text"
                             value={formData.location}
                             onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                location: e.target.value,
-                              })
+                              setFormData({ ...formData, location: e.target.value })
                             }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-medium">
-                            Joined Date
-                          </label>
+                          <label className="text-sm font-medium">Joined Date</label>
                           <input
                             type="text"
                             value={formData.joined_date}
                             onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                joined_date: e.target.value,
-                              })
+                              setFormData({ ...formData, joined_date: e.target.value })
                             }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
                           />
@@ -388,10 +426,7 @@ const Profile = () => {
                               "Save Changes"
                             )}
                           </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => setIsEditing(false)}
-                          >
+                          <Button variant="outline" onClick={() => setIsEditing(false)}>
                             Cancel
                           </Button>
                         </div>
@@ -423,27 +458,6 @@ const Profile = () => {
                     <div className="text-sm text-muted-foreground">Clips</div>
                   </div>
                 </div>
-
-                {/* Follow + Message actions for visitors */}
-                {!isOwnProfile && (
-                  <div className="mt-6 flex items-center gap-2 justify-center md:justify-start">
-                    <FollowButton
-                      profileId={profile.id}
-                      username={profile.username}
-                      variant="default"
-                      size="lg"
-                    />
-                    <Button
-                      variant="secondary"
-                      size="lg"
-                      onClick={() => navigate(`/messages/${profile.id}`)}
-                      className="flex items-center gap-2"
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                      Message
-                    </Button>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </div>
@@ -494,13 +508,33 @@ const Profile = () => {
                   </TabsList>
 
                   <TabsContent value="vod" className="mt-4">
-                    <VideoGrid creatorId={profile.id} type="vod" />
+                    <LocalErrorBoundary>
+                      <Suspense
+                        fallback={
+                          <div className="p-8 text-center text-muted-foreground">
+                            Loading videos…
+                          </div>
+                        }
+                      >
+                        <LazyVideoGrid creatorId={profile.id} type="vod" />
+                      </Suspense>
+                    </LocalErrorBoundary>
                   </TabsContent>
+
                   <TabsContent value="live" className="mt-4">
-                    <VideoGrid creatorId={profile.id} type="live" />
+                    <LocalErrorBoundary>
+                      <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading…</div>}>
+                        <LazyVideoGrid creatorId={profile.id} type="live" />
+                      </Suspense>
+                    </LocalErrorBoundary>
                   </TabsContent>
+
                   <TabsContent value="clips" className="mt-4">
-                    <VideoGrid creatorId={profile.id} type="clip" />
+                    <LocalErrorBoundary>
+                      <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading…</div>}>
+                        <LazyVideoGrid creatorId={profile.id} type="clip" />
+                      </Suspense>
+                    </LocalErrorBoundary>
                   </TabsContent>
                 </Tabs>
               </CardContent>
