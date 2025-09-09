@@ -30,11 +30,15 @@ const Index = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  useEffect(() => { document.title = "Splikz - Short Video Platform"; }, []);
+  useEffect(() => {
+    document.title = "Splikz - Short Video Platform";
+  }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) =>
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) =>
       setUser(session?.user ?? null)
     );
     return () => subscription.unsubscribe();
@@ -48,7 +52,9 @@ const Index = () => {
           try {
             const raw = sessionStorage.getItem("feed:cached");
             return raw ? JSON.parse(raw) : [];
-          } catch { return []; }
+          } catch {
+            return [];
+          }
         })();
 
     if (cached.length) {
@@ -76,13 +82,34 @@ const Index = () => {
     else setLoading(true);
 
     try {
-      if (forceNewShuffle) forceNewRotation();
+      // Don't let a helper blow up the whole fetch
+      if (forceNewShuffle) {
+        try {
+          forceNewRotation();
+        } catch (e) {
+          console.warn("forceNewRotation failed:", e);
+        }
+      }
 
       const nowIso = new Date().toISOString();
 
-      const [allResp, boostedResp] = await Promise.all([
-        supabase.from("spliks").select("*").order("created_at", { ascending: false }).limit(150),
-        supabase
+      // --- Fetch spliks (must succeed) ---
+      const allResp = await supabase
+        .from("spliks")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(150);
+
+      if (allResp.error) {
+        console.error("All spliks query failed:", allResp.error);
+        throw allResp.error; // no feed without this
+      }
+      const allSpliks = allResp.data || [];
+
+      // --- Fetch boosted (optional, never fatal) ---
+      let boostedSpliks: any[] = [];
+      try {
+        const boostedResp = await supabase
           .from("spliks")
           .select(
             `
@@ -98,40 +125,71 @@ const Index = () => {
           .eq("boosted_videos.status", "active")
           .gt("boosted_videos.end_date", nowIso)
           .order("boost_score", { ascending: false })
-          .limit(15),
-      ]);
-      if (allResp.error) throw allResp.error;
-      if (boostedResp.error) throw boostedResp.error;
+          .limit(15);
 
-      // Build + (re)shuffle via your helper
-      let feed = createHomeFeed(allResp.data || [], boostedResp.data || [], {
-        userId: user?.id,
-        feedType: "home",
-        maxResults: 60,
-      }) as SplikWithProfile[];
+        if (boostedResp.error) throw boostedResp.error;
+        boostedSpliks = boostedResp.data || [];
+      } catch (e) {
+        // RLS / missing relation / column? Just carry on without boosted.
+        console.warn("Boosted query failed (continuing without boosted):", e);
+        boostedSpliks = [];
+      }
 
-      // Attach profiles in ONE query
-      const ids = Array.from(new Set(feed.map((s: any) => s.user_id)));
-      const { data: profilesData } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, first_name, avatar_url")
-        .in("id", ids);
+      // --- Build feed (guard helper) ---
+      let feed: any[] = [];
+      try {
+        feed = createHomeFeed(allSpliks, boostedSpliks, {
+          userId: user?.id,
+          feedType: "home",
+          maxResults: 60,
+        }) as any[];
+      } catch (e) {
+        console.warn("createHomeFeed failed; using allSpliks:", e);
+        feed = allSpliks.slice(0, 60);
+      }
 
-      const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
-      const withProfiles = feed.map((s: any) => ({ ...s, profile: pmap.get(s.user_id) }));
+      // --- Attach profiles in ONE query (optional) ---
+      const ids = Array.from(new Set(feed.map((s: any) => s.user_id).filter(Boolean)));
+      let withProfiles = feed;
+      if (ids.length > 0) {
+        try {
+          const { data: profilesData, error: pErr } = await supabase
+            .from("profiles")
+            .select("id, username, display_name, first_name, avatar_url")
+            .in("id", ids);
+          if (pErr) throw pErr;
 
-      setLocalSpliks(withProfiles);
+          const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
+          withProfiles = feed.map((s: any) => ({ ...s, profile: pmap.get(s.user_id) }));
+        } catch (e) {
+          console.warn("Profiles batch fetch failed; proceeding without profiles:", e);
+          withProfiles = feed;
+        }
+      }
+
       setShuffleEpoch(Date.now());
-      useFeedStore.getState().setFeed(withProfiles);
-      useFeedStore.getState().setLastFetchedAt(Date.now());
-      sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+      setLocalSpliks(withProfiles);
+      setActiveIndex(0);
 
-      // impressions for boosted (fire-and-forget)
-      withProfiles
-        .filter((s: any) => s.isBoosted)
-        .forEach((s: any) =>
-          supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
-        );
+      // keep store + cache fresh for instant paints
+      try {
+        useFeedStore.getState().setFeed(withProfiles);
+        useFeedStore.getState().setLastFetchedAt(Date.now());
+        sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+      } catch (e) {
+        console.warn("Caching feed failed (store/sessionStorage):", e);
+      }
+
+      // Fire-and-forget impressions; never fail the fetch
+      try {
+        withProfiles
+          .filter((s: any) => s.isBoosted)
+          .forEach((s: any) =>
+            supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
+          );
+      } catch (e) {
+        console.warn("Impression RPC failed (ignored):", e);
+      }
 
       if (showToast) {
         toast({
@@ -141,14 +199,15 @@ const Index = () => {
             : "Updated with latest content",
         });
       }
-    } catch (e) {
-      console.error("Error fetching dynamic feed:", e);
+    } catch (e: any) {
+      console.error("fetchDynamicFeed fatal:", e);
       toast({
         title: "Error",
-        description: "Failed to load videos. Please try again.",
+        description: e?.message || "Failed to load videos. Please try again.",
         variant: "destructive",
       });
-      setLocalSpliks([]);
+      // Don’t wipe out current list on error—leave existing feed if any.
+      setLocalSpliks((prev) => prev ?? []);
     } finally {
       setLoading(false);
       setRefreshing(false);
