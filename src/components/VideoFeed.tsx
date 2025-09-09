@@ -41,6 +41,7 @@ interface Splik {
     username?: string | null;
     display_name?: string | null;
     first_name?: string | null;
+    last_name?: string | null;
     avatar_url?: string | null;
   } | null;
 }
@@ -102,43 +103,69 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
+  /* --------- YOUR shuffled-load effect (with profiles aliased) --------- */
   useEffect(() => {
     const load = async () => {
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select(`
-            id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end,
-            likes_count, comments_count,
+          .select(
+            `
+            id,
+            title,
+            description,
+            video_url,
+            thumbnail_url,
+            user_id,
+            likes_count,
+            comments_count,
+            created_at,
+            trim_start,
             profile:profiles(
-              id, username, display_name, first_name, avatar_url
-            ),
-            created_at
-          `)
-          .order("created_at", { ascending: false });
+              username,
+              first_name,
+              last_name,
+              display_name,
+              avatar_url
+            )
+          `
+          );
+        // ⬆️ intentionally no .order('created_at') — we shuffle below
 
         if (error) throw error;
-        setSpliks((data as Splik[]) || []);
 
-        // init mute/pause UI
+        // --- shuffle on each refresh (Fisher–Yates, crypto-backed when available) ---
+        const list = [ ...((data as Splik[]) || []) ];
+        const rand = () =>
+          typeof crypto !== "undefined" && (crypto as any).getRandomValues
+            ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
+            : Math.random();
+
+        for (let i = list.length - 1; i > 0; i--) {
+          const j = Math.floor(rand() * (i + 1));
+          [list[i], list[j]] = [list[j], list[i]];
+        }
+        setSpliks(list);
+        // ---------------------------------------------------------------------------
+
+        // init mute/pause UI as you already do
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
-        (data || []).forEach((_, index) => {
+        list.forEach((_, index) => {
           mutedState[index] = false;
           pauseState[index] = true;
         });
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // preload likes + favorites for this user
+        // preload likes + favorites…
         if (user?.id) {
           const [{ data: likes }, { data: favs }] = await Promise.all([
             supabase.from("likes").select("splik_id").eq("user_id", user.id),
             supabase.from("favorites").select("splik_id").eq("user_id", user.id),
           ]);
-          if (likes) setLikedIds(new Set(likes.map((l) => l.splik_id)));
-          if (favs) setSavedIds(new Set(favs.map((f) => f.splik_id)));
+          if (likes) setLikedIds(new Set(likes.map((l: any) => l.splik_id)));
+          if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
       } catch (e) {
         console.error(e);
@@ -477,7 +504,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         description:
           (error as any).code === "42501"
             ? "You don't have permission to post comments. (RLS policy)"
-            : error.message || "Failed to post comment",
+            : (error as any).message || "Failed to post comment",
         variant: "destructive",
       });
       return;
