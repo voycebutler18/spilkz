@@ -1,18 +1,11 @@
 // src/pages/MessageThread.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import { BlockButton, UnblockButton } from "@/components/DM/BlockButtons";
 import { toast } from "sonner";
 import {
@@ -33,13 +26,12 @@ type ProfileLite = {
   id: string;
   username: string | null;
   display_name: string | null;
+  full_name?: string | null;         // ⬅️ added
   avatar_url?: string | null;
 };
 
 export default function MessageThread() {
   const { otherId } = useParams();
-  const navigate = useNavigate();
-
   const [me, setMe] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [text, setText] = useState("");
@@ -50,6 +42,7 @@ export default function MessageThread() {
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<Msg | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
 
@@ -68,28 +61,38 @@ export default function MessageThread() {
     return me < otherId ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
-  // Load names/avatars
+  // Helper for consistent display name
+  const pickName = (p?: ProfileLite | null) =>
+    (p?.display_name?.trim() ||
+      p?.username?.trim() ||
+      p?.full_name?.trim() ||
+      "User");
+
   useEffect(() => {
     const run = async () => {
       if (!me || !otherId) return;
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("profiles")
-        .select("id,username,display_name,avatar_url")
+        .select("id,username,display_name,full_name,avatar_url") // ⬅️ include full_name
         .in("id", [me, otherId as string]);
+
+      if (error) {
+        console.error(error);
+        return;
+      }
 
       const nameMap: Record<string, string> = {};
       const profileMap: Record<string, ProfileLite> = {};
       (data || []).forEach((p: any) => {
-        nameMap[p.id] = p.display_name || p.username || "User";
         profileMap[p.id] = p;
+        nameMap[p.id] = pickName(p);
       });
-      setNames(nameMap);
       setProfiles(profileMap);
+      setNames(nameMap);
     };
     run();
   }, [me, otherId]);
 
-  // Scroll state
   const handleScroll = () => {
     if (!messagesRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesRef.current;
@@ -97,12 +100,11 @@ export default function MessageThread() {
     setIsScrolledUp(!isAtBottom);
   };
 
-  const filteredMsgs = useMemo(() => {
-    if (!searchQuery.trim()) return msgs;
-    return msgs.filter((m) => m.body?.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [msgs, searchQuery]);
+  const filteredMsgs = useMemo(
+    () => (!searchQuery.trim() ? msgs : msgs.filter((m) => m.body?.toLowerCase().includes(searchQuery.toLowerCase()))),
+    [msgs, searchQuery]
+  );
 
-  // Load thread + realtime
   useEffect(() => {
     if (!threadKey || !me || !otherId) return;
 
@@ -112,6 +114,7 @@ export default function MessageThread() {
         .select("*")
         .eq("thread_key", threadKey)
         .order("created_at", { ascending: true });
+
       if (error) {
         console.error(error);
         toast.error("Failed to load messages");
@@ -173,7 +176,6 @@ export default function MessageThread() {
     };
   }, [threadKey, me, otherId, isScrolledUp]);
 
-  // Auto scroll when new messages and not scrolled up
   useEffect(() => {
     if (!isScrolledUp) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -181,7 +183,6 @@ export default function MessageThread() {
     }
   }, [msgs.length, isScrolledUp]);
 
-  // Typing broadcast
   useEffect(() => {
     if (!me || !otherId || !threadKey) return;
     const ch = supabase.channel(`dm-${threadKey}`);
@@ -192,7 +193,6 @@ export default function MessageThread() {
     return () => {
       clearTimeout(start);
       clearTimeout(stop);
-      supabase.removeChannel(ch);
     };
   }, [text, me, otherId, threadKey]);
 
@@ -200,8 +200,8 @@ export default function MessageThread() {
     if (!me || !otherId || !text.trim()) return;
     const body = text.trim();
 
-    const optimisticId = typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID() : `tmp_${Date.now()}`;
+    const optimisticId =
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `tmp_${Date.now()}`;
     const optimistic: Msg = {
       id: optimisticId,
       sender_id: me,
@@ -213,6 +213,7 @@ export default function MessageThread() {
     };
     setMsgs((prev) => [...prev, optimistic]);
     setText("");
+    setReplyingTo(null);
 
     const { error } = await supabase.from("messages").insert({
       sender_id: me,
@@ -238,9 +239,9 @@ export default function MessageThread() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     setIsScrolledUp(false);
     setUnreadCount(0);
-    if (!me) return;
-    const unreadIds = msgs.filter((m) => m.recipient_id === me && !m.read_at).map((m) => m.id);
-    if (unreadIds.length) {
+    const unreadMessages = msgs.filter((m) => m.recipient_id === me && !m.read_at);
+    if (unreadMessages.length > 0) {
+      const unreadIds = unreadMessages.map((m) => m.id);
       supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", unreadIds);
     }
   };
@@ -273,91 +274,80 @@ export default function MessageThread() {
     );
   }
 
-  const nameFor = (userId: string) => (userId === me ? "You" : names[userId] || "User");
+  const nameFor = (userId: string) => (userId === me ? "You" : pickName(profiles[userId]));
   const otherProfile = profiles[otherId as string];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <Header />
 
-      {/* Force visible native inputs (mobile safe) */}
       <style>{`
         .force-input {
-          color:#000!important;background:#fff!important;-webkit-text-fill-color:#000!important;
-          caret-color:#000!important;border:1px solid rgba(0,0,0,.25)!important;border-radius:12px!important;
-          padding:10px 12px!important;height:40px!important;line-height:20px!important;outline:none!important;
+          color: #000000 !important;
+          background-color: #ffffff !important;
+          -webkit-text-fill-color: #000000 !important;
+          caret-color: #000000 !important;
+          border: 1px solid rgba(0,0,0,0.25) !important;
+          border-radius: 12px !important;
+          padding: 10px 12px !important;
+          height: 40px !important;
+          line-height: 20px !important;
+          outline: none !important;
         }
-        .force-input:focus { box-shadow:0 0 0 2px rgba(124,58,237,.35)!important;border-color:rgba(124,58,237,.75)!important; }
-        .force-input::placeholder { color:#6b7280!important;-webkit-text-fill-color:#6b7280!important;opacity:1!important; }
+        .force-input:focus { box-shadow: 0 0 0 2px rgba(124,58,237,.35) !important; border-color: rgba(124,58,237,.75) !important; }
+        .force-input::placeholder { color: #6b7280 !important; -webkit-text-fill-color: #6b7280 !important; opacity: 1 !important; }
       `}</style>
 
-      <div className="mx-auto w-full max-w-md px-3 py-4 pb-24 overflow-hidden">
-        {/* Sticky chat header (mobile) */}
-        <div className="sticky top-0 z-10 -mx-3 bg-slate-800/90 backdrop-blur border-b border-slate-700/50 px-3 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => navigate(-1)}>
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        {/* Header */}
+        <div className="bg-slate-800/80 backdrop-blur-sm rounded-t-2xl border border-slate-700/50 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50 p-2" onClick={() => window.history.back()}>
                 <ArrowLeft className="w-4 h-4" />
               </Button>
 
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-3">
                 <div className="relative">
                   {otherProfile?.avatar_url ? (
-                    <img src={otherProfile.avatar_url} alt={nameFor(otherId as string)} className="w-9 h-9 rounded-full border" />
+                    <img src={otherProfile.avatar_url} alt={nameFor(otherId as string)} className="w-10 h-10 rounded-full border-2 border-slate-600" />
                   ) : (
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-white flex items-center justify-center font-semibold">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-semibold border-2 border-slate-600">
                       {nameFor(otherId as string).charAt(0).toUpperCase()}
                     </div>
                   )}
-                  {otherOnline && (
-                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-green-500 border-2 border-slate-800" />
-                  )}
+                  {otherOnline && <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-800" />}
                 </div>
 
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-white">{nameFor(otherId as string)}</div>
-                  <div className="flex items-center gap-1 text-xs text-slate-300">
-                    <Circle className={`w-2 h-2 ${otherOnline ? "text-green-500" : "text-slate-500"} fill-current`} />
-                    <span className="truncate">
-                      {otherOnline ? "Online" : "Offline"}{otherTyping && " • typing…"}
+                <div>
+                  <h2 className="text-white font-semibold text-lg">{nameFor(otherId as string)}</h2>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Circle className={`w-2 h-2 fill-current ${otherOnline ? "text-green-500" : "text-slate-500"}`} />
+                    <span className="text-slate-400">
+                      {otherOnline ? "Online" : "Offline"}
+                      {otherTyping && <span className="ml-2 text-purple-400 animate-pulse">typing...</span>}
                     </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-9 w-9">
-                  <MoreVertical className="w-4 h-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem onClick={() => setShowSearch((s) => !s)}>
-                  <Search className="mr-2 h-4 w-4" /> Search
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => {}}>
-                  <Phone className="mr-2 h-4 w-4" /> Voice call
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => {}}>
-                  <Video className="mr-2 h-4 w-4" /> Video call
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem asChild>
-                  <div><BlockButton otherUserId={otherId!} /></div>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <div><UnblockButton otherUserId={otherId!} /></div>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50" onClick={() => setShowSearch(!showSearch)}>
+                <Search className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50"><Phone className="w-4 h-4" /></Button>
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50"><Video className="w-4 h-4" /></Button>
+              <div className="flex gap-2 ml-2"><BlockButton otherUserId={otherId!} /><UnblockButton otherUserId={otherId!} /></div>
+              <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50"><MoreVertical className="w-4 h-4" /></Button>
+            </div>
           </div>
 
           {showSearch && (
-            <div className="mt-2">
+            <div className="mt-4 pt-4 border-t border-slate-700/50">
               <input
                 type="text"
-                placeholder="Search messages…"
+                placeholder="Search messages..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="force-input w-full"
@@ -368,8 +358,8 @@ export default function MessageThread() {
         </div>
 
         {/* Messages */}
-        <Card className="border border-slate-700/50 bg-slate-800/60 backdrop-blur-sm">
-          <div className="flex flex-col" style={{ height: "calc(100svh - 230px)" }}>
+        <Card className="rounded-none rounded-b-2xl border-x border-b border-slate-700/50 bg-slate-800/60 backdrop-blur-sm">
+          <div className="h-[65vh] flex flex-col">
             <div
               ref={messagesRef}
               className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
@@ -384,25 +374,25 @@ export default function MessageThread() {
 
                 return (
                   <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"} group`}>
-                    <div className={`flex items-end gap-2 max-w-[82%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
+                    <div className={`flex items-end gap-2 max-w-[80%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
                       {!mine && (
                         <div className={`w-6 h-6 flex-shrink-0 ${showAvatar ? "" : "invisible"}`}>
-                          {showAvatar ? (
-                            otherProfile?.avatar_url ? (
-                              <img src={otherProfile.avatar_url} alt={nameFor(m.sender_id)} className="w-6 h-6 rounded-full" />
+                          {showAvatar &&
+                            (profiles[otherId as string]?.avatar_url ? (
+                              <img src={profiles[otherId as string]!.avatar_url as string} alt={nameFor(m.sender_id)} className="w-6 h-6 rounded-full" />
                             ) : (
-                              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-white text-xs font-semibold flex items-center justify-center">
+                              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
                                 {nameFor(m.sender_id).charAt(0).toUpperCase()}
                               </div>
-                            )
-                          ) : null}
+                            ))}
                         </div>
                       )}
 
                       <div className="flex flex-col">
                         <div
                           className={[
-                            "relative px-4 py-2 text-sm leading-relaxed break-words shadow-lg transition-all",
+                            "relative group px-4 py-2 text-sm leading-relaxed break-words shadow-lg",
+                            "transition-all duration-200 hover:shadow-xl",
                             mine
                               ? `bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-purple-500/25 ${
                                   isConsecutive ? "rounded-2xl rounded-br-md" : "rounded-2xl rounded-br-sm"
@@ -412,14 +402,11 @@ export default function MessageThread() {
                                 }`,
                           ].join(" ")}
                         >
-                          {content.length ? (
-                            <span className="whitespace-pre-wrap">{content}</span>
-                          ) : (
-                            <span className="opacity-60 italic text-xs">(empty message)</span>
-                          )}
+                          {content.length ? <span className="whitespace-pre-wrap">{content}</span> : <span className="opacity-60 italic text-xs">(empty message)</span>}
                         </div>
-                        <div className={`mt-1 text-[10px] text-slate-500 ${mine ? "text-right" : "text-left"}`}>
-                          {formatTime(m.created_at)}
+
+                        <div className={["flex items-center gap-1 mt-1 text-[10px] text-slate-500", mine ? "justify-end" : "justify-start"].join(" ")}>
+                          <span>{formatTime(m.created_at)}</span>
                         </div>
                       </div>
                     </div>
@@ -443,26 +430,34 @@ export default function MessageThread() {
             </div>
 
             {isScrolledUp && unreadCount > 0 && (
-              <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
-                <Button onClick={scrollToBottom} className="bg-purple-600 hover:bg-purple-700 text-white rounded-full px-4 py-2 shadow-lg">
-                  {unreadCount} new message{unreadCount > 1 ? "s" : ""}
+              <div className="absolute bottom-24 left-1/2 transform -translate-x-1/2 z-10">
+                <Button onClick={scrollToBottom} className="bg-purple-600 hover:bg-purple-700 text-white rounded-full px-4 py-2 shadow-lg flex items-center gap-2 animate-bounce">
+                  <span className="text-sm">{unreadCount} new message{unreadCount > 1 ? "s" : ""}</span>
+                  <div className="w-2 h-2 bg-white rounded-full" />
                 </Button>
               </div>
             )}
 
+            {replyingTo && (
+              <div className="px-4 py-2 bg-slate-700/50 border-t border-slate-600/50 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm text-slate-300">
+                  <div className="w-1 h-8 bg-purple-500 rounded" />
+                  <div>
+                    <div className="text-purple-400 text-xs">Replying to {nameFor(replyingTo.sender_id)}</div>
+                    <div className="truncate max-w-md">{replyingTo.body}</div>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setReplyingTo(null)} className="text-slate-400 hover:text-white">×</Button>
+              </div>
+            )}
+
             {/* Composer */}
-            <div className="p-3 border-t border-slate-700/50 bg-slate-800/40">
+            <div className="p-4 border-t border-slate-700/50 bg-slate-800/40">
               {showEmojiPicker && (
                 <div className="mb-3 p-3 bg-slate-700/80 rounded-xl border border-slate-600/50">
                   <div className="grid grid-cols-6 gap-2">
                     {commonEmojis.map((emoji) => (
-                      <Button
-                        key={emoji}
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 hover:bg-slate-600/50 text-lg"
-                        onClick={() => addEmoji(emoji)}
-                      >
+                      <Button key={emoji} variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-slate-600/50 text-lg" onClick={() => addEmoji(emoji)}>
                         {emoji}
                       </Button>
                     ))}
@@ -471,7 +466,7 @@ export default function MessageThread() {
               )}
 
               <div className="flex items-end gap-2">
-                <Button variant="ghost" size="icon" className="h-10 w-10 text-slate-300 hover:text-white hover:bg-slate-700/50">
+                <Button variant="ghost" size="sm" className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0">
                   <Paperclip className="w-4 h-4" />
                 </Button>
 
@@ -479,7 +474,7 @@ export default function MessageThread() {
                   <input
                     ref={inputRef}
                     type="text"
-                    placeholder="Type a message…"
+                    placeholder="Type a message..."
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     onKeyDown={(e) => {
@@ -495,20 +490,11 @@ export default function MessageThread() {
                   />
                 </div>
 
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-10 w-10 text-slate-300 hover:text-white hover:bg-slate-700/50"
-                  onClick={() => setShowEmojiPicker((s) => !s)}
-                >
+                <Button variant="ghost" size="sm" className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0" onClick={() => setShowEmojiPicker(!showEmojiPicker)}>
                   <Smile className="w-4 h-4" />
                 </Button>
 
-                <Button
-                  onClick={send}
-                  disabled={!text.trim()}
-                  className="h-10 w-10 p-0 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-lg disabled:opacity-50"
-                >
+                <Button onClick={send} disabled={!text.trim()} className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl h-10 w-10 p-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200">
                   <Send className="w-4 h-4" />
                 </Button>
               </div>
