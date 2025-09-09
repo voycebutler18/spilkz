@@ -1,3 +1,4 @@
+// src/pages/Splash.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,17 +29,26 @@ const shuffleWithSeed = <T,>(arr: T[], seed: number) => {
   }
   return a;
 };
+
+/** Use sessionStorage (artifacts-safe) instead of localStorage */
 const getAnonId = () => {
   const KEY = "feed:anon-id";
-  let id = localStorage.getItem(KEY);
-  if (!id) {
-    id =
-      (typeof crypto !== "undefined" && "randomUUID" in crypto)
-        ? (crypto as any).randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(KEY, id);
+  try {
+    if (typeof window === "undefined") return "anon";
+    const store = window.sessionStorage;
+    let id = store.getItem(KEY);
+    if (!id) {
+      id =
+        (typeof crypto !== "undefined" && "randomUUID" in crypto)
+          ? (crypto as any).randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      store.setItem(KEY, id);
+    }
+    return id;
+  } catch {
+    // If storage is blocked/unavailable, fall back to non-persistent anon id
+    return "anon";
   }
-  return id;
 };
 // -------------------------------------------------------
 
@@ -49,8 +59,12 @@ export default function Splash() {
 
   // treat a hard reload differently (new session seed)
   const isReload = useMemo(() => {
-    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
-    return nav?.type === "reload";
+    try {
+      const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+      return nav?.type === "reload";
+    } catch {
+      return false;
+    }
   }, []);
 
   // session seed makes order change each full reload for this viewer
@@ -59,7 +73,9 @@ export default function Splash() {
       typeof crypto !== "undefined" && (crypto as any).getRandomValues
         ? (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0)
         : (Math.random() * 2 ** 32) >>> 0;
-    sessionStorage.setItem("feed:session-seed", String(seed));
+    try {
+      sessionStorage.setItem("feed:session-seed", String(seed));
+    } catch {}
     return seed;
   }, []);
 
@@ -151,7 +167,9 @@ export default function Splash() {
         if (!cancelled) {
           setFeed(withProfiles);
           setLastFetchedAt(Date.now());
-          sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+          try {
+            sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+          } catch {}
         }
 
         setProgress(96);
