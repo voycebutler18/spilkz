@@ -13,8 +13,8 @@ import { useFeedStore } from "@/store/feedStore";
 
 type SplikWithProfile = any;
 
-// Rolling window: keep 5 videos “live” at any time
-const LOAD_WINDOW = 5;
+// Rolling window: keep 7 videos “live”
+const LOAD_WINDOW = 7;
 const HALF = Math.floor(LOAD_WINDOW / 2);
 
 const rand = () =>
@@ -339,7 +339,7 @@ const Index = () => {
             size="sm"
             onClick={refreshFeed}
             disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
+            className="text-xs text-muted-foreground hover{text-primary transition-colors"
           >
             <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
             {refreshing ? "Shuffling..." : "Shuffle"}
