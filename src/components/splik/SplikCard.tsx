@@ -75,7 +75,6 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  // Poster overlay state (prevents black flash)
   const [posterVisible, setPosterVisible] = useState(true);
 
   const [isLiked, setIsLiked] = useState(false);
@@ -99,7 +98,6 @@ export default function SplikCard(props: SplikCardProps) {
   const primedRef = useRef(false);
   const primePromiseRef = useRef<Promise<void> | null>(null);
 
-  // Mobile loop enforcement helpers
   const loopTimerRef = useRef<number | null>(null);
   const lastSeekTimeRef = useRef(0);
 
@@ -119,10 +117,10 @@ export default function SplikCard(props: SplikCardProps) {
     import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin.replace(/\/$/, "");
   const OG_FUNCTION_BASE = (import.meta.env.VITE_OG_FUNCTION_BASE || "").replace(/\/$/, "");
 
-  // Human-friendly page (good for in-app copy/links)
+  // Human-friendly page
   const VIEW_URL = `${PUBLIC_SITE_URL}/video/${splik.id}`;
 
-  // Crawler-friendly URL (Edge Function that returns OG tags w/ correct cover)
+  // Crawler-friendly OG Function (ensures correct cover poster on social)
   const OG_URL = OG_FUNCTION_BASE
     ? `${OG_FUNCTION_BASE}/${splik.id}`
     : `https://izeheflwfguwinizihmx.supabase.co/functions/v1/clever-worker/${splik.id}`;
@@ -204,9 +202,7 @@ export default function SplikCard(props: SplikCardProps) {
       setLikesCount(likes0 ?? 0);
       setCommentsCount(comments0 ?? 0);
       setViewsCount(srow?.views_count ?? 0);
-    } catch {
-      // keep prior values
-    }
+    } catch {}
   }, [splik.id]);
 
   // view de-dup per session + per video
@@ -233,7 +229,6 @@ export default function SplikCard(props: SplikCardProps) {
     }
     viewedOnceRef.current = true;
     sessionStorage.setItem(perSplikKey, "1");
-
     setViewsCount((v) => (v ?? 0) + 1);
 
     try {
@@ -337,7 +332,6 @@ export default function SplikCard(props: SplikCardProps) {
     };
   }, [isMuted, SEEK_SAFE, load, idx, props.onPrimaryVisible, markView, startLoopTimer, stopLoopTimer]);
 
-  // enforce loop via multiple mechanisms
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -465,7 +459,6 @@ export default function SplikCard(props: SplikCardProps) {
     setLikePending(true);
     const wantLike = !isLiked;
 
-    // optimistic
     setIsLiked(wantLike);
     setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? 1 : -1)));
 
@@ -543,14 +536,12 @@ export default function SplikCard(props: SplikCardProps) {
     }
   }, [saving, isSaved, splik.id, toast]);
 
-  /* ------ SHARE / COPY with correct URLs ------ */
-  // Copy: give the nice human page
+  /* ------ SHARE / COPY: always use OG_URL so socials render the real cover ------ */
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(VIEW_URL);
-    toast({ title: "Link copied", description: "Share link copied to clipboard" });
+    navigator.clipboard.writeText(OG_URL);
+    toast({ title: "Link copied", description: "This link shows the video cover on socials." });
   };
 
-  // Share: give the crawler-friendly OG URL (Edge Function) for real cover previews
   const handleShare = async () => {
     try {
       if (navigator.share) {
@@ -641,7 +632,6 @@ export default function SplikCard(props: SplikCardProps) {
           // @ts-expect-error
           webkit-playsinline="true"
           disablePictureInPicture
-          // correct attribute:
           disableRemotePlayback
           controlsList="nodownload noplaybackrate noremoteplayback"
           preload={load ? "auto" : "metadata"}
@@ -694,36 +684,36 @@ export default function SplikCard(props: SplikCardProps) {
             />
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 ml-2 flex-shrink-0">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={5}>
-              {currentUser?.id === splik.user_id && (
-                <DropdownMenuItem onClick={() => setShowBoostModal(true)} className="cursor-pointer text-primary">
-                  <Rocket className="h-4 w-4 mr-2" />
-                  Promote Video
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
-                <Copy className="h-4 w-4 mr-2" />
-                Copy Link
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 ml-2 flex-shrink-0">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={5}>
+            {currentUser?.id === splik.user_id && (
+              <DropdownMenuItem onClick={() => setShowBoostModal(true)} className="cursor-pointer text-primary">
+                <Rocket className="h-4 w-4 mr-2" />
+                Promote Video
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowReportModal(true)} className="cursor-pointer">
-                <Flag className="h-4 w-4 mr-2" />
-                Report
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })}
-                className="cursor-pointer"
-              >
-                <UserX className="h-4 w-4 mr-2" />
-                Block User
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            )}
+            <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
+              <Copy className="h-4 w-4 mr-2" />
+              Copy Link (social)
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowReportModal(true)} className="cursor-pointer">
+              <Flag className="h-4 w-4 mr-2" />
+              Report
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })}
+              className="cursor-pointer"
+            >
+              <UserX className="h-4 w-4 mr-2" />
+              Block User
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         </div>
 
         {/* ACTIONS */}
@@ -816,9 +806,10 @@ export default function SplikCard(props: SplikCardProps) {
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || "Check out this video"}
-        // Provide both: OG link for social, and pretty link if your modal shows both
+        // Always feed the OG URL so socials pull the real cover
         // @ts-ignore
         shareUrl={OG_URL}
+        // You can also render the on-site page if your modal shows both:
         // @ts-ignore
         viewUrl={VIEW_URL}
       />
