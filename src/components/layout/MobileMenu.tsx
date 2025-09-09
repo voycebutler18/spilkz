@@ -1,4 +1,3 @@
-// src/components/layout/MobileMenu.tsx
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -9,7 +8,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles } from "lucide-react";
+import { Sparkles, LogOut } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface MobileMenuProps {
@@ -47,13 +46,9 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
     };
   }, []);
 
-  // ⬇️ FIX: use hard reload after signOut so Chrome mobile doesn't keep the sheet overlay
   const handleSignOut = async () => {
-    try {
-      await supabase.auth.signOut();
-    } finally {
-      window.location.href = "/"; // hard reload clears any stale session state
-    }
+    await supabase.auth.signOut();
+    go("/");
   };
 
   return (
@@ -63,7 +58,8 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
         if (!value) onClose();
       }}
     >
-      <SheetContent side="left" className="w-[280px] sm:w-[350px]">
+      {/* give the content bottom padding so the sticky CTA never overlaps list */}
+      <SheetContent side="left" className="w-[280px] sm:w-[350px] pb-24">
         <SheetHeader>
           <SheetTitle className="flex items-center space-x-2">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -99,7 +95,6 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             </Link>
           )}
 
-          {/* Optional upload CTA */}
           {isAuthed && (
             <Button className="mt-1" onClick={() => go("/upload")}>
               Upload
@@ -204,29 +199,41 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
               >
                 Messages
               </Link>
+
+              {/* 👉 make sign out visible inside the list, not just at the very bottom */}
+              <button
+                onClick={handleSignOut}
+                className="text-left rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors flex items-center gap-2"
+              >
+                <LogOut className="h-4 w-4" />
+                Sign out
+              </button>
             </nav>
           </>
         )}
 
-        {/* Auth actions */}
-        <div className="mt-8 flex flex-col space-y-2">
-          {isAuthed ? (
-            <Button variant="outline" onClick={handleSignOut}>
-              Sign out
-            </Button>
-          ) : (
-            <>
-              <Button variant="outline" onClick={() => go("/login")}>
-                Log in
+        {/* Auth actions / sticky bottom CTA  */}
+        <div className="fixed left-0 right-0 bottom-0 p-4 bg-background/70 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="px-2">
+            {isAuthed ? (
+              <Button variant="outline" className="w-full" onClick={handleSignOut}>
+                <LogOut className="h-4 w-4 mr-2" />
+                Sign out
               </Button>
-              <Button
-                className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
-                onClick={() => go("/signup")}
-              >
-                Sign up
-              </Button>
-            </>
-          )}
+            ) : (
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => go("/login")}>
+                  Log in
+                </Button>
+                <Button
+                  className="flex-1 bg-gradient-to-r from-primary to-secondary hover:opacity-90"
+                  onClick={() => go("/signup")}
+                >
+                  Sign up
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </SheetContent>
     </Sheet>
