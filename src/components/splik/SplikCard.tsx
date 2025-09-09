@@ -3,8 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Heart, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, BookmarkCheck,
-  Volume2, VolumeX, Rocket, Sparkles,
+  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -29,11 +28,10 @@ type Splik = {
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
-  likes_count?: number | null;
-  comments_count?: number | null;
+  // don't trust likes_count / comments_count on the row
+  profile?: any;
   mood?: string | null;
   status?: string | null;
-  profile?: any;
   trim_start?: number | null;
   trim_end?: number | null;
 };
@@ -43,13 +41,12 @@ interface SplikCardProps {
   onSplik?: () => void;
   onReact?: () => void;
   onShare?: () => void;
-
   index?: number;
   shouldLoad?: boolean;
   onPrimaryVisible?: (index: number) => void;
 }
 
-/* ---------- play/pause coordination across cards ---------- */
+/* ---- global play/pause coordination ---- */
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
 const playExclusive = async (el: HTMLVideoElement) => {
   if (CURRENT_PLAYING && CURRENT_PLAYING !== el) { try { CURRENT_PLAYING.pause(); } catch {} }
@@ -72,12 +69,11 @@ export default function SplikCard(props: SplikCardProps) {
   const [isMuted, setIsMuted] = useState(true);
 
   const [isLiked, setIsLiked] = useState(false);
-  const [likesCount, setLikesCount] = useState(splik.likes_count || 0);
-  const [commentsCount, setCommentsCount] = useState(splik.comments_count || 0);
+  const [likesCount, setLikesCount] = useState<number | null>(null);
+  const [commentsCount, setCommentsCount] = useState<number | null>(null);
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-
   const [likePending, setLikePending] = useState(false);
 
   const [showShareModal, setShowShareModal] = useState(false);
@@ -95,13 +91,13 @@ export default function SplikCard(props: SplikCardProps) {
 
   const creatorSlug = splik.profile?.username || splik.profile?.handle || splik.user_id;
 
-  // Trim window
+  // 3s loop window
   const START = Math.max(0, Number(splik.trim_start ?? 0));
   const RAW_END = Number.isFinite(Number(splik.trim_end)) ? Number(splik.trim_end) : START + 3;
   const END = Math.max(START, Math.min(START + 3, RAW_END));
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
-  /* ---------- autoplay/seek logic ---------- */
+  /* ---- autoplay / visibility ---- */
   useEffect(() => {
     const video = videoRef.current;
     const el = cardRef.current;
@@ -141,7 +137,6 @@ export default function SplikCard(props: SplikCardProps) {
       async (entries) => {
         entries.forEach(async (entry) => {
           const mostlyVisible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
-
           if (mostlyVisible && props.onPrimaryVisible) props.onPrimaryVisible(idx);
           if (!load) return;
 
@@ -173,7 +168,7 @@ export default function SplikCard(props: SplikCardProps) {
     };
   }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
-  // Loop the 3s segment when playing
+  // enforce 3s loop
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -186,27 +181,26 @@ export default function SplikCard(props: SplikCardProps) {
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
   }, [START, END, SEEK_SAFE]);
 
-  // If Home flips shouldLoad from false → true, allow fresh prime on next intersection
   useEffect(() => {
     if (load) {
       primedRef.current = false;
-      const v = videoRef.current;
-      try { v?.load(); } catch {}
+      try { videoRef.current?.load(); } catch {}
     } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
     }
   }, [load]);
 
-  /* ---------- load user + like/saved states + realtime ---------- */
+  /* ---- state: user + initial exact counts + realtime on row tables ---- */
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!mounted) return;
       setCurrentUser(user);
 
-      // initial likes & favorites state for this user
+      // user-specific flags
       if (user) {
         const { data: likeRow } = await supabase
           .from("likes").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
@@ -219,49 +213,30 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(!!favRow);
       }
 
-      // Always refresh counts from source of truth:
-      // Likes will keep coming from spliks updates; comments we count exactly + listen to row-level changes.
-      setLikesCount(splik.likes_count || 0);
-
-      // Accurate comment count (overrides any stale value on the card)
-      const { count: initialComments } = await supabase
-        .from("comments")
-        .select("*", { count: "exact", head: true })
-        .eq("splik_id", splik.id);
+      // initial EXACT counts (ignore denormalized columns)
+      const [{ count: likes0, error: le }, { count: comments0, error: ce }] = await Promise.all([
+        supabase.from("likes").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
+        supabase.from("comments").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
+      ]);
       if (!mounted) return;
-      setCommentsCount(initialComments ?? 0);
+      setLikesCount(le ? 0 : (likes0 ?? 0));
+      setCommentsCount(ce ? 0 : (comments0 ?? 0));
 
-      // Favorites live (per-user)
-      const favChannel = user
-        ? supabase
-            .channel(`fav-${user.id}-${splik.id}`)
-            .on(
-              "postgres_changes",
-              { schema: "public", table: "favorites", event: "INSERT", filter: `user_id=eq.${user.id}` },
-              (payload) => { if (payload.new?.splik_id === splik.id) setIsSaved(true); }
-            )
-            .on(
-              "postgres_changes",
-              { schema: "public", table: "favorites", event: "DELETE", filter: `user_id=eq.${user.id}` },
-              (payload) => { if ((payload.old as any)?.splik_id === splik.id) setIsSaved(false); }
-            )
-            .subscribe()
-        : null;
-
-      // Likes live via spliks row updates (don’t adjust comments here to avoid double-bumps)
-      const likeCountersChannel = supabase
-        .channel(`splik-likes-${splik.id}`)
+      // realtime: listen directly on likes / comments rows
+      const likesChannel = supabase
+        .channel(`likes-${splik.id}`)
         .on(
           "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${splik.id}` },
-          (p) => {
-            const next = p.new as any;
-            if (typeof next.likes_count === "number") setLikesCount(next.likes_count);
-          }
+          { schema: "public", table: "likes", event: "INSERT", filter: `splik_id=eq.${splik.id}` },
+          () => setLikesCount((c) => (c ?? 0) + 1)
+        )
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "likes", event: "DELETE", filter: `splik_id=eq.${splik.id}` },
+          () => setLikesCount((c) => Math.max(0, (c ?? 0) - 1))
         )
         .subscribe();
 
-      // Comments live via row-level changes to comments table
       const commentsChannel = supabase
         .channel(`comments-${splik.id}`)
         .on(
@@ -277,16 +252,15 @@ export default function SplikCard(props: SplikCardProps) {
         .subscribe();
 
       return () => {
-        if (favChannel) supabase.removeChannel(favChannel);
-        supabase.removeChannel(likeCountersChannel);
+        supabase.removeChannel(likesChannel);
         supabase.removeChannel(commentsChannel);
       };
     })();
 
     return () => { mounted = false; };
-  }, [splik.id, splik.likes_count]);
+  }, [splik.id]);
 
-  /* ---------- LIKE: idempotent + snap-to-DB ---------- */
+  /* ---- like / unlike ---- */
   const handleSplik = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (likePending) return;
@@ -300,46 +274,55 @@ export default function SplikCard(props: SplikCardProps) {
     setLikePending(true);
     const wantLike = !isLiked;
 
+    // optimistic
     setIsLiked(wantLike);
-    setLikesCount((p) => Math.max(0, p + (wantLike ? 1 : -1)));
+    setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? 1 : -1)));
 
     try {
       if (wantLike) {
-        const { error } = await supabase
+        await supabase
           .from("likes")
-          .upsert(
-            { user_id: user.id, splik_id: splik.id },
-            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
-          );
-        if (error) throw error;
+          .upsert({ user_id: user.id, splik_id: splik.id }, { onConflict: "user_id,splik_id", ignoreDuplicates: true });
       } else {
-        const { error } = await supabase
-          .from("likes")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("splik_id", splik.id);
-        if (error) throw error;
+        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splik.id);
       }
 
+      // snap to DB exact count (avoid drift)
       const { count } = await supabase
         .from("likes")
         .select("*", { count: "exact", head: true })
         .eq("splik_id", splik.id);
-
-      if (typeof count === "number") setLikesCount(count);
+      setLikesCount(count ?? 0);
 
       onSplik?.();
     } catch {
       setIsLiked((prev) => !prev);
-      setLikesCount((p) => Math.max(0, p + (wantLike ? -1 : 1)));
+      setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? -1 : 1)));
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
     } finally {
       setLikePending(false);
     }
   };
 
-  const handleComment = () => { setShowCommentsModal(true); onReact?.(); };
-  const handleShare = () => { setShowShareModal(true); onShare?.(); };
+  const handlePlayToggle = async () => {
+    const video = videoRef.current;
+    if (!video || !load) return;
+    if (isPlaying) {
+      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
+      pauseIfCurrent(video); setIsPlaying(false);
+    } else {
+      try { video.currentTime = SEEK_SAFE; } catch {}
+      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); }
+      await playExclusive(video); setIsPlaying(true);
+    }
+  };
+
+  const toggleMute = () => {
+    const video = videoRef.current; if (!video) return;
+    const next = !isMuted; video.muted = next;
+    if (next) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
+    setIsMuted(next);
+  };
 
   const toggleFavorite = async () => {
     if (saving) return;
@@ -371,26 +354,6 @@ export default function SplikCard(props: SplikCardProps) {
     const url = `${window.location.origin.replace(/\/$/,'')}/v/${splik.id}`;
     navigator.clipboard.writeText(url);
     toast({ title: "Link copied", description: "Share link copied to clipboard" });
-  };
-
-  const handlePlayToggle = async () => {
-    const video = videoRef.current;
-    if (!video || !load) return;
-    if (isPlaying) {
-      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
-      pauseIfCurrent(video); setIsPlaying(false);
-    } else {
-      try { video.currentTime = SEEK_SAFE; } catch {}
-      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); }
-      await playExclusive(video); setIsPlaying(true);
-    }
-  };
-
-  const toggleMute = () => {
-    const video = videoRef.current; if (!video) return;
-    const next = !isMuted; video.muted = next;
-    if (next) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
-    setIsMuted(next);
   };
 
   const videoHeight = isMobile ? "60svh" : "500px";
@@ -528,9 +491,10 @@ export default function SplikCard(props: SplikCardProps) {
                 <Flag className="h-4 w-4 mr-2" />
                 Report
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() =>
-                toast({ title: "User blocked", description: "You won't see content from this user anymore" })
-              } className="cursor-pointer">
+              <DropdownMenuItem
+                onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })}
+                className="cursor-pointer"
+              >
                 <UserX className="h-4 w-4 mr-2" />
                 Block User
               </DropdownMenuItem>
@@ -571,36 +535,10 @@ export default function SplikCard(props: SplikCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={async () => {
-              if (saving) return;
-              const { data: { user } } = await supabase.auth.getUser();
-              if (!user) {
-                toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
-                return;
-              }
-              setSaving(true);
-              const next = !isSaved;
-              setIsSaved(next);
-              try {
-                if (next) {
-                  await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
-                  toast({ title: "Added to favorites", description: "Video saved to your favorites" });
-                } else {
-                  await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-                  toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
-                }
-              } catch {
-                setIsSaved(!next);
-                toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
-              } finally {
-                setSaving(false);
-              }
-            }}
+            onClick={toggleFavorite}
             disabled={saving}
-            className={cn(
-              "flex items-center space-x-2 transition-colors flex-1",
-              isSaved ? "text-yellow-400 hover:text-yellow-500" : ""
-            )}
+            className={cn("flex items-center space-x-2 transition-colors flex-1",
+              isSaved ? "text-yellow-400 hover:text-yellow-500" : "")}
             aria-pressed={isSaved}
           >
             {isSaved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
@@ -608,10 +546,7 @@ export default function SplikCard(props: SplikCardProps) {
           </Button>
         </div>
 
-        {/* DESCRIPTION */}
-        {splik.description && (
-          <p className="mt-2 text-sm">{splik.description}</p>
-        )}
+        {splik.description && <p className="mt-2 text-sm">{splik.description}</p>}
 
         {splik.mood && (
           <div className="mt-3">
