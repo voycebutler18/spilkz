@@ -75,7 +75,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  // NEW state to control the poster overlay
+  // Poster overlay state
   const [posterVisible, setPosterVisible] = useState(true);
 
   const [isLiked, setIsLiked] = useState(false);
@@ -98,8 +98,8 @@ export default function SplikCard(props: SplikCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
   const primePromiseRef = useRef<Promise<void> | null>(null);
-  
-  // NEW: Refs for mobile loop enforcement
+
+  // Mobile loop enforcement helpers
   const loopTimerRef = useRef<number | null>(null);
   const lastSeekTimeRef = useRef(0);
 
@@ -114,8 +114,14 @@ export default function SplikCard(props: SplikCardProps) {
   const END = Math.max(START, Math.min(START + 3, RAW_END));
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
-  /* ---------- NEW helpers for smooth video transitions ---------- */
-  // Wait for 'seeked' after setting currentTime
+  /* ---------- Share URL (OG function) ---------- */
+  const SHARE_BASE =
+    import.meta.env.VITE_OG_FUNCTION_BASE ||
+    `${window.location.origin.replace(/\/$/, "")}/video`; // fallback to your SPA route
+
+  const shareUrl = `${SHARE_BASE}/${splik.id}`;
+
+  /* ---------- helpers for smooth video transitions ---------- */
   const seekTo = (v: HTMLVideoElement, t: number) =>
     new Promise<void>((resolve) => {
       const done = () => {
@@ -126,11 +132,8 @@ export default function SplikCard(props: SplikCardProps) {
       try { v.currentTime = t; } catch { resolve(); }
     });
 
-  // Prime the video to the first frame we'll show (SEEK_SAFE)
-  // …do this once, before the first play.
   const primeToStart = async (v: HTMLVideoElement) => {
     if (primedRef.current) return;
-    // Ensure metadata exists so a seek won't be ignored
     if (v.readyState < 1) {
       await new Promise<void>((res) => {
         const on = () => { v.removeEventListener("loadedmetadata", on); res(); };
@@ -141,7 +144,6 @@ export default function SplikCard(props: SplikCardProps) {
     primedRef.current = true;
   };
 
-  // Hide the poster only once the *first video frame* is actually painted
   const hidePosterWhenPainted = (v: HTMLVideoElement) => {
     // @ts-ignore
     if (v.requestVideoFrameCallback) {
@@ -153,38 +155,28 @@ export default function SplikCard(props: SplikCardProps) {
     }
   };
 
-  /* ---------- ENHANCED loop enforcement for mobile ---------- */
+  /* ---------- Enhanced loop enforcement (esp. mobile) ---------- */
   const enforceLoop = useCallback((v: HTMLVideoElement) => {
     if (!v) return;
     const now = performance.now();
-    
-    // Prevent too frequent seeks (can cause stuttering)
     if (now - lastSeekTimeRef.current < 100) return;
-    
-    const currentTime = v.currentTime;
-    if (currentTime < START || currentTime >= END) {
+
+    const t = v.currentTime;
+    if (t < START || t >= END) {
       try {
         v.currentTime = SEEK_SAFE;
         lastSeekTimeRef.current = now;
       } catch (e) {
-        console.warn('Failed to seek video:', e);
+        console.warn("Failed to seek video:", e);
       }
     }
   }, [START, END, SEEK_SAFE]);
 
-  // NEW: Aggressive timer-based loop enforcement for mobile
   const startLoopTimer = useCallback((v: HTMLVideoElement) => {
-    if (loopTimerRef.current) {
-      clearInterval(loopTimerRef.current);
-    }
-    
-    // Check every 100ms on mobile, 250ms on desktop
+    if (loopTimerRef.current) clearInterval(loopTimerRef.current);
     const interval = isMobile ? 100 : 250;
-    
     loopTimerRef.current = window.setInterval(() => {
-      if (v && isPlaying && !v.paused) {
-        enforceLoop(v);
-      }
+      if (v && isPlaying && !v.paused) enforceLoop(v);
     }, interval);
   }, [isMobile, isPlaying, enforceLoop]);
 
@@ -195,7 +187,7 @@ export default function SplikCard(props: SplikCardProps) {
     }
   }, []);
 
-  /* ---------- existing helpers ---------- */
+  /* ---------- counts fetch ---------- */
   const fetchExactCounts = useCallback(async () => {
     try {
       const [{ count: likes0 }, { count: comments0 }, { data: srow }] = await Promise.all([
@@ -207,11 +199,11 @@ export default function SplikCard(props: SplikCardProps) {
       setCommentsCount(comments0 ?? 0);
       setViewsCount(srow?.views_count ?? 0);
     } catch {
-      // keep prior values on failure
+      // keep prior values
     }
   }, [splik.id]);
 
-  // 🔹 Session ID for de-dup (one view per session per video)
+  // view de-dup per session + per video
   const sessionId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const key = "view:sid";
@@ -228,7 +220,6 @@ export default function SplikCard(props: SplikCardProps) {
 
   const markView = useCallback(async () => {
     if (viewedOnceRef.current) return;
-    // also gate by session storage per specific splik
     const perSplikKey = `viewed:${splik.id}`;
     if (sessionStorage.getItem(perSplikKey) === "1") {
       viewedOnceRef.current = true;
@@ -237,7 +228,6 @@ export default function SplikCard(props: SplikCardProps) {
     viewedOnceRef.current = true;
     sessionStorage.setItem(perSplikKey, "1");
 
-    // Optimistic UI
     setViewsCount((v) => (v ?? 0) + 1);
 
     try {
@@ -248,12 +238,11 @@ export default function SplikCard(props: SplikCardProps) {
         p_viewer_id: user?.id ?? null,
       });
     } catch (e) {
-      // swallow; counter will reconcile via realtime or next fetch
       console.warn("safe_increment_view failed:", e);
     }
   }, [sessionId, splik.id]);
 
-  /* ---- UPDATED autoplay / visibility ---- */
+  /* ---- autoplay / visibility ---- */
   useEffect(() => {
     const v = videoRef.current;
     const el = cardRef.current;
@@ -289,15 +278,11 @@ export default function SplikCard(props: SplikCardProps) {
         if (!load) return;
 
         if (mostlyVisible) {
-          // start a short timer; count a view if we stayed visible long enough
           if (!viewedOnceRef.current) {
             if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
-            viewTimerRef.current = window.setTimeout(() => {
-              markView();
-            }, 1200); // ≈1.2s in view → counts as a "view"
+            viewTimerRef.current = window.setTimeout(markView, 1200);
           }
 
-          // Prime once per mount (no black seek while playing)
           try {
             if (!primedRef.current) {
               const p = primePromiseRef.current || primeToStart(v);
@@ -312,8 +297,8 @@ export default function SplikCard(props: SplikCardProps) {
           try {
             await playExclusive(v);
             setIsPlaying(true);
-            startLoopTimer(v); // NEW: Start aggressive loop enforcement
-            hidePosterWhenPainted(v); // fade poster right after the first frame actually draws
+            startLoopTimer(v);
+            hidePosterWhenPainted(v);
           } catch {
             setIsPlaying(false);
             stopLoopTimer();
@@ -324,12 +309,11 @@ export default function SplikCard(props: SplikCardProps) {
             viewTimerRef.current = null;
           }
           pauseIfCurrent(v);
-          stopLoopTimer(); // NEW: Stop loop timer when not visible
-          // Keep the frame at SEEK_SAFE so the next play is instant without a flash
+          stopLoopTimer();
           try { if (primedRef.current) v.currentTime = SEEK_SAFE; } catch {}
           v.muted = true; v.setAttribute("muted", "true");
           setIsPlaying(false);
-          setPosterVisible(true); // show poster while paused/offscreen (no black)
+          setPosterVisible(true);
         }
       });
     }, { threshold: [0, 0.25, 0.5, 0.7, 1], rootMargin: "0px 0px -10% 0px" });
@@ -341,37 +325,28 @@ export default function SplikCard(props: SplikCardProps) {
       io.disconnect();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       pauseIfCurrent(v);
-      stopLoopTimer(); // NEW: Cleanup timer
+      stopLoopTimer();
       primedRef.current = false;
       if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
     };
   }, [isMuted, SEEK_SAFE, load, idx, props.onPrimaryVisible, markView, startLoopTimer, stopLoopTimer]);
 
-  // ENHANCED 3s loop enforcement - multiple mechanisms
+  // enforce loop via multiple mechanisms
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
-    // Primary mechanism: timeupdate event
     const onTimeUpdate = () => enforceLoop(v);
-    
-    // Secondary mechanism: ended event (backup)
     const onEnded = () => {
       try {
         v.currentTime = SEEK_SAFE;
-        if (isPlaying && !v.paused) {
-          v.play();
-        }
+        if (isPlaying && !v.paused) v.play();
       } catch {}
     };
-
-    // Tertiary mechanism: seeking event (prevent manual seeking beyond bounds)
     const onSeeking = () => {
-      const currentTime = v.currentTime;
-      if (currentTime < START || currentTime >= END) {
-        try {
-          v.currentTime = SEEK_SAFE;
-        } catch {}
+      const t = v.currentTime;
+      if (t < START || t >= END) {
+        try { v.currentTime = SEEK_SAFE; } catch {}
       }
     };
 
@@ -386,26 +361,17 @@ export default function SplikCard(props: SplikCardProps) {
     };
   }, [START, END, SEEK_SAFE, isPlaying, enforceLoop]);
 
-  // NEW: Monitor playing state changes for timer management
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-
-    if (isPlaying && !v.paused) {
-      startLoopTimer(v);
-    } else {
-      stopLoopTimer();
-    }
-
+    if (isPlaying && !v.paused) startLoopTimer(v);
+    else stopLoopTimer();
     return () => stopLoopTimer();
   }, [isPlaying, startLoopTimer, stopLoopTimer]);
 
-  // UPDATED: Don't force .load() when shouldLoad flips
   useEffect(() => {
     if (load) {
       primedRef.current = false;
-      // ❌ REMOVED this line – it forces a reload & black frame flash
-      // try { videoRef.current?.load(); } catch {}
     } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
@@ -457,7 +423,6 @@ export default function SplikCard(props: SplikCardProps) {
         )
         .subscribe();
 
-      // realtime updates to views_count
       const viewsChannel = supabase
         .channel(`views-${splik.id}`)
         .on(
@@ -507,7 +472,7 @@ export default function SplikCard(props: SplikCardProps) {
       } else {
         await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splik.id);
       }
-      await fetchExactCounts(); // snap to truth
+      await fetchExactCounts();
       onSplik?.();
     } catch {
       setIsLiked((prev) => !prev);
@@ -538,36 +503,26 @@ export default function SplikCard(props: SplikCardProps) {
     setIsMuted(next);
   };
 
-  const toggleFavorite = async () => {
-    if (saving) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
-      return;
-    }
-    setSaving(true);
-    const next = !isSaved;
-    setIsSaved(next);
-    try {
-      if (next) {
-        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
-        toast({ title: "Added to favorites", description: "Video saved to your favorites" });
-      } else {
-        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-        toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
-      }
-    } catch {
-      setIsSaved(!next);
-      toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
+  /* ------ SHARE / COPY with correct OG link ------ */
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(shareUrl);
+    toast({ title: "Link copied", description: "Share link copied to clipboard" });
   };
 
-  const handleCopyLink = () => {
-    const url = `${window.location.origin.replace(/\/$/,'')}/v/${splik.id}`;
-    navigator.clipboard.writeText(url);
-    toast({ title: "Link copied", description: "Share link copied to clipboard" });
+  const handleShare = async () => {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: splik.title || "Splikz", url: shareUrl });
+      } else {
+        // Fallback: open your modal
+        setShowShareModal(true);
+        await navigator.clipboard.writeText(shareUrl);
+        toast({ title: "Link copied", description: "Paste it anywhere to share" });
+      }
+      onShare?.();
+    } catch {
+      setShowShareModal(true);
+    }
   };
 
   const videoHeight = isMobile ? "60svh" : "500px";
@@ -584,7 +539,7 @@ export default function SplikCard(props: SplikCardProps) {
         isBoosted && "ring-2 ring-primary/50"
       )}
     >
-      {/* VIDEO - UPDATED with poster overlay */}
+      {/* VIDEO */}
       <div
         className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
         style={{ height: videoHeight, maxHeight: "80svh" }}
@@ -645,7 +600,7 @@ export default function SplikCard(props: SplikCardProps) {
           // @ts-expect-error
           webkit-playsinline="true"
           disablePictureInPicture
-          disableRemotePlaybook
+          disableRemotePlayback
           controlsList="nodownload noplaybackrate noremoteplayback"
           preload={load ? "auto" : "metadata"}
           data-splik-id={splik.id}
@@ -762,7 +717,7 @@ export default function SplikCard(props: SplikCardProps) {
             <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
           </Button>
 
-          {/* Views (read-only) */}
+          {/* Views */}
           <div className="inline-flex items-center gap-2 px-2 py-1 text-muted-foreground">
             <Eye className="h-4 w-4" />
             <span className="text-xs font-medium">{(viewsCount ?? 0).toLocaleString()}</span>
@@ -772,7 +727,7 @@ export default function SplikCard(props: SplikCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setShowShareModal(true); onShare?.(); }}
+            onClick={handleShare}
             className="flex items-center gap-2 hover:text-green-500"
           >
             <Share2 className="h-4 w-4" />
@@ -795,12 +750,8 @@ export default function SplikCard(props: SplikCardProps) {
         </div>
 
         {/* Title + Description */}
-        {splik.title && (
-          <p className="mt-2 text-sm font-semibold">{splik.title}</p>
-        )}
-        {splik.description && (
-          <p className="mt-1 text-sm">{splik.description}</p>
-        )}
+        {splik.title && <p className="mt-2 text-sm font-semibold">{splik.title}</p>}
+        {splik.description && <p className="mt-1 text-sm">{splik.description}</p>}
 
         {splik.mood && (
           <div className="mt-3">
@@ -823,6 +774,9 @@ export default function SplikCard(props: SplikCardProps) {
         onClose={() => setShowShareModal(false)}
         videoId={splik.id}
         videoTitle={splik.title || "Check out this video"}
+        // If your ShareModal supports it, pass the resolved URL to ensure it uses the OG link:
+        // @ts-ignore (safe if prop doesn't exist)
+        shareUrl={shareUrl}
       />
 
       <CommentsModal
