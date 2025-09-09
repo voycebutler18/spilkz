@@ -78,8 +78,9 @@ export default function CreatorProfile() {
           if (me?.username) {
             navigate(`/creator/${me.username}`, { replace: true });
           } else {
-            // Fall back to legacy /profile/:id page if no username yet
-            navigate(`/profile/${uid}`, { replace: true });
+            // Instead of redirecting to /profile/:id, redirect to /creator/:id
+            // This ensures the current component handles the route
+            navigate(`/creator/${uid}`, { replace: true });
           }
           return;
         }
@@ -94,53 +95,75 @@ export default function CreatorProfile() {
       setLikedSpliks([]);
 
       try {
-        // 1) Try username case-insensitively
-        let { data, error } = await supabase
-          .from("profiles")
-          .select("*")
-          .ilike("username", s) // case-insensitive exact (no % wildcards used)
-          .maybeSingle<Profile>();
+        let profileData: Profile | null = null;
 
-        // If ilike somehow didn’t find it (or usernames are stored lowercased), try strict lower
-        if (!data) {
-          const sLower = s.toLowerCase();
-          const byLower = await supabase
+        // 1) Try username case-insensitively first
+        if (!isUuid(s)) {
+          let { data, error } = await supabase
             .from("profiles")
             .select("*")
-            .eq("username", sLower)
+            .ilike("username", s) // case-insensitive exact (no % wildcards used)
             .maybeSingle<Profile>();
-          data = byLower.data || null;
+
+          // If ilike somehow didn't find it, try strict lower
+          if (!data) {
+            const sLower = s.toLowerCase();
+            const byLower = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("username", sLower)
+              .maybeSingle<Profile>();
+            data = byLower.data || null;
+          }
+
+          profileData = data;
         }
 
-        // 2) If not found and slug looks like a UUID, try id
-        if (!data && isUuid(s)) {
+        // 2) If not found and slug looks like a UUID, try by id
+        if (!profileData && isUuid(s)) {
           const byId = await supabase
             .from("profiles")
             .select("*")
             .eq("id", s)
             .maybeSingle<Profile>();
-          data = byId.data || null;
+          profileData = byId.data || null;
 
-          // redirect to canonical /creator/:username when we can
-          if (data?.username && s !== data.username) {
-            navigate(`/creator/${data.username}`, { replace: true });
+          // Redirect to canonical /creator/:username when we can
+          if (profileData?.username && s !== profileData.username) {
+            navigate(`/creator/${profileData.username}`, { replace: true });
             return;
           }
         }
 
-        if (!data || error) {
-          if (!cancelled) setProfile(null);
+        // 3) If still not found, try one more time with exact username match
+        if (!profileData && !isUuid(s)) {
+          const { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("username", s)
+            .maybeSingle<Profile>();
+          profileData = data;
+        }
+
+        if (!profileData) {
+          if (!cancelled) {
+            setProfile(null);
+            setLoading(false);
+          }
           return;
         }
 
         if (cancelled) return;
 
-        setProfile(data);
-        await fetchSpliks(data.id, cancelled);
-        await fetchLikedSpliks(data.id, cancelled);
+        setProfile(profileData);
+        await fetchSpliks(profileData.id, cancelled);
+        await fetchLikedSpliks(profileData.id, cancelled);
       } catch (e) {
         console.error("Error resolving profile:", e);
-        if (!cancelled) toast.error("Failed to load profile");
+        if (!cancelled) {
+          toast.error("Failed to load profile");
+          setProfile(null);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -151,7 +174,7 @@ export default function CreatorProfile() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug]);
+  }, [slug, navigate]);
 
   // Realtime subscriptions scoped to this profile id
   useEffect(() => {
@@ -235,7 +258,7 @@ export default function CreatorProfile() {
       if (!cancelled) setSpliks(spliksWithProfiles);
     } catch (e) {
       console.error("Error fetching videos:", e);
-      toast.error("Failed to load videos");
+      if (!cancelled) toast.error("Failed to load videos");
     }
   };
 
@@ -358,6 +381,9 @@ export default function CreatorProfile() {
         <Header />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
           <h2 className="text-2xl font-semibold mb-4">Profile not found</h2>
+          <p className="text-muted-foreground mb-6">
+            The profile you're looking for doesn't exist or may have been removed.
+          </p>
           <Button onClick={() => navigate("/")}>Go Home</Button>
         </div>
         <Footer />
