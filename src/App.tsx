@@ -3,19 +3,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Navigate,
-  useNavigate,
-  useLocation,
-} from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
 
-// Pages
+// Pages (site)
 import Index from "./pages/Index";
 import About from "./pages/About";
 import Explore from "./pages/Explore";
@@ -54,8 +47,10 @@ import CreatorProfile from "./pages/CreatorProfile";
 import VideoPage from "./pages/VideoPage";
 import Search from "./pages/Search";
 
-// Messaging
+// Messaging - NEW COMBINED COMPONENT
 import CombinedMessages from "./pages/CombinedMessages";
+
+// Mobile fallback messaging (keep for mobile responsiveness)
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
 
@@ -66,52 +61,6 @@ import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
 const queryClient = new QueryClient();
-
-/** Minimal error boundary to avoid blank screens */
-function RootErrorBoundary({ children }: { children: React.ReactNode }) {
-  const [err, setErr] = useState<Error | null>(null);
-  if (err) {
-    return (
-      <div className="min-h-screen grid place-items-center p-6 bg-background">
-        <div className="max-w-xl w-full rounded-lg border p-6">
-          <h1 className="text-xl font-semibold mb-2">Something went wrong</h1>
-          <p className="text-sm text-muted-foreground mb-4">
-            A runtime error occurred while rendering the app. Use the button below to go home.
-          </p>
-          <pre className="text-xs overflow-auto p-3 bg-muted rounded mb-4">
-            {err.message}
-          </pre>
-          <a
-            href="/home"
-            className="inline-flex items-center px-3 py-2 rounded bg-primary text-primary-foreground"
-          >
-            Go to Home
-          </a>
-        </div>
-      </div>
-    );
-  }
-
-  // Wrap a try/catch around rendering children
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return <ErrorCatcher onError={setErr as any}>{children}</ErrorCatcher>;
-}
-
-/** Internal component that throws to our stateful boundary */
-function ErrorCatcher({
-  children,
-  onError,
-}: {
-  children: React.ReactNode;
-  onError: (e: Error) => void;
-}) {
-  try {
-    return <>{children}</>;
-  } catch (e) {
-    onError(e as Error);
-    return null;
-  }
-}
 
 /** Back-compat: /upload opens the global upload modal and then routes home */
 function UploadRoute() {
@@ -125,7 +74,7 @@ function UploadRoute() {
 
   useEffect(() => {
     if (!isOpen) {
-      const t = setTimeout(() => navigate("/home", { replace: true }), 150);
+      const t = setTimeout(() => navigate("/", { replace: true }), 150);
       return () => clearTimeout(t);
     }
   }, [isOpen, navigate]);
@@ -133,10 +82,11 @@ function UploadRoute() {
   return null;
 }
 
-/** Force the window to the top on route changes */
+/** Force the window to the top on route changes (fixes "pages start at bottom") */
 function ScrollToTop() {
   const { pathname, hash } = useLocation();
 
+  // Set manual restoration once
   useEffect(() => {
     try {
       if ("scrollRestoration" in window.history) {
@@ -146,7 +96,10 @@ function ScrollToTop() {
   }, []);
 
   useEffect(() => {
+    // Keep anchor links (/#section) working
     if (hash) return;
+
+    // Reset window + doc scroll
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
@@ -155,13 +108,12 @@ function ScrollToTop() {
   return null;
 }
 
-/** Desktop vs mobile messaging chooser */
+/** Hook to detect desktop for routing the messages experience */
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
-    typeof window !== "undefined"
-      ? window.matchMedia("(min-width: 1024px)").matches
-      : true
+    typeof window !== "undefined" ? window.matchMedia("(min-width: 1024px)").matches : true
   );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -169,9 +121,11 @@ function useIsDesktop() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
   return isDesktop;
 }
 
+/** Route element that picks desktop (combined) vs mobile (separate pages) */
 function MessagesIndexRoute() {
   const isDesktop = useIsDesktop();
   return isDesktop ? <CombinedMessages /> : <MessagesInbox />;
@@ -188,63 +142,67 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {/* 🔝 ensure new routes start at the top */}
         <ScrollToTop />
-        <RootErrorBoundary>
-          <UploadModalProvider>
-            <Routes>
-              {/* Auth */}
-              <Route path="/login" element={<Login />} />
-              <Route path="/signup" element={<Signup />} />
-              <Route path="/auth/callback" element={<AuthCallback />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
 
-              {/* Admin */}
-              <Route path="/admin" element={<Admin />} />
+        <UploadModalProvider>
+          <Routes>
+            {/* Auth screens (no layout) */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
-              {/* Back-compat upload */}
-              <Route path="/upload" element={<UploadRoute />} />
+            {/* Admin (no public layout) */}
+            <Route path="/admin" element={<Admin />} />
 
-              {/* Redirect root → home (bypass Splash to avoid crashes) */}
-              <Route path="/" element={<Navigate to="/home" replace />} />
+            {/* Back-compat upload route (opens modal) */}
+            <Route path="/upload" element={<UploadRoute />} />
 
-              {/* Site with layout */}
-              <Route element={<AppLayout />}>
-                <Route path="/home" element={<Index />} />
+            {/* Site with global layout */}
+            <Route element={<AppLayout />}>
+              {/* Core */}
+              <Route path="/" element={<Index />} />
+              <Route path="/about" element={<About />} />
+              <Route path="/explore" element={<Explore />} />
+              <Route path="/food" element={<Food />} />
+              <Route path="/brands" element={<ForBrands />} />
+              <Route path="/creators" element={<ForCreators />} />
+              <Route path="/press" element={<Press />} />
+              <Route path="/help" element={<HelpCenter />} />
+              <Route path="/contact" element={<Contact />} />
 
-                {/* Core */}
-                <Route path="/about" element={<About />} />
-                <Route path="/explore" element={<Explore />} />
-                <Route path="/food" element={<Food />} />
-                <Route path="/brands" element={<ForBrands />} />
-                <Route path="/creators" element={<ForCreators />} />
-                <Route path="/press" element={<Press />} />
-                <Route path="/help" element={<HelpCenter />} />
-                <Route path="/contact" element={<Contact />} />
+              {/* Redirects */}
+              <Route path="/prompts" element={<Navigate to="/food" replace />} />
 
-                {/* Redirects */}
-                <Route path="/prompts" element={<Navigate to="/food" replace />} />
+              {/* Dashboard */}
+              <Route path="/dashboard" element={<CreatorDashboard />} />
+              <Route path="/dashboard/favorites" element={<Favorites />} />
 
-                {/* Dashboard */}
-                <Route path="/dashboard" element={<CreatorDashboard />} />
-                <Route path="/dashboard/favorites" element={<Favorites />} />
+              {/* Profiles & videos */}
+              <Route path="/profile/:id" element={<Profile />} />
+              <Route path="/creator/:slug" element={<CreatorProfile />} />
+              <Route path="/video/:id" element={<VideoPage />} />
+              <Route path="/search" element={<Search />} />
+              <Route path="/splik/:id" element={<SplikPage />} />
 
-                {/* Profiles & videos */}
-                <Route path="/profile/:id" element={<Profile />} />
-                <Route path="/creator/:slug" element={<CreatorProfile />} />
-                <Route path="/video/:id" element={<VideoPage />} />
-                <Route path="/splik/:id" element={<SplikPage />} />
-                <Route path="/search" element={<Search />} />
+              {/* Messaging - Responsive Layout */}
+              <Route path="/messages" element={<MessagesIndexRoute />} />
+              <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
 
-                {/* Messaging */}
-                <Route path="/messages" element={<MessagesIndexRoute />} />
-                <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
+              {/* Legal / community */}
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/dmca" element={<DMCA />} />
+              <Route path="/guidelines" element={<Guidelines />} />
+              <Route path="/safety" element={<Safety />} />
+              <Route path="/accessibility" element={<Accessibility />} />
 
-                {/* 404 */}
-                <Route path="*" element={<NotFound />} />
-              </Route>
-            </Routes>
-          </UploadModalProvider>
-        </RootErrorBoundary>
+              {/* 404 (with layout) */}
+              <Route path="*" element={<NotFound />} />
+            </Route>
+          </Routes>
+        </UploadModalProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
