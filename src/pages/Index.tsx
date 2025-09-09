@@ -1,5 +1,5 @@
 // src/pages/Index.tsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
@@ -12,12 +12,52 @@ import { createHomeFeed, forceNewRotation } from "@/lib/feed";
 
 type SplikWithProfile = any;
 
-// Toggle pinning behavior. When false, the first card will be from the shuffled set.
-const PIN_NEWEST = false;
-
 // Rolling window: keep 5 videos “live” at any time
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
+
+/* --------------------- seeded shuffle helpers --------------------- */
+const strToSeed = (s: string) => {
+  // FNV-1a 32-bit
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0);
+};
+
+const mulberry32 = (a: number) => () => {
+  let t = a += 0x6D2B79F5;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+
+const shuffleWithSeed = <T,>(arr: T[], seed: number): T[] => {
+  const a = arr.slice();
+  const rand = mulberry32(seed >>> 0);
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+const getAnonId = () => {
+  const KEY = "feed:anon-id";
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    id =
+      (typeof crypto !== "undefined" && "randomUUID" in crypto)
+        ? (crypto as any).randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+};
+
+/* ================================================================== */
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -26,10 +66,31 @@ const Index = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0); // who’s mostly visible
-  const [shuffleEpoch, setShuffleEpoch] = useState(0); // forces remounts on shuffle
+  const [shuffleEpoch, setShuffleEpoch] = useState<number>(0); // forces remounts on each build
 
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  // Detect whether this page load is a real browser reload.
+  const isReload = useMemo(() => {
+    const nav = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined);
+    return nav?.type === "reload";
+  }, []);
+
+  // On each page load (including reload), generate a fresh session seed.
+  // This makes the order change when the user refreshes the page.
+  const sessionSeed = useMemo(() => {
+    const seed =
+      (typeof crypto !== "undefined" && (crypto as any).getRandomValues)
+        ? (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0)
+        : Math.floor(Math.random() * 2 ** 32) >>> 0;
+    sessionStorage.setItem("feed:session-seed", String(seed));
+    return seed;
+  }, []);
+
+  // Pin newest ON during a non-reload navigation; OFF after a full reload.
+  // This satisfies: “new video is top until the page is refreshed, then it shuffles.”
+  const pinNewestThisSession = useMemo(() => !isReload, [isReload]);
 
   useEffect(() => {
     document.title = "Splikz - Short Video Platform";
@@ -37,9 +98,7 @@ const Index = () => {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) =>
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) =>
       setUser(session?.user ?? null)
     );
     return () => subscription.unsubscribe();
@@ -84,27 +143,34 @@ const Index = () => {
         .order("boost_score", { ascending: false })
         .limit(15);
 
-      // 3) build feed (shuffled by your helper)
+      // 3) build feed body (createHomeFeed may include its own ordering; we'll re-shuffle deterministically)
       let feed = createHomeFeed(allSpliks || [], boostedSpliks || [], {
         userId: user?.id,
         feedType: "home",
         maxResults: 60,
       }) as SplikWithProfile[];
 
-      // 4) optionally PIN newest at the very top
-      if (PIN_NEWEST) {
+      // Personalization seed: combine user (or anon) with this page-load's session seed.
+      const who = user?.id || getAnonId();
+      const personalizedSeed = (strToSeed(who) ^ sessionSeed) >>> 0;
+
+      // Deterministic shuffle for the session, personalized per user/device.
+      let shuffled = shuffleWithSeed(feed, personalizedSeed);
+
+      // 4) Pin newest at the top for THIS session only (until full page reload)
+      if (pinNewestThisSession) {
         const newest = (allSpliks || [])[0];
         if (newest) {
-          const idx = feed.findIndex((x: any) => x.id === newest.id);
+          const idx = shuffled.findIndex((x: any) => x.id === newest.id);
           if (idx > 0) {
-            const [item] = feed.splice(idx, 1);
-            feed = [item, ...feed];
+            const [item] = shuffled.splice(idx, 1);
+            shuffled = [item, ...shuffled];
           }
         }
       }
 
-      // 5) impressions
-      feed
+      // 5) impressions for boosted
+      shuffled
         .filter((s: any) => s.isBoosted)
         .forEach((s: any) =>
           supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
@@ -112,7 +178,7 @@ const Index = () => {
 
       // 6) attach profiles
       const withProfiles = await Promise.all(
-        feed.map(async (s: any) => {
+        shuffled.map(async (s: any) => {
           const { data: profileData } = await supabase
             .from("profiles")
             .select("*")
@@ -122,13 +188,9 @@ const Index = () => {
         })
       );
 
-      // 🔁 bump epoch so React remounts items (prevents DOM reuse masking new order)
-      const epoch = Date.now();
-      setShuffleEpoch(epoch);
-
+      // Force remounts so React doesn't recycle first card across reshuffles
+      setShuffleEpoch(Date.now());
       setSpliks(withProfiles);
-
-      // Start window at top of list (which is now truly shuffled unless PIN_NEWEST)
       setActiveIndex(0);
 
       if (showToast) {
@@ -140,8 +202,8 @@ const Index = () => {
         });
       }
 
-      // Debug log: verify order is changing
-      // console.log("🧪 order", withProfiles.map((x) => x.id).join(","));
+      // Debug: verify personalization + order
+      // console.log("seed", personalizedSeed, "order:", withProfiles.map((x) => x.id).join(","));
     } catch (e) {
       console.error("Error fetching dynamic feed:", e);
       toast({
@@ -264,7 +326,7 @@ const Index = () => {
           <div className="w-full px-2 sm:px-4">
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
               <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • {PIN_NEWEST ? "Newest pinned • Rest shuffled" : "All shuffled"}
+                Showing {spliks.length} videos • {pinNewestThisSession ? "Newest pinned (until reload)" : "All shuffled"}
               </p>
             </div>
 
@@ -276,9 +338,9 @@ const Index = () => {
                     shouldLoad={shouldLoadIndex(index)}
                     onPrimaryVisible={(i) => setActiveIndex(i)}
                     splik={splik}
-                    onSplik={() => handleSplik(splik.id)}
-                    onReact={() => handleReact(splik.id)}
-                    onShare={() => handleShare(splik.id)}
+                    onSplik={() => {}}
+                    onReact={() => {}}
+                    onShare={() => {}}
                   />
                 </div>
               ))}
@@ -317,7 +379,7 @@ const Index = () => {
             fetchDynamicFeed();
             toast({
               title: "Upload successful!",
-              description: "Your video is now live and appears at the top of feeds",
+              description: "Your video is now live and appears at the top of feeds (until reload).",
             });
           }}
         />
