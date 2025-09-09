@@ -1,5 +1,4 @@
 // src/App.tsx
-import Splash from "./pages/Splash";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,6 +9,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 
 // Pages (site)
+import Splash from "./pages/Splash";
 import Index from "./pages/Index";
 import About from "./pages/About";
 import Explore from "./pages/Explore";
