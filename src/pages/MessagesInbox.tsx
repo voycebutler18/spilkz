@@ -2,6 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import Header from "@/components/layout/Header";
+import Footer from "@/components/layout/Footer";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -43,9 +46,7 @@ export default function MessagesInbox() {
 
   // who am I
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setMe(data.user?.id ?? null);
-    });
+    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
   }, []);
 
   // initial load + realtime
@@ -68,13 +69,12 @@ export default function MessagesInbox() {
       }
       if (cancelled) return;
 
-      const rows = (data as Msg[]) ?? [];
-      setMessages(rows);
+      setMessages((data as Msg[]) ?? []);
 
+      // prefetch partner profiles
       const partnerIds = Array.from(
-        new Set(rows.map((m) => (m.sender_id === me ? m.recipient_id : m.sender_id)))
+        new Set((data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id)))
       );
-
       if (partnerIds.length) {
         const { data: ps } = await supabase
           .from("profiles")
@@ -84,7 +84,6 @@ export default function MessagesInbox() {
         (ps || []).forEach((p: any) => (map[p.id] = p));
         setProfiles(map);
       }
-
       setLoading(false);
     };
 
@@ -92,7 +91,6 @@ export default function MessagesInbox() {
 
     // realtime
     if (subRef.current) supabase.removeChannel(subRef.current);
-
     const ch = supabase
       .channel(`inbox-${me}`)
       .on(
@@ -121,7 +119,6 @@ export default function MessagesInbox() {
         }
       )
       .subscribe();
-
     subRef.current = ch;
 
     return () => {
@@ -131,7 +128,7 @@ export default function MessagesInbox() {
     };
   }, [me]);
 
-  // compute threads
+  // threads
   const threads = useMemo<ThreadRow[]>(() => {
     if (!me) return [];
     const map: Record<string, ThreadRow> = {};
@@ -163,11 +160,12 @@ export default function MessagesInbox() {
     return arr;
   }, [messages, profiles, query, me]);
 
-  const formatWhen = (iso?: string) => {
+  const formatWhen = (iso: string | undefined) => {
     if (!iso) return "";
     const d = new Date(iso);
     const now = new Date();
-    const diffMin = Math.round((+now - +d) / 60000);
+    const diffMs = now.getTime() - d.getTime();
+    const diffMin = Math.round(diffMs / 60000);
     if (diffMin < 1) return "now";
     if (diffMin < 60) return `${diffMin}m`;
     const diffHr = Math.round(diffMin / 60);
@@ -177,84 +175,112 @@ export default function MessagesInbox() {
     return d.toLocaleDateString();
   };
 
-  return (
-    <div className="mx-auto w-full max-w-md px-3 pb-24">
-      {/* Sticky mobile header + search */}
-      <div className="sticky top-0 z-10 -mx-3 bg-background/90 backdrop-blur border-b">
-        <div className="px-3 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Mail className="h-5 w-5" />
-            <h1 className="text-base font-bold">Messages</h1>
-          </div>
-          <Button size="sm" variant="outline" onClick={() => navigate("/dashboard")}>
-            Dashboard
-          </Button>
+  if (me === null) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <Header />
+        <div className="max-w-md mx-auto px-4 py-10 text-center">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-300 mx-auto" />
         </div>
-        <div className="px-3 pb-3">
-          <div className="relative">
-            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <Footer />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      <Header />
+
+      {/* Sticky mobile header + search */}
+      <div className="max-w-md mx-auto px-3 pb-24">
+        <div className="sticky top-0 z-10 -mx-3 bg-slate-800/90 backdrop-blur border-b border-slate-700/50 px-3 py-3">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-bold text-white flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Messages
+            </h1>
+            <Button variant="outline" size="sm" onClick={() => navigate("/dashboard")}>
+              Dashboard
+            </Button>
+          </div>
+
+          <div className="mt-3 relative">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <Input
+              placeholder="Search conversations…"
+              className="pl-9 bg-slate-900/60 border-slate-700 text-slate-100 placeholder:text-slate-400"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search conversations…"
-              className="pl-9 h-10"
             />
           </div>
         </div>
-      </div>
 
-      {/* Thread list */}
-      {loading ? (
-        <div className="mt-10 flex items-center justify-center text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading…
-        </div>
-      ) : threads.length === 0 ? (
-        <div className="mt-12 text-center text-muted-foreground">
-          <MailOpen className="h-10 w-10 mx-auto mb-2 opacity-70" />
-          No conversations yet
-        </div>
-      ) : (
-        <ul className="divide-y">
-          {threads.map((t) => {
-            const name = t.partner?.display_name || t.partner?.username || "User";
-            const username = t.partner?.username ? `@${t.partner.username}` : "";
-            const avatar = t.partner?.avatar_url || null;
-            const last = t.lastMessage?.body?.trim() || "";
-            const when = formatWhen(t.lastMessage?.created_at);
+        {/* List */}
+        <Card className="mt-3 divide-y border-slate-700/60 bg-slate-800/60 backdrop-blur-sm">
+          {loading ? (
+            <div className="p-8 text-center text-slate-300 flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading…
+            </div>
+          ) : threads.length === 0 ? (
+            <div className="p-12 text-center text-slate-300">
+              <MailOpen className="h-10 w-10 mx-auto mb-3 opacity-70" />
+              No conversations yet
+            </div>
+          ) : (
+            threads.map((t) => {
+              const name = t.partner?.display_name || t.partner?.username || "User";
+              const username = t.partner?.username ? `@${t.partner.username}` : "";
+              const avatar = t.partner?.avatar_url || null;
+              const last = t.lastMessage?.body?.trim() || "";
+              const when = formatWhen(t.lastMessage?.created_at);
 
-            return (
-              <li key={t.partnerId}>
+              return (
                 <Link
                   to={`/messages/${t.partnerId}`}
-                  className="flex items-center gap-3 py-3 active:opacity-80"
+                  key={t.partnerId}
+                  className="flex items-center justify-between p-4 hover:bg-slate-700/40 transition-colors"
                 >
-                  {avatar ? (
-                    <img src={avatar} alt={name} className="h-12 w-12 rounded-full object-cover" />
-                  ) : (
-                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-white flex items-center justify-center font-semibold">
-                      {name.charAt(0).toUpperCase()}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-3 min-w-0">
+                    {avatar ? (
+                      <img src={avatar} alt={name} className="w-12 h-12 rounded-full border border-slate-600" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-white flex items-center justify-center text-sm font-bold">
+                        {name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between">
-                      <p className="truncate font-medium">{name}</p>
-                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{when}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-white truncate">{name}</span>
+                        {username && <span className="text-xs text-slate-400 truncate">{username}</span>}
+                      </div>
+                      <div className="flex items-center gap-2 text-sm text-slate-300 min-w-0">
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        <span className="truncate">{last || "(no message body)"}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <p className="truncate text-sm text-muted-foreground">{last || "(no message)"}</p>
-                      {t.unread > 0 && (
-                        <Badge className="ml-2 shrink-0">{t.unread > 99 ? "99+" : t.unread}</Badge>
-                      )}
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="text-xs text-slate-400 inline-flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      {when}
                     </div>
-                    {username && <p className="text-xs text-muted-foreground mt-0.5">{username}</p>}
+                    {t.unread > 0 && (
+                      <Badge variant="default" className="bg-purple-600 text-white">
+                        {t.unread > 99 ? "99+" : t.unread}
+                      </Badge>
+                    )}
                   </div>
                 </Link>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+              );
+            })
+          )}
+        </Card>
+      </div>
+
+      <Footer />
     </div>
   );
 }
