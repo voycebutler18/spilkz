@@ -47,16 +47,19 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
     };
   }, []);
 
+  // ⬇️ FIX: use hard reload after signOut so Chrome mobile doesn't keep the sheet overlay
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    go("/");
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      window.location.href = "/"; // hard reload clears any stale session state
+    }
   };
 
   return (
     <Sheet
       open={open}
       onOpenChange={(value) => {
-        // only call onClose when the sheet is closing
         if (!value) onClose();
       }}
     >
@@ -96,7 +99,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             </Link>
           )}
 
-          {/* Optional upload CTA (keeps backend the same; just routes/opens UI you already have) */}
+          {/* Optional upload CTA */}
           {isAuthed && (
             <Button className="mt-1" onClick={() => go("/upload")}>
               Upload
