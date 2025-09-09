@@ -1,11 +1,27 @@
-import { useState, useEffect } from "react";
+// src/pages/Profile.tsx
+import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {Home, MapPin, Calendar, Play, Heart, Users, Loader2, MessageSquare } from "lucide-react";
+import {
+  Home,
+  MapPin,
+  Calendar,
+  Play,
+  Heart,
+  Users,
+  Loader2,
+  MessageSquare,
+} from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import VideoGrid from "@/components/dashboard/VideoGrid";
 import Header from "@/components/layout/Header";
@@ -13,8 +29,14 @@ import Footer from "@/components/layout/Footer";
 import { ProfilePictureUpload } from "@/components/ProfilePictureUpload";
 import FollowButton from "@/components/FollowButton";
 
+const isUuid = (v: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
+
 const Profile = () => {
-  const { id } = useParams();
+  const { id: rawParam } = useParams();
+  const id = (rawParam || "").trim();
   const navigate = useNavigate();
 
   const { toast } = useToast();
@@ -37,22 +59,39 @@ const Profile = () => {
   });
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchData = async () => {
       try {
         setIsLoading(true);
 
+        // If someone hits /profile/:username by mistake, send them to the public creator page
+        if (id && !isUuid(id)) {
+          navigate(`/creator/${id}`, { replace: true });
+          return;
+        }
+
         // Get current user
         const { data: authData } = await supabase.auth.getUser();
-        setCurrentUser(authData.user);
+        if (cancelled) return;
+        setCurrentUser(authData.user || null);
 
         // Fetch profile data
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
           .select("*")
           .eq("id", id)
-          .single();
+          .maybeSingle();
+
+        if (cancelled) return;
 
         if (profileError) throw profileError;
+
+        if (!profileData) {
+          setProfile(null);
+          return;
+        }
+
         setProfile(profileData);
 
         // Initialize form data
@@ -64,38 +103,55 @@ const Profile = () => {
           profile_image_url: profileData.profile_image_url || "",
         });
 
-        // Fetch video counts
-        const { data: contentData, error: contentError } = await supabase
-          .from("content")
-          .select("content_type")
-          .eq("creator_id", id);
+        // Fetch video counts (tolerate missing/empty table)
+        try {
+          const { data: contentData } = await supabase
+            .from("content")
+            .select("content_type")
+            .eq("creator_id", id);
 
-        if (contentError) throw contentError;
+          if (!cancelled) {
+            const counts =
+              contentData?.reduce(
+                (acc: any, item: any) => {
+                  if (item.content_type === "live") acc.live++;
+                  if (item.content_type === "vod") acc.vod++;
+                  if (item.content_type === "clip") acc.clips++;
+                  return acc;
+                },
+                { live: 0, vod: 0, clips: 0 }
+              ) || { live: 0, vod: 0, clips: 0 };
 
-        const counts = contentData?.reduce((acc: any, item: any) => {
-          if (item.content_type === "live") acc.live++;
-          if (item.content_type === "vod") acc.vod++;
-          if (item.content_type === "clip") acc.clips++;
-          return acc;
-        }, { live: 0, vod: 0, clips: 0 }) || { live: 0, vod: 0, clips: 0 };
-
-        setVideoCounts(counts);
+            setVideoCounts(counts);
+          }
+        } catch {
+          if (!cancelled) setVideoCounts({ live: 0, vod: 0, clips: 0 });
+        }
       } catch (error) {
         console.error("Error fetching profile:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load profile. Please try again.",
-          variant: "destructive",
-        });
+        if (!cancelled) {
+          toast({
+            title: "Error",
+            description: "Failed to load profile. Please try again.",
+            variant: "destructive",
+          });
+        }
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     if (id) {
       fetchData();
+    } else {
+      setIsLoading(false);
+      setProfile(null);
     }
-  }, [id, toast]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, toast, navigate]);
 
   const isOwnProfile = currentUser?.id === profile?.id;
 
@@ -116,14 +172,14 @@ const Profile = () => {
 
       if (error) throw error;
 
-      setProfile({
-        ...profile,
+      setProfile((prev: any) => ({
+        ...prev,
         display_name: formData.display_name,
         bio: formData.bio,
         location: formData.location,
         joined_date: formData.joined_date,
         profile_image_url: formData.profile_image_url,
-      });
+      }));
 
       setIsEditing(false);
 
@@ -165,7 +221,9 @@ const Profile = () => {
           <Card className="max-w-2xl mx-auto">
             <CardHeader>
               <CardTitle>Profile Not Found</CardTitle>
-              <CardDescription>The requested profile could not be found.</CardDescription>
+              <CardDescription>
+                The requested profile could not be found.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Button asChild>
@@ -193,7 +251,9 @@ const Profile = () => {
                     {isOwnProfile ? (
                       <ProfilePictureUpload
                         url={formData.profile_image_url}
-                        onUpload={(url) => setFormData({ ...formData, profile_image_url: url })}
+                        onUpload={(url) =>
+                          setFormData({ ...formData, profile_image_url: url })
+                        }
                       />
                     ) : (
                       <Avatar className="h-32 w-32">
@@ -207,8 +267,14 @@ const Profile = () => {
 
                   {!isEditing ? (
                     <>
-                      <h2 className="text-2xl font-bold mb-1">{profile.display_name || "Unnamed User"}</h2>
-                      <p className="text-muted-foreground mb-4">@{profile.username}</p>
+                      <h2 className="text-2xl font-bold mb-1">
+                        {profile.display_name || "Unnamed User"}
+                      </h2>
+                      {profile.username && (
+                        <p className="text-muted-foreground mb-4">
+                          @{profile.username}
+                        </p>
+                      )}
 
                       <div className="flex items-center gap-2 text-muted-foreground mb-2">
                         <MapPin className="h-4 w-4" />
@@ -219,18 +285,27 @@ const Profile = () => {
                         <span>Joined {profile.joined_date || "Unknown date"}</span>
                       </div>
 
-                      <p className="text-center mb-6">{profile.bio || "No bio provided."}</p>
+                      <p className="text-center mb-6">
+                        {profile.bio || "No bio provided."}
+                      </p>
 
                       {isOwnProfile ? (
-                        <Button onClick={() => setIsEditing(true)} className="w-full">Edit Profile</Button>
+                        <Button
+                          onClick={() => setIsEditing(true)}
+                          className="w-full"
+                        >
+                          Edit Profile
+                        </Button>
                       ) : (
                         <div className="flex flex-col gap-2 w-full">
-                          <Button asChild className="w-full">
-                            <Link to={`/creator/${profile.username}`}>
-                              <Home className="h-4 w-4 mr-2" />
-                              View Creator Page
-                            </Link>
-                          </Button>
+                          {profile.username && (
+                            <Button asChild className="w-full">
+                              <Link to={`/creator/${profile.username}`}>
+                                <Home className="h-4 w-4 mr-2" />
+                                View Creator Page
+                              </Link>
+                            </Button>
+                          )}
                         </div>
                       )}
                     </>
@@ -238,11 +313,18 @@ const Profile = () => {
                     <>
                       <div className="w-full space-y-4">
                         <div>
-                          <label className="text-sm font-medium">Display Name</label>
+                          <label className="text-sm font-medium">
+                            Display Name
+                          </label>
                           <input
                             type="text"
                             value={formData.display_name}
-                            onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                display_name: e.target.value,
+                              })
+                            }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
                           />
                         </div>
@@ -250,7 +332,7 @@ const Profile = () => {
                           <label className="text-sm font-medium">Username</label>
                           <input
                             type="text"
-                            value={profile.username}
+                            value={profile.username || ""}
                             disabled
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-muted text-muted-foreground"
                           />
@@ -260,16 +342,28 @@ const Profile = () => {
                           <input
                             type="text"
                             value={formData.location}
-                            onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                location: e.target.value,
+                              })
+                            }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-medium">Joined Date</label>
+                          <label className="text-sm font-medium">
+                            Joined Date
+                          </label>
                           <input
                             type="text"
                             value={formData.joined_date}
-                            onChange={(e) => setFormData({ ...formData, joined_date: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                joined_date: e.target.value,
+                              })
+                            }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background"
                           />
                         </div>
@@ -277,7 +371,9 @@ const Profile = () => {
                           <label className="text-sm font-medium">Bio</label>
                           <textarea
                             value={formData.bio}
-                            onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, bio: e.target.value })
+                            }
                             className="w-full mt-1 px-3 py-2 border rounded-md bg-background min-h-[120px]"
                           />
                         </div>
@@ -292,7 +388,10 @@ const Profile = () => {
                               "Save Changes"
                             )}
                           </Button>
-                          <Button variant="outline" onClick={() => setIsEditing(false)}>
+                          <Button
+                            variant="outline"
+                            onClick={() => setIsEditing(false)}
+                          >
                             Cancel
                           </Button>
                         </div>
@@ -328,7 +427,7 @@ const Profile = () => {
                 {/* Follow + Message actions for visitors */}
                 {!isOwnProfile && (
                   <div className="mt-6 flex items-center gap-2 justify-center md:justify-start">
-                    <FollowButton 
+                    <FollowButton
                       profileId={profile.id}
                       username={profile.username}
                       variant="default"
@@ -355,7 +454,11 @@ const Profile = () => {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>{isOwnProfile ? "Your Content" : `${profile.display_name || profile.username}'s Content`}</CardTitle>
+                    <CardTitle>
+                      {isOwnProfile
+                        ? "Your Content"
+                        : `${profile.display_name || profile.username}'s Content`}
+                    </CardTitle>
                     <CardDescription>Explore videos and streams</CardDescription>
                   </div>
                   {isOwnProfile && (
@@ -367,9 +470,7 @@ const Profile = () => {
                         </Link>
                       </Button>
                       <Button asChild>
-                        <Link to="/studio/live">
-                          Go Live
-                        </Link>
+                        <Link to="/studio/live">Go Live</Link>
                       </Button>
                     </div>
                   )}
