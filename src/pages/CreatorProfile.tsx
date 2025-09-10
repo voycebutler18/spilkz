@@ -12,7 +12,7 @@ import Footer from "@/components/layout/Footer";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, Eye, MessageSquare } from "lucide-react";
+import { MapPin, Calendar, Film, Users, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -41,8 +41,6 @@ export default function CreatorProfile() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
-  const [likedSpliks, setLikedSpliks] = useState<any[]>([]);
-  const [likedLoading, setLikedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showFollowersList, setShowFollowersList] = useState(false);
@@ -56,16 +54,13 @@ export default function CreatorProfile() {
     });
   }, []);
 
-  // 🔧 Robustly resolve slug:
-  // - If slug is empty and the user is logged in, redirect to their canonical profile
-  // - Try username (case-insensitive), then id (uuid)
+  // Resolve slug -> profile
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       const s = (slug || "").trim();
 
-      // If the route is /creator/ (no slug), send the logged-in user to their profile
       if (!s) {
         const { data: session } = await supabase.auth.getSession();
         const uid = session?.session?.user?.id;
@@ -78,8 +73,6 @@ export default function CreatorProfile() {
           if (me?.username) {
             navigate(`/creator/${me.username}`, { replace: true });
           } else {
-            // Instead of redirecting to /profile/:id, redirect to /creator/:id
-            // This ensures the current component handles the route
             navigate(`/creator/${uid}`, { replace: true });
           }
           return;
@@ -92,20 +85,18 @@ export default function CreatorProfile() {
       setLoading(true);
       setProfile(null);
       setSpliks([]);
-      setLikedSpliks([]);
 
       try {
         let profileData: Profile | null = null;
 
-        // 1) Try username case-insensitively first
+        // Try username first
         if (!isUuid(s)) {
-          let { data, error } = await supabase
+          let { data } = await supabase
             .from("profiles")
             .select("*")
-            .ilike("username", s) // case-insensitive exact (no % wildcards used)
+            .ilike("username", s)
             .maybeSingle<Profile>();
 
-          // If ilike somehow didn't find it, try strict lower
           if (!data) {
             const sLower = s.toLowerCase();
             const byLower = await supabase
@@ -115,11 +106,10 @@ export default function CreatorProfile() {
               .maybeSingle<Profile>();
             data = byLower.data || null;
           }
-
           profileData = data;
         }
 
-        // 2) If not found and slug looks like a UUID, try by id
+        // Then try id
         if (!profileData && isUuid(s)) {
           const byId = await supabase
             .from("profiles")
@@ -128,14 +118,13 @@ export default function CreatorProfile() {
             .maybeSingle<Profile>();
           profileData = byId.data || null;
 
-          // Redirect to canonical /creator/:username when we can
           if (profileData?.username && s !== profileData.username) {
             navigate(`/creator/${profileData.username}`, { replace: true });
             return;
           }
         }
 
-        // 3) If still not found, try one more time with exact username match
+        // One more exact username attempt
         if (!profileData && !isUuid(s)) {
           const { data } = await supabase
             .from("profiles")
@@ -157,7 +146,6 @@ export default function CreatorProfile() {
 
         setProfile(profileData);
         await fetchSpliks(profileData.id, cancelled);
-        await fetchLikedSpliks(profileData.id, cancelled);
       } catch (e) {
         console.error("Error resolving profile:", e);
         if (!cancelled) {
@@ -179,9 +167,7 @@ export default function CreatorProfile() {
   // Realtime subscriptions scoped to this profile id
   useEffect(() => {
     if (unsubRef.current) {
-      try {
-        unsubRef.current();
-      } catch {}
+      try { unsubRef.current(); } catch {}
       unsubRef.current = null;
     }
     if (!profile?.id) return;
@@ -203,21 +189,13 @@ export default function CreatorProfile() {
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "likes", filter: `user_id=eq.${profile.id}` },
-        () => fetchLikedSpliks(profile.id)
-      )
+      // 💡 Likes subscription removed
       .subscribe();
 
     unsubRef.current = () => supabase.removeChannel(channel);
     return () => {
       if (unsubRef.current) {
-        try {
-          unsubRef.current();
-        } finally {
-          unsubRef.current = null;
-        }
+        try { unsubRef.current(); } finally { unsubRef.current = null; }
       }
     };
   }, [profile?.id]);
@@ -237,7 +215,10 @@ export default function CreatorProfile() {
     try {
       const { data, error } = await supabase
         .from("spliks")
-        .select("*")
+        .select(`
+          id, user_id, title, description, video_url, thumbnail_url,
+          trim_start, trim_end, created_at, status
+        `)
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
 
@@ -251,6 +232,7 @@ export default function CreatorProfile() {
             .select("username, display_name, avatar_url")
             .eq("id", s.user_id)
             .maybeSingle();
+          // Keep the same shape VideoGrid expects (often "profiles")
           return { ...s, profiles: p || undefined };
         })
       );
@@ -259,56 +241,6 @@ export default function CreatorProfile() {
     } catch (e) {
       console.error("Error fetching videos:", e);
       if (!cancelled) toast.error("Failed to load videos");
-    }
-  };
-
-  const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
-    try {
-      setLikedLoading(true);
-
-      const { data: likesRows, error: likesErr } = await supabase
-        .from("likes")
-        .select("splik_id, created_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-
-      if (likesErr) throw likesErr;
-
-      if (!likesRows?.length) {
-        if (!cancelled) setLikedSpliks([]);
-        return;
-      }
-
-      const ids = likesRows.map((r) => r.splik_id);
-
-      const { data: splikRows, error: spliksErr } = await supabase
-        .from("spliks")
-        .select("*")
-        .in("id", ids);
-
-      if (spliksErr) throw spliksErr;
-
-      const withProfiles = await Promise.all(
-        (splikRows || []).map(async (s) => {
-          const { data: p } = await supabase
-            .from("profiles")
-            .select("username, display_name, avatar_url")
-            .eq("id", s.user_id)
-            .maybeSingle();
-          return { ...s, profiles: p || undefined };
-        })
-      );
-
-      const orderIndex: Record<string, number> = {};
-      likesRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
-      withProfiles.sort((a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0));
-
-      if (!cancelled) setLikedSpliks(withProfiles);
-    } catch (e) {
-      console.error("Error fetching liked videos:", e);
-      if (!cancelled) toast.error("Failed to load liked videos");
-    } finally {
-      if (!cancelled) setLikedLoading(false);
     }
   };
 
@@ -486,10 +418,9 @@ export default function CreatorProfile() {
         </Card>
 
         <Tabs defaultValue="videos" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="videos">Videos</TabsTrigger>
             <TabsTrigger value="about">About</TabsTrigger>
-            <TabsTrigger value="liked">Liked</TabsTrigger>
           </TabsList>
 
           <TabsContent value="videos" className="mt-6">
@@ -548,36 +479,6 @@ export default function CreatorProfile() {
                 </div>
               </div>
             </Card>
-          </TabsContent>
-
-          <TabsContent value="liked" className="mt-6">
-            {likedLoading ? (
-              <Card className="p-12 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-                <p className="text-muted-foreground mt-3">Loading liked videos…</p>
-              </Card>
-            ) : likedSpliks.length > 0 ? (
-              <VideoGrid
-                spliks={likedSpliks}
-                showCreatorInfo={true}
-                onDeleteComment={
-                  currentUserId === profile.id
-                    ? async (commentId) => {
-                        const { error } = await supabase
-                          .from("comments")
-                          .delete()
-                          .eq("id", commentId);
-                        if (!error) toast.success("Comment deleted");
-                      }
-                    : undefined
-                }
-              />
-            ) : (
-              <Card className="p-12 text-center">
-                <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No liked videos yet</p>
-              </Card>
-            )}
           </TabsContent>
         </Tabs>
       </div>
