@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Flame, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles,
+  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles, Eye,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -30,10 +30,11 @@ type Splik = {
   video_url: string;
   thumbnail_url?: string | null;
 
-  // server-side counters coming from spliks row
+  // counters coming directly from "spliks" row
   hype_score?: number | null;
   hype_givers?: number | null;
   comments_count?: number | null;
+  views_count?: number | null;
 
   profile?: any;
   mood?: string | null;
@@ -44,7 +45,7 @@ type Splik = {
 
 interface SplikCardProps {
   splik: Splik & { isBoosted?: boolean; is_currently_boosted?: boolean; boost_score?: number };
-  onSplik?: () => void;   // callback after hype change
+  onSplik?: () => void;
   onReact?: () => void;
   onShare?: () => void;
   index?: number;
@@ -58,6 +59,20 @@ const toNum = (v: unknown, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+const getAnonKey = () => {
+  try {
+    let k = localStorage.getItem("splik_anon_key");
+    if (!k) {
+      // @ts-ignore
+      k = (crypto?.randomUUID?.() as string) || Math.random().toString(36).slice(2);
+      localStorage.setItem("splik_anon_key", k);
+    }
+    return k;
+  } catch {
+    return "anon-" + Math.random().toString(36).slice(2);
+  }
+};
 
 /* ---- global play/pause coordination ---- */
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
@@ -83,6 +98,7 @@ export default function SplikCard(props: SplikCardProps) {
     hype_score: toNum(raw.hype_score, 0),
     hype_givers: toNum(raw.hype_givers, 0),
     comments_count: toNum(raw.comments_count, 0),
+    views_count: toNum(raw.views_count, 0),
     trim_start: toNum(raw.trim_start, 0),
     trim_end: raw.trim_end == null ? null : toNum(raw.trim_end),
   };
@@ -98,8 +114,12 @@ export default function SplikCard(props: SplikCardProps) {
   const [hypeScore, setHypeScore] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
 
-  // comments come from spliks row only
+  // comments counter from spliks row
   const [commentsCount, setCommentsCount] = useState<number>(toNum(splik.comments_count, 0));
+
+  // views counter (from spliks row), and client guard to avoid double count
+  const [viewsCount, setViewsCount] = useState<number>(toNum(splik.views_count, 0));
+  const hasViewedRef = useRef(false);
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -200,18 +220,42 @@ export default function SplikCard(props: SplikCardProps) {
     };
   }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
-  // enforce 3s loop
+  // enforce 3s loop & fire "view after 1s" once
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onTimeUpdate = () => {
+
+    const onTimeUpdate = async () => {
       if (v.currentTime < START || v.currentTime >= END) {
         try { v.currentTime = SEEK_SAFE; } catch {}
+        return;
+      }
+
+      if (!hasViewedRef.current && (v.currentTime - START) >= 1.0) {
+        // mark now to avoid duplicate client pings
+        hasViewedRef.current = true;
+
+        // optimistic bump (realtime will reconcile anyway)
+        setViewsCount((c) => c + 1);
+
+        try {
+          const anonKey = getAnonKey();
+          const { error } = await supabase.rpc("record_view", {
+            p_splik_id: splik.id,
+            p_anon_key: anonKey,
+          });
+          if (error) throw error;
+        } catch {
+          // revert optimistic on failure
+          hasViewedRef.current = false;
+          setViewsCount((c) => Math.max(0, c - 1));
+        }
       }
     };
+
     v.addEventListener("timeupdate", onTimeUpdate);
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
-  }, [START, END, SEEK_SAFE]);
+  }, [START, splik.id]);
 
   useEffect(() => {
     if (load) {
@@ -253,7 +297,7 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // ONE realtime subscription: spliks row
+      // ONE realtime subscription: counters come from the spliks row
       const ch = supabase
         .channel(`spliks-${splik.id}-counters`)
         .on(
@@ -261,9 +305,10 @@ export default function SplikCard(props: SplikCardProps) {
           { schema: "public", table: "spliks", event: "UPDATE", filter: `id=eq.${splik.id}` },
           (payload) => {
             const s = payload.new as any;
-            if (s.hype_score !== undefined)   setHypeScore(toNum(s.hype_score, hypeScore));
-            if (s.hype_givers !== undefined)  setHypeGivers(toNum(s.hype_givers, hypeGivers));
+            if (s.hype_score !== undefined)    setHypeScore(toNum(s.hype_score, hypeScore));
+            if (s.hype_givers !== undefined)   setHypeGivers(toNum(s.hype_givers, hypeGivers));
             if (s.comments_count !== undefined) setCommentsCount(toNum(s.comments_count, commentsCount));
+            if (s.views_count !== undefined)    setViewsCount(toNum(s.views_count, viewsCount));
           }
         )
         .subscribe();
@@ -285,39 +330,25 @@ export default function SplikCard(props: SplikCardProps) {
       return;
     }
 
-    // optimistic
-    if (!isHyped) {
-      setIsHyped(true);
-      setHypeScore((x) => x + 1);
-      setHypeGivers((x) => x + 1);
-      try {
+    try {
+      if (!isHyped) {
+        setIsHyped(true); // counters will bump via DB trigger -> realtime
         await supabase.from("hype_reactions").upsert(
           { user_id: user.id, splik_id: splik.id, amount: 1 },
           { onConflict: "user_id,splik_id", ignoreDuplicates: true }
         );
-        onSplik?.();
-      } catch {
+      } else {
         setIsHyped(false);
-        setHypeScore((x) => Math.max(0, x - 1));
-        setHypeGivers((x) => Math.max(0, x - 1));
-        toast({ title: "Error", description: "Failed to hype", variant: "destructive" });
-      }
-    } else {
-      setIsHyped(false);
-      setHypeScore((x) => Math.max(0, x - 1));
-      setHypeGivers((x) => Math.max(0, x - 1));
-      try {
         await supabase.from("hype_reactions")
           .delete()
           .eq("user_id", user.id)
           .eq("splik_id", splik.id);
-        onSplik?.();
-      } catch {
-        setIsHyped(true);
-        setHypeScore((x) => x + 1);
-        setHypeGivers((x) => x + 1);
-        toast({ title: "Error", description: "Failed to remove hype", variant: "destructive" });
       }
+      onSplik?.();
+    } catch {
+      // revert local state if API failed
+      setIsHyped((v) => !v);
+      toast({ title: "Error", description: "Failed to update hype", variant: "destructive" });
     }
   };
 
@@ -540,6 +571,18 @@ export default function SplikCard(props: SplikCardProps) {
             <span className="text-xs font-medium">{commentsCount.toLocaleString()}</span>
           </Button>
 
+          {/* Views (read-only) */}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled
+            className="flex items-center gap-2 opacity-100"
+            title="Views"
+          >
+            <Eye className="h-4 w-4" />
+            <span className="text-xs font-medium">{viewsCount.toLocaleString()}</span>
+          </Button>
+
           {/* Share */}
           <Button
             variant="ghost"
@@ -599,7 +642,7 @@ export default function SplikCard(props: SplikCardProps) {
 
       <CommentsModal
         isOpen={showCommentsModal}
-        onClose={() => setShowCommentsModal(false)}  // no recounts here; DB trigger + realtime handles it
+        onClose={() => setShowCommentsModal(false)}  // counters sync via DB + realtime
         splikId={splik.id}
         splikTitle={splik.title}
       />
