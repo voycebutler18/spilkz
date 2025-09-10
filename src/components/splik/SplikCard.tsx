@@ -96,6 +96,11 @@ const getAnonKey = () => {
   }
 };
 
+// Generate a unique session key for each page load/refresh
+const getSessionKey = () => {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 /* ---- global play/pause coordination ---- */
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
 const playExclusive = async (el: HTMLVideoElement) => {
@@ -158,6 +163,8 @@ export default function SplikCard(props: SplikCardProps) {
     toNum(splik.views_count, 0)
   );
   const hasViewedRef = useRef(false);
+  const sessionKeyRef = useRef<string>(getSessionKey()); // Unique session key
+  const viewTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -185,6 +192,36 @@ export default function SplikCard(props: SplikCardProps) {
   const END = Math.max(START, Math.min(START + 3, RAW_END));
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
+  // Function to record view with real-time update
+  const recordView = async () => {
+    if (hasViewedRef.current) return;
+    
+    try {
+      hasViewedRef.current = true;
+      
+      const { data, error } = await supabase.rpc("record_view", {
+        p_splik_id: splik.id,
+        p_anon_key: getAnonKey(),
+        p_session_key: sessionKeyRef.current, // Pass session key to prevent duplicate views per session
+      });
+      
+      if (error) throw error;
+
+      // RPC returns [{ inserted: boolean, views: number }]
+      const result = Array.isArray(data) ? data[0] : data;
+      const serverViews = result?.views;
+      
+      if (typeof serverViews === "number") {
+        // Immediately update the view count in the UI
+        setViewsCount(serverViews);
+      }
+    } catch (err) {
+      console.error("Failed to record view:", err);
+      // Reset the flag so it can retry
+      hasViewedRef.current = false;
+    }
+  };
+
   /* ---------- autoplay / visibility ---------- */
   useEffect(() => {
     const video = videoRef.current;
@@ -209,6 +246,11 @@ export default function SplikCard(props: SplikCardProps) {
       if (document.hidden) {
         pauseIfCurrent(video);
         setIsPlaying(false);
+        // Clear view timer when page becomes hidden
+        if (viewTimerRef.current) {
+          clearTimeout(viewTimerRef.current);
+          viewTimerRef.current = null;
+        }
       }
     };
 
@@ -244,6 +286,13 @@ export default function SplikCard(props: SplikCardProps) {
             try {
               await playExclusive(video);
               setIsPlaying(true);
+              
+              // Start the view timer when video starts playing and is visible
+              if (!hasViewedRef.current && !viewTimerRef.current) {
+                viewTimerRef.current = setTimeout(() => {
+                  recordView();
+                }, 1000); // Record view after 1 second
+              }
             } catch {
               setIsPlaying(false);
             }
@@ -252,6 +301,12 @@ export default function SplikCard(props: SplikCardProps) {
             video.muted = true;
             video.setAttribute("muted", "true");
             setIsPlaying(false);
+            
+            // Clear view timer when video becomes not visible
+            if (viewTimerRef.current) {
+              clearTimeout(viewTimerRef.current);
+              viewTimerRef.current = null;
+            }
           }
         }
       },
@@ -268,15 +323,21 @@ export default function SplikCard(props: SplikCardProps) {
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       pauseIfCurrent(video);
       primedRef.current = false;
+      
+      // Clear view timer on cleanup
+      if (viewTimerRef.current) {
+        clearTimeout(viewTimerRef.current);
+        viewTimerRef.current = null;
+      }
     };
   }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
-  // Enforce 3s loop & record a view once after 1s into the loop
+  // Enforce 3s loop
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
-    const onTimeUpdate = async () => {
+    const onTimeUpdate = () => {
       // keep the loop window tight
       if (v.currentTime < START || v.currentTime >= END) {
         try {
@@ -284,37 +345,20 @@ export default function SplikCard(props: SplikCardProps) {
         } catch {}
         return;
       }
-
-      // record once per viewer after 1s
-      if (!hasViewedRef.current && v.currentTime - START >= 1.0) {
-        hasViewedRef.current = true;
-
-        try {
-          const { data, error } = await supabase.rpc("record_view", {
-            p_splik_id: splik.id,
-            p_anon_key: getAnonKey(),
-          });
-          if (error) throw error;
-
-          // RPC returns [{ inserted: boolean, views: number }]
-          const serverViews = Array.isArray(data) ? data[0]?.views : undefined;
-          if (typeof serverViews === "number") {
-            setViewsCount(serverViews);
-          }
-        } catch {
-          // let it retry if it failed
-          hasViewedRef.current = false;
-        }
-      }
     };
 
     v.addEventListener("timeupdate", onTimeUpdate);
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
-  }, [START, splik.id]);
+  }, [START, END, SEEK_SAFE]);
 
-  // reset "hasViewed" when card changes / reload toggles
+  // Reset view tracking when card changes or reloads
   useEffect(() => {
     hasViewedRef.current = false;
+    sessionKeyRef.current = getSessionKey(); // Generate new session key
+    if (viewTimerRef.current) {
+      clearTimeout(viewTimerRef.current);
+      viewTimerRef.current = null;
+    }
   }, [splik.id, START, load]);
 
   // reload video element when load flag flips
@@ -327,6 +371,10 @@ export default function SplikCard(props: SplikCardProps) {
     } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
+      if (viewTimerRef.current) {
+        clearTimeout(viewTimerRef.current);
+        viewTimerRef.current = null;
+      }
     }
   }, [load]);
 
@@ -366,7 +414,7 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // Realtime counters from spliks row
+      // Realtime counters from spliks row - including views_count
       const ch = supabase
         .channel(`spliks-${splik.id}-counters`)
         .on(
@@ -380,13 +428,13 @@ export default function SplikCard(props: SplikCardProps) {
           (payload) => {
             const s = payload.new as any;
             if (s.hype_score !== undefined)
-              setHypeScore(toNum(s.hype_score, hypeScore));
+              setHypeScore(toNum(s.hype_score, 0));
             if (s.hype_givers !== undefined)
-              setHypeGivers(toNum(s.hype_givers, hypeGivers));
+              setHypeGivers(toNum(s.hype_givers, 0));
             if (s.comments_count !== undefined)
-              setCommentsCount(toNum(s.comments_count, commentsCount));
+              setCommentsCount(toNum(s.comments_count, 0));
             if (s.views_count !== undefined)
-              setViewsCount(toNum(s.views_count, viewsCount));
+              setViewsCount(toNum(s.views_count, 0));
           }
         )
         .subscribe();
@@ -468,6 +516,13 @@ export default function SplikCard(props: SplikCardProps) {
       }
       await playExclusive(video);
       setIsPlaying(true);
+      
+      // Start view timer when manually playing
+      if (!hasViewedRef.current && !viewTimerRef.current) {
+        viewTimerRef.current = setTimeout(() => {
+          recordView();
+        }, 1000);
+      }
     }
   };
 
@@ -794,66 +849,3 @@ export default function SplikCard(props: SplikCardProps) {
               {isSaved ? "Saved" : "Save"}
             </span>
           </Button>
-        </div>
-
-        {/* TITLE + DESCRIPTION */}
-        {(splik.title || splik.description) && (
-          <div className="mt-2 space-y-1">
-            {splik.title && <p className="text-sm font-semibold">{splik.title}</p>}
-            {splik.description && (
-              <p className="text-sm text-muted-foreground">{splik.description}</p>
-            )}
-          </div>
-        )}
-
-        {splik.mood && (
-          <div className="mt-3">
-            <Badge variant="secondary" className="px-2 py-0.5 text-[10px] rounded-full">
-              {toTitle(String(splik.mood))}
-            </Badge>
-          </div>
-        )}
-
-        {hypeGivers === 0 && commentsCount === 0 && (
-          <div className="mt-2 text-xs text-muted-foreground text-center italic">
-            Be the first to hype this! 🔥
-          </div>
-        )}
-      </div>
-
-      {/* MODALS */}
-      <ShareModal
-        isOpen={showShareModal}
-        onClose={() => setShowShareModal(false)}
-        videoId={splik.id}
-        videoTitle={splik.title || "Check out this video"}
-      />
-
-      <CommentsModal
-        isOpen={showCommentsModal}
-        onClose={() => setShowCommentsModal(false)} // counters sync via DB + realtime
-        splikId={splik.id}
-        splikTitle={splik.title}
-      />
-
-      <ReportModal
-        isOpen={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        videoId={splik.id}
-        videoTitle={splik.title || splik.description || "Untitled Video"}
-        creatorName={
-          splik.profile?.display_name || splik.profile?.username || "Unknown Creator"
-        }
-      />
-
-      {showBoostModal && (
-        <BoostModal
-          isOpen={showBoostModal}
-          onClose={() => setShowBoostModal(false)}
-          splikId={splik.id}
-          videoTitle={splik.title || splik.description}
-        />
-      )}
-    </div>
-  );
-}
