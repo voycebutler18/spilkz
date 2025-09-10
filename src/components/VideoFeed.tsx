@@ -16,7 +16,7 @@ import {
   Send,
   Play,
   Pause,
-  Shuffle,
+  Shuffle as ShuffleIcon,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -91,51 +91,51 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
         },
     }));
 
-/** anon key for logged-out personalization */
-const getAnonKey = () => {
-  try {
-    let k = localStorage.getItem("feed_anon_key");
-    if (!k) {
-      // @ts-ignore
-      k =
-        (crypto?.randomUUID?.() as string) ||
-        Math.random().toString(36).slice(2);
-      localStorage.setItem("feed_anon_key", k);
-    }
-    return k;
-  } catch {
-    return "anon-" + Math.random().toString(36).slice(2);
-  }
-};
-
-/** tiny string hash + seeded PRNG (mulberry32) for stable shuffles */
-const hashString = (s: string) => {
+/* ---------- seeded RNG + shuffle (stable API-wide randomness) ---------- */
+// lightweight string hash -> 32-bit
+function xfnv1a(str: string) {
   let h = 2166136261 >>> 0;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return h >>> 0;
-};
-const mulberry32 = (seed: number) => () => {
-  let t = (seed += 0x6d2b79f5);
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-};
-const seededShuffle = <T,>(arr: T[], rnd: () => number) => {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+  return () => h >>> 0;
+}
+// 32-bit PRNG
+function mulberry32(a: number) {
+  return function () {
+    let t = (a += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const getDeviceId = () => {
+  try {
+    let id = localStorage.getItem("feed:device-id");
+    if (!id) {
+      id =
+        (crypto as any)?.randomUUID?.() ||
+        Math.random().toString(36).slice(2);
+      localStorage.setItem("feed:device-id", id);
+    }
+    return id;
+  } catch {
+    return "anon-device";
   }
-  return arr;
 };
-
-/** crypto random (fallback to Math.random) */
-const strongRandom = () =>
-  typeof crypto !== "undefined" && (crypto as any).getRandomValues
-    ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
-    : Math.random();
+const makeRng = (seedStr: string) => {
+  const h = xfnv1a(seedStr)();
+  return mulberry32(h);
+};
+const shuffleWithRng = <T,>(arr: T[], rng: () => number) => {
+  const list = [...arr];
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
+};
 
 /* =================================================================== */
 
@@ -163,51 +163,42 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  // reshuffle trigger (increment to reshuffle)
-  const [shuffleTick, setShuffleTick] = useState(0);
+  // session seed (new every refresh)
+  const deviceIdRef = useRef(getDeviceId());
+  const sessionSeedRef = useRef<string>(
+    `${Date.now()}|${(crypto as any)?.getRandomValues
+      ? (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0)
+      : Math.floor(Math.random() * 2 ** 32)}`
+  );
 
-  // load + shuffle
+  /* --------- load + SHUFFLE on every refresh --------- */
   useEffect(() => {
     const load = async () => {
-      setLoading(true);
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select(
-            `
+          .select(`
             id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end, created_at,
+            trim_start, trim_end,
+            created_at,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
-          `
-          );
+          `); // order doesn't matter; we shuffle below
 
         if (error) throw error;
 
         const allVideos = normalizeSpliks((data as Splik[]) || []);
 
-        // --- PERSONALIZED + PER-REFRESH SHUFFLE ---
-        const baseId = user?.id ?? getAnonKey();
-        const salt = strongRandom().toString(); // new each refresh & each Shuffle click
-        const seed = hashString(`${baseId}|${salt}|${Date.now()}`);
-        const rnd = mulberry32(seed);
+        // seed uses deviceId + userId + sessionSeed (new every reload)
+        const seed = `${deviceIdRef.current}|${user?.id ?? "anon"}|${sessionSeedRef.current}`;
+        const rng = makeRng(seed);
 
-        // Fresh videos on top (last 24h), both groups shuffled
-        const FRESH_HOURS = 24;
-        const cutoff = Date.now() - FRESH_HOURS * 3600_000;
-        const fresh: Splik[] = [];
-        const rest: Splik[] = [];
-        for (const v of allVideos) {
-          (new Date(v.created_at).getTime() >= cutoff ? fresh : rest).push(v);
-        }
-        seededShuffle(fresh, rnd);
-        seededShuffle(rest, rnd);
-        const list = [...fresh, ...rest];
+        const list = shuffleWithRng(allVideos, rng);
 
         setSpliks(list);
 
-        // init mute/pause UI
+        // init mute/pause UI for the new list
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
         list.forEach((_, index) => {
@@ -217,7 +208,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // favorites preload
+        // favorites preload (for this user)
         if (user?.id) {
           const { data: favs } = await supabase
             .from("favorites")
@@ -229,18 +220,35 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         console.error(e);
       } finally {
         setLoading(false);
-        setActiveIndex(0);
-        // always start at top after a fresh shuffle
-        setTimeout(() => {
-          const root = containerRef.current;
-          if (!root) return;
-          const child = root.querySelector<HTMLElement>(`[data-index="0"]`);
-          if (child) child.scrollIntoView({ behavior: "instant", block: "start" as ScrollLogicalPosition });
-        }, 50);
       }
     };
     load();
-  }, [user?.id, shuffleTick]);
+  }, [user?.id]);
+
+  /* ---------- Shuffle button handler ---------- */
+  const reshuffle = () => {
+    if (!spliks.length) return;
+    // new seed (changes every click) – still personalized by device/user
+    const clickSeed = `${deviceIdRef.current}|${user?.id ?? "anon"}|click|${Date.now()}`;
+    const rng = makeRng(clickSeed);
+    const list = shuffleWithRng(spliks, rng);
+    setSpliks(list);
+
+    // reset players + scroll to top
+    videoRefs.current.forEach((v) => v?.pause());
+    setIsPlaying({});
+    setShowPauseButton({});
+    setMuted({});
+    const mutedState: Record<number, boolean> = {};
+    const pauseState: Record<number, boolean> = {};
+    list.forEach((_, i) => {
+      mutedState[i] = false;
+      pauseState[i] = true;
+    });
+    setMuted(mutedState);
+    setShowPauseButton(pauseState);
+    containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   /* ---------- realtime sync for favorites (this user) ---------- */
   useEffect(() => {
@@ -285,7 +293,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay ========== */
+  /* ========== Autoplay (intersection) ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -362,7 +370,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       Object.values(pauseTimeoutRefs.current).forEach((t) => t && clearTimeout(t));
     };
-  }, [spliks.length, muted, spliks]);
+  }, [spliks, muted]);
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
@@ -498,226 +506,225 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   /* ------------------------------ UI ------------------------------ */
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-[40vh]">
+      <div className="flex flex-col items-center justify-center min-h-[40vh] gap-3">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+        <div className="text-xs text-muted-foreground">Loading feed…</div>
       </div>
     );
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
-    >
-      {/* Sticky Shuffle toolbar */}
-      <div className="sticky top-0 z-20 flex justify-end p-2 bg-background/70 backdrop-blur border-b">
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => setShuffleTick((n) => n + 1)}
-          className="gap-2"
-        >
-          <Shuffle className="h-4 w-4" />
+    <div className="flex flex-col h-[100svh] bg-background">
+      {/* top bar with Shuffle */}
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
+        <div className="text-sm font-semibold">For You</div>
+        <Button size="sm" variant="secondary" onClick={reshuffle} className="gap-2">
+          <ShuffleIcon className="h-4 w-4" />
           Shuffle
         </Button>
       </div>
 
-      {spliks.map((s, i) => {
-        const videoIsPlaying = isPlaying[i] ?? false;
-        const shouldShowPauseButton = showPauseButton[i] ?? true;
-        const isSaved = savedIds.has(s.id);
-        const saving = savingIds.has(s.id);
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-y-auto snap-y snap-mandatory scroll-smooth"
+      >
+        {spliks.map((s, i) => {
+          const videoIsPlaying = isPlaying[i] ?? false;
+          const shouldShowPauseButton = showPauseButton[i] ?? true;
+          const isSaved = savedIds.has(s.id);
+          const saving = savingIds.has(s.id);
 
-        return (
-          <section
-            key={s.id}
-            data-index={i}
-            className="snap-start min-h-[100svh] w-full flex items-center justify-center"
-          >
-            <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
-              {/* header */}
-              <div className="flex items-center justify-between p-3 border-b">
-                <Link
-                  to={`/creator/${s.profile?.username || s.user_id}`}
-                  className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-                >
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback>{initialsFor(s)}</AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="text-sm font-semibold">{nameFor(s)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
-                    </p>
-                  </div>
-                </Link>
-                <Button size="icon" variant="ghost">
-                  <MoreVertical className="h-5 w-5" />
-                </Button>
-              </div>
+          return (
+            <section
+              key={s.id}
+              data-index={i}
+              className="snap-start min-h-[100svh] w-full flex items-center justify-center"
+            >
+              <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
+                {/* header */}
+                <div className="flex items-center justify-between p-3 border-b">
+                  <Link
+                    to={`/creator/${s.profile?.username || s.user_id}`}
+                    className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+                  >
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback>{initialsFor(s)}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-sm font-semibold">{nameFor(s)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
+                      </p>
+                    </div>
+                  </Link>
+                  <Button size="icon" variant="ghost">
+                    <MoreVertical className="h-5 w-5" />
+                  </Button>
+                </div>
 
-              {/* video */}
-              <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
-                <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
-                <video
-                  ref={(el) => (videoRefs.current[i] = el)}
-                  src={s.video_url}
-                  poster={s.thumbnail_url ?? undefined}
-                  className="w-full h-full object-cover"
-                  playsInline
-                  muted={muted[i] ?? false}
-                  preload="metadata"
-                  onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
-                  onLoadedData={() => {
-                    const video = videoRefs.current[i];
-                    if (video && video.currentTime === 0) video.currentTime = 0.1;
-                  }}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
+                {/* video */}
+                <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
+                  <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
+                  <video
+                    ref={(el) => (videoRefs.current[i] = el)}
+                    src={s.video_url}
+                    poster={s.thumbnail_url ?? undefined}
+                    className="w-full h-full object-cover"
+                    playsInline
+                    muted={muted[i] ?? false}
+                    preload="metadata"
+                    onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
+                    onLoadedData={() => {
+                      const video = videoRefs.current[i];
+                      if (video && video.currentTime === 0) video.currentTime = 0.1;
+                    }}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
 
-                {/* Center play/pause controls */}
-                <div
-                  className="absolute inset-0 flex items-center justify-center"
-                  onClick={() => handlePlayPause(i)}
-                >
-                  {videoIsPlaying ? (
-                    shouldShowPauseButton && (
+                  {/* Center play/pause controls */}
+                  <div
+                    className="absolute inset-0 flex items-center justify-center"
+                    onClick={() => handlePlayPause(i)}
+                  >
+                    {videoIsPlaying ? (
+                      shouldShowPauseButton && (
+                        <button
+                          aria-label="Pause"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePlayPause(i);
+                          }}
+                        >
+                          <Pause className="h-10 w-10 text-white drop-shadow-lg" />
+                        </button>
+                      )
+                    ) : (
                       <button
-                        aria-label="Pause"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
+                        aria-label="Play"
+                        className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
                         onClick={(e) => {
                           e.stopPropagation();
                           handlePlayPause(i);
                         }}
                       >
-                        <Pause className="h-10 w-10 text-white drop-shadow-lg" />
+                        <Play className="h-8 w-8 text-white ml-1" />
                       </button>
-                    )
-                  ) : (
-                    <button
-                      aria-label="Play"
-                      className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePlayPause(i);
-                      }}
-                    >
-                      <Play className="h-8 w-8 text-white ml-1" />
-                    </button>
-                  )}
-                </div>
-
-                {/* mute toggle */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleMute(i);
-                  }}
-                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
-                >
-                  {muted[i] ? (
-                    <VolumeX className="h-4 w-4 text-white" />
-                  ) : (
-                    <Volume2 className="h-4 w-4 text-white" />
-                  )}
-                </button>
-
-                {/* title overlay */}
-                {s.title && (
-                  <div className="absolute bottom-3 left-3 z-20">
-                    <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
-                      <p className="text-white text-sm font-medium truncate">{s.title}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* actions */}
-              <div className="p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => openComments(s)}
-                      className="hover:text-blue-500"
-                    >
-                      <MessageCircle className="h-6 w-6" />
-                    </Button>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
-                        navigator.clipboard.writeText(url);
-                        toast({ title: "Link copied!" });
-                      }}
-                      className="hover:text-green-500"
-                    >
-                      <Share2 className="h-6 w-6" />
-                    </Button>
-                  </div>
-
-                  {/* Save / Saved with indicator */}
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => toggleFavorite(s.id)}
-                    disabled={saving}
-                    className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
-                    aria-pressed={isSaved}
-                    aria-label={isSaved ? "Saved" : "Save"}
-                    title={isSaved ? "Saved" : "Save"}
-                  >
-                    {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
-                  </Button>
-                </div>
-
-                {/* caption */}
-                {s.description && (
-                  <p className="text-sm">
-                    <span className="font-semibold mr-2">{nameFor(s)}</span>
-                    {s.description}
-                  </p>
-                )}
-              </div>
-
-              {/* comments inline */}
-              {showCommentsFor === s.id && (
-                <div className="px-3 pb-4">
-                  <div className="border-t pt-3 space-y-3">
-                    {loadingComments ? (
-                      <div className="text-sm text-muted-foreground">Loading…</div>
-                    ) : comments.length === 0 ? (
-                      <div className="text-sm text-muted-foreground">No comments yet</div>
-                    ) : (
-                      comments.map((c) => (
-                        <div key={c.id} className="text-sm">
-                          <span className="font-semibold mr-2">{c.profiles?.first_name || "User"}</span>
-                          {c.content}
-                        </div>
-                      ))
                     )}
+                  </div>
 
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Add a comment…"
-                        value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && submitComment()}
-                      />
-                      <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
-                        <Send className="h-4 w-4" />
+                  {/* mute toggle */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMute(i);
+                    }}
+                    className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
+                  >
+                    {muted[i] ? (
+                      <VolumeX className="h-4 w-4 text-white" />
+                    ) : (
+                      <Volume2 className="h-4 w-4 text-white" />
+                    )}
+                  </button>
+
+                  {/* title overlay */}
+                  {s.title && (
+                    <div className="absolute bottom-3 left-3 z-20">
+                      <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
+                        <p className="text-white text-sm font-medium truncate">{s.title}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* actions */}
+                <div className="p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => openComments(s)}
+                        className="hover:text-blue-500"
+                      >
+                        <MessageCircle className="h-6 w-6" />
+                      </Button>
+
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
+                          navigator.clipboard.writeText(url);
+                          toast({ title: "Link copied!" });
+                        }}
+                        className="hover:text-green-500"
+                      >
+                        <Share2 className="h-6 w-6" />
                       </Button>
                     </div>
+
+                    {/* Save / Saved with indicator */}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => toggleFavorite(s.id)}
+                      disabled={saving}
+                      className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                      aria-pressed={isSaved}
+                      aria-label={isSaved ? "Saved" : "Save"}
+                      title={isSaved ? "Saved" : "Save"}
+                    >
+                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                    </Button>
                   </div>
+
+                  {/* caption */}
+                  {s.description && (
+                    <p className="text-sm">
+                      <span className="font-semibold mr-2">{nameFor(s)}</span>
+                      {s.description}
+                    </p>
+                  )}
                 </div>
-              )}
-            </Card>
-          </section>
-        );
-      })}
+
+                {/* comments inline */}
+                {showCommentsFor === s.id && (
+                  <div className="px-3 pb-4">
+                    <div className="border-t pt-3 space-y-3">
+                      {loadingComments ? (
+                        <div className="text-sm text-muted-foreground">Loading…</div>
+                      ) : comments.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No comments yet</div>
+                      ) : (
+                        comments.map((c) => (
+                          <div key={c.id} className="text-sm">
+                            <span className="font-semibold mr-2">{c.profiles?.first_name || "User"}</span>
+                            {c.content}
+                          </div>
+                        ))
+                      )}
+
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Add a comment…"
+                          value={newComment}
+                          onChange={(e) => setNewComment(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && submitComment()}
+                        />
+                        <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
