@@ -44,8 +44,8 @@ type Splik = {
   thumbnail_url?: string | null;
 
   // server-side counters (seed from row)
-  hype_score?: number | null; // total flames across users (0..3 per user)
-  hype_givers?: number | null; // unique users who gave >0 hype
+  hype_score?: number | null;   // total hypes (1 per user)
+  hype_givers?: number | null;  // unique users who hyped (will match hype_score if 1/user)
   comments_count?: number | null;
 
   profile?: any;
@@ -69,21 +69,15 @@ interface SplikCardProps {
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
 const playExclusive = async (el: HTMLVideoElement) => {
   if (CURRENT_PLAYING && CURRENT_PLAYING !== el) {
-    try {
-      CURRENT_PLAYING.pause();
-    } catch {}
+    try { CURRENT_PLAYING.pause(); } catch {}
   }
   CURRENT_PLAYING = el;
-  try {
-    await el.play();
-  } catch {}
+  try { await el.play(); } catch {}
 };
 const pauseIfCurrent = (el: HTMLVideoElement | null) => {
   if (!el) return;
   if (CURRENT_PLAYING === el) CURRENT_PLAYING = null;
-  try {
-    el.pause();
-  } catch {}
+  try { el.pause(); } catch {}
 };
 const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
@@ -92,8 +86,6 @@ const toNum = (v: unknown, fallback = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
-
-const MAX_HYPE = 3;
 
 /* ============================ Card ============================ */
 export default function SplikCard(props: SplikCardProps) {
@@ -116,8 +108,8 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  // Hype state
-  const [myHype, setMyHype] = useState<number>(0); // 0..3 (monotonic)
+  // Hype (binary 0/1 per user)
+  const [isHyped, setIsHyped] = useState<boolean>(false);
   const [hypeScore, setHypeScore] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
 
@@ -136,11 +128,13 @@ export default function SplikCard(props: SplikCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
 
-  const { isMobile } = useDeviceType(); // ✅ only declared once
+  const { isMobile } = useDeviceType(); // ✅ declared once
   const { toast } = useToast();
 
   const creatorSlug =
-    splik.profile?.username || splik.profile?.handle || splik.user_id;
+    splik.profile?.username ||
+    splik.profile?.handle ||
+    splik.user_id;
 
   // 3s loop window (safe numbers)
   const START = Math.max(0, toNum(splik.trim_start, 0));
@@ -191,10 +185,7 @@ export default function SplikCard(props: SplikCardProps) {
 
     const primeToStart = () => {
       if (!video.duration || video.duration <= 0) return;
-      try {
-        video.currentTime = SEEK_SAFE;
-        primedRef.current = true;
-      } catch {}
+      try { video.currentTime = SEEK_SAFE; primedRef.current = true; } catch {}
     };
 
     const onLoadedMetadata = () => {
@@ -211,23 +202,13 @@ export default function SplikCard(props: SplikCardProps) {
           if (!load) continue;
 
           if (mostlyVisible) {
-            try {
-              if (!primedRef.current) primeToStart();
-              else video.currentTime = SEEK_SAFE;
-            } catch {}
+            try { if (!primedRef.current) primeToStart(); else video.currentTime = SEEK_SAFE; } catch {}
             video.muted = isMuted;
-            if (isMuted) video.setAttribute("muted", "true");
-            else video.removeAttribute("muted");
-            try {
-              await playExclusive(video);
-              setIsPlaying(true);
-            } catch {
-              setIsPlaying(false);
-            }
+            if (isMuted) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
+            try { await playExclusive(video); setIsPlaying(true); } catch { setIsPlaying(false); }
           } else {
             pauseIfCurrent(video);
-            video.muted = true;
-            video.setAttribute("muted", "true");
+            video.muted = true; video.setAttribute("muted", "true");
             setIsPlaying(false);
           }
         }
@@ -254,9 +235,7 @@ export default function SplikCard(props: SplikCardProps) {
     if (!v) return;
     const onTimeUpdate = () => {
       if (v.currentTime < START || v.currentTime >= END) {
-        try {
-          v.currentTime = SEEK_SAFE;
-        } catch {}
+        try { v.currentTime = SEEK_SAFE; } catch {}
       }
     };
     v.addEventListener("timeupdate", onTimeUpdate);
@@ -266,9 +245,7 @@ export default function SplikCard(props: SplikCardProps) {
   useEffect(() => {
     if (load) {
       primedRef.current = false;
-      try {
-        videoRef.current?.load();
-      } catch {}
+      try { videoRef.current?.load(); } catch {}
     } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
@@ -280,14 +257,12 @@ export default function SplikCard(props: SplikCardProps) {
     let mounted = true;
 
     (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!mounted) return;
       setCurrentUser(user);
 
       if (user && splik.id) {
-        // my hype (from per-user table)
+        // my hype (one-per-user)
         const { data: row } = await supabase
           .from("hype_reactions")
           .select("amount")
@@ -295,19 +270,15 @@ export default function SplikCard(props: SplikCardProps) {
           .eq("splik_id", splik.id)
           .maybeSingle();
         if (!mounted) return;
-        setMyHype(row?.amount ?? 0);
+        setIsHyped(!!row && Number(row.amount) > 0);
 
         // favorite?
         const { data: favRow } = await supabase
-          .from("favorites")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("splik_id", splik.id)
-          .maybeSingle();
+          .from("favorites").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
         if (!mounted) return;
         setIsSaved(!!favRow);
       } else {
-        setMyHype(0);
+        setIsHyped(false);
         setIsSaved(false);
       }
 
@@ -343,53 +314,51 @@ export default function SplikCard(props: SplikCardProps) {
       };
     })();
 
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [splik.id, fetchCommentCount]);
 
-  /* ---- Hype add (monotonic: 0 -> 1 -> 2 -> 3; then no-op) ---- */
-  const addHype = async (e?: React.MouseEvent) => {
+  /* ---- Hype toggle (1 per user; can un-hype) ---- */
+  const toggleHype = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to hype videos",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to hype videos", variant: "destructive" });
       return;
     }
 
-    if (myHype >= MAX_HYPE) {
-      return; // already max
-    }
-
-    const next = Math.min(MAX_HYPE, myHype + 1);
-    const delta = next - myHype;
-
+    const next = !isHyped;
     // optimistic UI
-    setMyHype(next);
-    setHypeScore((t) => t + delta);
-    if (myHype === 0) setHypeGivers((g) => g + 1);
+    setIsHyped(next);
+    setHypeScore((t) => t + (next ? 1 : -1));
+    setHypeGivers((g) => g + (next ? 1 : -1));
 
     try {
-      // Server guarantees monotonic increase
-      const { error } = await supabase.rpc("upsert_hype", {
-        p_splik_id: splik.id,
-        p_amount: next,
-      });
-      if (error) throw error;
-      onSplik?.();
+      if (next) {
+        // add hype
+        await supabase
+          .from("hype_reactions")
+          .upsert(
+            { user_id: user.id, splik_id: splik.id, amount: 1 },
+            { onConflict: "user_id,splik_id" }
+          );
+      } else {
+        // remove hype
+        await supabase
+          .from("hype_reactions")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("splik_id", splik.id);
+      }
+      onSplik?.(); // optional callback
+      // If you don't have DB triggers that update spliks.hype_*,
+      // you can optionally re-fetch totals here.
     } catch {
       // revert on failure
-      setMyHype((prev) => prev - delta);
-      setHypeScore((t) => t - delta);
-      if (myHype === 0) setHypeGivers((g) => Math.max(0, g - 1));
-      toast({ title: "Error", description: "Failed to add hype", variant: "destructive" });
+      setIsHyped(!next);
+      setHypeScore((t) => t + (next ? -1 : 1));
+      setHypeGivers((g) => g + (next ? -1 : 1));
+      toast({ title: "Error", description: "Failed to update hype", variant: "destructive" });
     }
   };
 
@@ -397,49 +366,27 @@ export default function SplikCard(props: SplikCardProps) {
     const video = videoRef.current;
     if (!video || !load) return;
     if (isPlaying) {
-      if (isMuted) {
-        video.muted = false;
-        video.removeAttribute("muted");
-        setIsMuted(false);
-        return;
-      }
-      pauseIfCurrent(video);
-      setIsPlaying(false);
+      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
+      pauseIfCurrent(video); setIsPlaying(false);
     } else {
-      try {
-        video.currentTime = SEEK_SAFE;
-      } catch {}
-      if (isMuted) {
-        video.muted = false;
-        video.removeAttribute("muted");
-        setIsMuted(false);
-      }
-      await playExclusive(video);
-      setIsPlaying(true);
+      try { video.currentTime = SEEK_SAFE; } catch {}
+      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); }
+      await playExclusive(video); setIsPlaying(true);
     }
   };
 
   const toggleMute = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    const next = !isMuted;
-    video.muted = next;
-    if (next) video.setAttribute("muted", "true");
-    else video.removeAttribute("muted");
+    const video = videoRef.current; if (!video) return;
+    const next = !isMuted; video.muted = next;
+    if (next) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
     setIsMuted(next);
   };
 
   const toggleFavorite = async () => {
     if (saving || !splik.id) return;
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to save videos",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Please sign in to save videos", variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -463,31 +410,18 @@ export default function SplikCard(props: SplikCardProps) {
 
   const handleCopyLink = () => {
     if (!splik.id) return;
-    const url = `${window.location.origin.replace(/\/$/, "")}/video/${splik.id}`;
+    const url = `${window.location.origin.replace(/\/$/,'')}/video/${splik.id}`;
     navigator.clipboard.writeText(url);
     toast({ title: "Link copied", description: "Share link copied to clipboard" });
   };
 
   const videoHeight = isMobile ? "60svh" : "500px";
-  const isBoosted = Boolean(
-    (splik as any).isBoosted ||
-      (splik as any).is_currently_boosted ||
-      (((splik as any).boost_score ?? 0) > 0)
-  );
+  const isBoosted = Boolean((splik as any).isBoosted || (splik as any).is_currently_boosted || (((splik as any).boost_score ?? 0) > 0));
   const isOwner = currentUser && currentUser.id === splik.user_id;
 
   // Optional: Top Hype badge
   const avgHype = hypeGivers > 0 ? hypeScore / Math.max(1, hypeGivers) : 0;
-  const showTopHypeBadge = hypeGivers >= 10 && avgHype >= 2.3;
-
-  /* --- Small inline components --- */
-  const HypeMeter = ({ level }: { level: number }) => (
-    <div className="flex items-center gap-1">
-      {[1, 2, 3].map((n) => (
-        <span key={n} className={`h-2.5 w-3 rounded-sm ${n <= level ? "bg-orange-500" : "bg-muted"}`} />
-      ))}
-    </div>
-  );
+  const showTopHypeBadge = hypeGivers >= 10 && avgHype >= 1.0; // with 1/user, avg≥1 means most hyped
 
   return (
     <div
@@ -516,11 +450,7 @@ export default function SplikCard(props: SplikCardProps) {
         {isOwner && (
           <div className="absolute top-2 right-3 z-40">
             <button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setShowBoostModal(true);
-              }}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowBoostModal(true); }}
               className="relative flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold bg-white text-black shadow-lg ring-1 ring-black/10 hover:bg-white/90 transition-colors"
             >
               <Rocket className="h-4 w-4" />
@@ -568,10 +498,7 @@ export default function SplikCard(props: SplikCardProps) {
 
         {/* Mute/Unmute */}
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleMute();
-          }}
+          onClick={(e) => { e.stopPropagation(); toggleMute(); }}
           className="absolute bottom-3 right-3 z-50 pointer-events-auto bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
           aria-label={isMuted ? "Unmute" : "Mute"}
         >
@@ -583,10 +510,7 @@ export default function SplikCard(props: SplikCardProps) {
       <div className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <Link
-              to={`/creator/${creatorSlug}`}
-              className="flex items-center space-x-3 group flex-1 min-w-0"
-            >
+            <Link to={`/creator/${creatorSlug}`} className="flex items-center space-x-3 group flex-1 min-w-0">
               <Avatar className="h-10 w-10 ring-2 ring-primary/20 group-hover:ring-primary/40 transition-all">
                 <AvatarImage src={splik.profile?.avatar_url || undefined} />
                 <AvatarFallback>
@@ -611,99 +535,70 @@ export default function SplikCard(props: SplikCardProps) {
 
             <FollowButton
               profileId={splik.user_id}
-              username={
-                splik.profile?.username ||
-                splik.profile?.handle ||
-                splik.profile?.first_name
-              }
+              username={splik.profile?.username || splik.profile?.handle || splik.profile?.first_name}
               size="sm"
               variant="default"
             />
           </div>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 ml-2 flex-shrink-0">
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={5}>
-              {currentUser?.id === splik.user_id && (
-                <DropdownMenuItem
-                  onClick={() => setShowBoostModal(true)}
-                  className="cursor-pointer text-primary"
-                >
-                  <Rocket className="h-4 w-4 mr-2" />
-                  Promote Video
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
-                <Copy className="h-4 w-4 mr-2" />
-                Copy Link
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 ml-2 flex-shrink-0">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={5}>
+            {currentUser?.id === splik.user_id && (
+              <DropdownMenuItem onClick={() => setShowBoostModal(true)} className="cursor-pointer text-primary">
+                <Rocket className="h-4 w-4 mr-2" />
+                Promote Video
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setShowReportModal(true)}
-                className="cursor-pointer"
-              >
-                <Flag className="h-4 w-4 mr-2" />
-                Report
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() =>
-                  toast({
-                    title: "User blocked",
-                    description: "You won't see content from this user anymore",
-                  })
-                }
-                className="cursor-pointer"
-              >
-                <UserX className="h-4 w-4 mr-2" />
-                Block User
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            )}
+            <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
+              <Copy className="h-4 w-4 mr-2" />
+              Copy Link
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowReportModal(true)} className="cursor-pointer">
+              <Flag className="h-4 w-4 mr-2" />
+              Report
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })}
+              className="cursor-pointer"
+            >
+              <UserX className="h-4 w-4 mr-2" />
+              Block User
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         </div>
 
         {/* ACTIONS */}
         <div className="flex items-center justify-between gap-1">
-          {/* Hype (monotonic) */}
+          {/* Hype (1 per user, toggle) */}
           <Button
             variant="ghost"
             size="sm"
-            onClick={addHype}
-            disabled={myHype >= MAX_HYPE}
+            onClick={toggleHype}
             className={cn(
               "flex items-center gap-2 transition-colors",
-              myHype > 0 && "text-orange-500 hover:text-orange-600",
-              myHype >= MAX_HYPE && "opacity-80 cursor-default"
+              isHyped && "text-orange-500 hover:text-orange-600"
             )}
-            aria-pressed={myHype > 0}
-            title={myHype >= MAX_HYPE ? "Max hype reached" : "Add hype"}
+            aria-pressed={isHyped}
+            title={isHyped ? "Un-Hype" : "Hype"}
           >
-            <Flame className={cn("h-4 w-4", myHype > 0 && "fill-current")} />
+            <Flame className={cn("h-4 w-4", isHyped && "fill-current")} />
             <span className="text-xs font-semibold -ml-1">Hype</span>
-            <HypeMeter level={myHype} />
             <span className="text-xs font-medium tabular-nums">
               {toNum(hypeScore, 0).toLocaleString()}
             </span>
-            <span className="text-[10px] text-muted-foreground">
-              ({toNum(hypeGivers, 0).toLocaleString()})
-            </span>
-            {myHype > 0 && (
-              <span className="text-[10px] font-semibold rounded px-1 py-0.5 bg-orange-500/10 text-orange-600">
-                {myHype}/{MAX_HYPE}
-              </span>
-            )}
           </Button>
 
           {/* Comments */}
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setShowCommentsModal(true);
-              onReact?.();
-            }}
+            onClick={() => { setShowCommentsModal(true); onReact?.(); }}
             className="flex items-center gap-2 hover:text-blue-500"
           >
             <MessageCircle className="h-4 w-4" />
@@ -716,10 +611,7 @@ export default function SplikCard(props: SplikCardProps) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              setShowShareModal(true);
-              onShare?.();
-            }}
+            onClick={() => { setShowShareModal(true); onShare?.(); }}
             className="flex items-center gap-2 hover:text-green-500"
           >
             <Share2 className="h-4 w-4" />
@@ -732,10 +624,8 @@ export default function SplikCard(props: SplikCardProps) {
             size="sm"
             onClick={toggleFavorite}
             disabled={saving}
-            className={cn(
-              "flex items-center gap-2 transition-colors",
-              isSaved ? "text-yellow-400 hover:text-yellow-500" : ""
-            )}
+            className={cn("flex items-center gap-2 transition-colors",
+              isSaved ? "text-yellow-400 hover:text-yellow-500" : "")}
             aria-pressed={isSaved}
           >
             {isSaved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
@@ -746,9 +636,15 @@ export default function SplikCard(props: SplikCardProps) {
         {/* TITLE + DESCRIPTION */}
         {(splik.title || splik.description) && (
           <div className="mt-2 space-y-1">
-            {splik.title && <p className="text-sm font-semibold">{splik.title}</p>}
+            {splik.title && (
+              <p className="text-sm font-semibold">
+                {splik.title}
+              </p>
+            )}
             {splik.description && (
-              <p className="text-sm text-muted-foreground">{splik.description}</p>
+              <p className="text-sm text-muted-foreground">
+                {splik.description}
+              </p>
             )}
           </div>
         )}
@@ -761,7 +657,7 @@ export default function SplikCard(props: SplikCardProps) {
           </div>
         )}
 
-        {toNum(hypeGivers, 0) === 0 && toNum(commentsCount, 0) === 0 && (
+        {toNum(hypeScore, 0) === 0 && toNum(commentsCount, 0) === 0 && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
             Be the first to hype this! 🔥
           </div>
