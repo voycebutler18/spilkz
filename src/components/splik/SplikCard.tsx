@@ -849,3 +849,66 @@ export default function SplikCard(props: SplikCardProps) {
               {isSaved ? "Saved" : "Save"}
             </span>
           </Button>
+        </div>
+
+        {/* TITLE + DESCRIPTION */}
+        {(splik.title || splik.description) && (
+          <div className="mt-2 space-y-1">
+            {splik.title && <p className="text-sm font-semibold">{splik.title}</p>}
+            {splik.description && (
+              <p className="text-sm text-muted-foreground">{splik.description}</p>
+            )}
+          </div>
+        )}
+
+        {splik.mood && (
+          <div className="mt-3">
+            <Badge variant="secondary" className="px-2 py-0.5 text-[10px] rounded-full">
+              {toTitle(String(splik.mood))}
+            </Badge>
+          </div>
+        )}
+
+        {hypeGivers === 0 && commentsCount === 0 && (
+          <div className="mt-2 text-xs text-muted-foreground text-center italic">
+            Be the first to hype this! 🔥
+          </div>
+        )}
+      </div>
+
+      {/* MODALS */}
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        videoId={splik.id}
+        videoTitle={splik.title || "Check out this video"}
+      />
+
+      <CommentsModal
+        isOpen={showCommentsModal}
+        onClose={() => setShowCommentsModal(false)}
+        splikId={splik.id}
+        splikTitle={splik.title}
+      />
+
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        videoId={splik.id}
+        videoTitle={splik.title || splik.description || "Untitled Video"}
+        creatorName={
+          splik.profile?.display_name || splik.profile?.username || "Unknown Creator"
+        }
+      />
+
+      {showBoostModal && (
+        <BoostModal
+          isOpen={showBoostModal}
+          onClose={() => setShowBoostModal(false)}
+          splikId={splik.id}
+          videoTitle={splik.title || splik.description}
+        />
+      )}
+    </div>
+  );
+}
