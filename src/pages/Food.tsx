@@ -1,23 +1,20 @@
 // src/pages/Food.tsx
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import SplikCard from "@/components/splik/SplikCard";
 import {
   Loader2,
   Utensils,
-  RefreshCw,
   MapPin,
   LocateFixed,
   Search as SearchIcon,
   ExternalLink,
   Info,
   Sparkles,
-  TrendingUp,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { applySessionRotation, forceNewRotation, type SplikWithScore } from "@/lib/feed";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +31,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 
+/* ---------------- Types ---------------- */
 type Profile = {
   id: string;
   username?: string | null;
@@ -70,6 +68,7 @@ type NearbyRestaurant = {
 
 type DistanceKey = "1km" | "2km" | "5km" | "1mi" | "3mi" | "5mi";
 
+/* -------------- Constants -------------- */
 const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number; unit: "km" | "mi" }[] = [
   { key: "1km", label: "1 km", meters: 1000, unit: "km" },
   { key: "2km", label: "2 km", meters: 2000, unit: "km" },
@@ -98,15 +97,30 @@ const CATEGORY_PRESETS: { key: string; label: string; regex: string }[] = [
   { key: "custom", label: "— Custom (type below)", regex: "" },
 ];
 
+/* -------------- Shuffle helpers -------------- */
+const cRandom = () => {
+  if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
+    const u = new Uint32Array(1);
+    (crypto as any).getRandomValues(u);
+    return u[0] / 2 ** 32;
+  }
+  return Math.random();
+};
+const shuffle = <T,>(arr: T[]) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(cRandom() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+/* ======================= Page ======================= */
 export default function Food() {
   const [spliks, setSpliks] = useState<SplikRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState<any>(null);
   const { toast } = useToast();
-
-  // Feed autoplay container
-  const foodFeedRef = useRef<HTMLDivElement | null>(null);
 
   // Nearby restaurants modal state
   const [nearbyOpen, setNearbyOpen] = useState(false);
@@ -122,7 +136,7 @@ export default function Food() {
   const [categoryKey, setCategoryKey] = useState<string>("any");
   const [customCategory, setCustomCategory] = useState("");
 
-  // auth
+  /* --------- auth --------- */
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
     const {
@@ -131,9 +145,9 @@ export default function Food() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // initial load + realtime updates
+  /* --------- initial load + realtime counters --------- */
   useEffect(() => {
-    fetchFood();
+    fetchFood(); // auto-shuffle on every visit
 
     const channel = supabase
       .channel("food-feed")
@@ -157,14 +171,11 @@ export default function Food() {
       .subscribe();
 
     return () => supabase.removeChannel(channel);
-  }, [user]);
+  }, [user?.id]);
 
-  const fetchFood = async (showRefreshToast = false, forceNewShuffle = false) => {
+  const fetchFood = async () => {
     try {
-      if (showRefreshToast) setRefreshing(true);
-      else setLoading(true);
-
-      if (forceNewShuffle) forceNewRotation();
+      setLoading(true);
 
       const { data, error } = await supabase
         .from("spliks")
@@ -176,24 +187,19 @@ export default function Food() {
       if (error) throw error;
 
       if (data?.length) {
-        const rotated = applySessionRotation(
+        // ALWAYS shuffle entire list; no pinning, no session rotation
+        const shuffled = shuffle(
           data.map((item) => ({
             ...item,
             likes_count: item.likes_count || 0,
             comments_count: item.comments_count || 0,
             boost_score: item.boost_score || 0,
-            tag: "food",
-          })) as SplikWithScore[],
-          {
-            userId: user?.id,
-            category: "food",
-            feedType: "discovery" as const,
-            maxResults: 50,
-          }
+          }))
         );
 
+        // attach profiles
         const withProfiles = await Promise.all(
-          rotated.map(async (row: any) => {
+          shuffled.map(async (row: any) => {
             const { data: profile } = await supabase
               .from("profiles")
               .select("*")
@@ -207,15 +213,6 @@ export default function Food() {
       } else {
         setSpliks([]);
       }
-
-      if (showRefreshToast) {
-        toast({
-          title: forceNewShuffle ? "Food feed reshuffled!" : "Food feed refreshed!",
-          description: forceNewShuffle
-            ? "Showing you a completely new mix of food videos"
-            : "Updated with latest food content",
-        });
-      }
     } catch (e) {
       console.error("Failed to load food videos:", e);
       toast({
@@ -225,16 +222,14 @@ export default function Food() {
       });
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
-  // ===== Nearby Restaurants =====
+  /* ===== Nearby Restaurants (unchanged core) ===== */
   const openNearby = () => {
     setNearbyOpen(true);
     resetSearchState();
   };
-
   const resetSearchState = () => {
     setLocStage("idle");
     setCoords(null);
@@ -282,8 +277,6 @@ export default function Food() {
         const c = { lat: Number(latitude), lon: Number(longitude) };
         setCoords(c);
         setLocStage("have");
-
-        // Update the input to the user's place (best effort)
         const place = await reverseGeocode(c.lat, c.lon);
         setLocationQuery(place ?? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}`);
       },
@@ -304,16 +297,12 @@ export default function Food() {
     () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.unit || "km",
     [distanceKey]
   );
-
   const metersForDistanceKey = useMemo(
     () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.meters || 2000,
     [distanceKey]
   );
-
   const prettyDistance = (distanceKm: number) =>
-    unitForDistanceKey === "km"
-      ? `${distanceKm.toFixed(1)} km`
-      : `${(distanceKm * 0.621371).toFixed(1)} mi`;
+    unitForDistanceKey === "km" ? `${distanceKm.toFixed(1)} km` : `${(distanceKm * 0.621371).toFixed(1)} mi`;
 
   const overpassFetch = async (query: string) => {
     const controller = new AbortController();
@@ -365,7 +354,6 @@ export default function Food() {
   const buildCategoryRegex = () => {
     const preset = CATEGORY_PRESETS.find((c) => c.key === categoryKey);
     if (preset && preset.key !== "any" && preset.key !== "custom") return preset.regex;
-
     const raw = customCategory.trim();
     if (!raw) return "";
     const tokens = raw
@@ -374,7 +362,6 @@ export default function Food() {
       .split(/\s+/)
       .filter(Boolean);
     if (tokens.length === 0) return "";
-
     const joined = tokens.join("|");
     const compound = tokens.join("");
     const underscored = tokens.join("_");
@@ -388,7 +375,6 @@ export default function Food() {
   ) => {
     const amenityFilter = `["amenity"~"restaurant|fast_food|cafe|bar|pub"]`;
     const around = `(around:${Math.round(radiusMeters)},${center.lat},${center.lon})`;
-
     if (categoryRegex) {
       const cat = categoryRegex.replace(/"/g, '\\"');
       return `
@@ -407,7 +393,6 @@ export default function Food() {
         out center tags;
       `;
     }
-
     return `
       [out:json][timeout:30];
       (
@@ -477,7 +462,6 @@ export default function Food() {
           const rLon = el.lon ?? el.center?.lon;
           if (typeof rLat !== "number" || typeof rLon !== "number") return null;
           const distanceKm = haversineKm(center!, { lat: rLat, lon: rLon });
-
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
 
@@ -514,9 +498,7 @@ export default function Food() {
       setNearby(byDistance);
 
       if (byDistance.length === 0) {
-        setNearbyError(
-          "No restaurants found in this area. Try increasing the distance or changing the category."
-        );
+        setNearbyError("No restaurants found in this area. Try increasing the distance or changing the category.");
       }
     } catch (err: any) {
       console.error("Restaurant search error:", err);
@@ -526,487 +508,116 @@ export default function Food() {
     }
   };
 
-  // ===== Autoplay manager (unchanged) =====
-  const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
-    useEffect(() => {
-      const host = hostRef.current;
-      if (!host) return;
-
-      const videoVisibility = new Map<HTMLVideoElement, number>();
-      let currentPlayingVideo: HTMLVideoElement | null = null;
-      let isProcessing = false;
-
-      const setupVideoForMobile = (video: HTMLVideoElement) => {
-        video.muted = true;
-        video.playsInline = true;
-        (video as any).setAttribute?.("webkit-playsinline", "true");
-        video.preload = "metadata";
-        video.load();
-        video.addEventListener(
-          "loadeddata",
-          () => {
-            if (video.currentTime === 0) video.currentTime = 0.1;
-          },
-          { once: true }
-        );
-      };
-
-      const getAllVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
-
-      const pauseAllVideos = (exceptVideo?: HTMLVideoElement) => {
-        getAllVideos().forEach((video) => {
-          if (video !== exceptVideo && !video.paused) video.pause();
-        });
-      };
-
-      const findMostVisibleVideo = (): HTMLVideoElement | null => {
-        const entries = Array.from(videoVisibility.entries());
-        if (!entries.length) return null;
-        const [top] = entries.sort((a, b) => b[1] - a[1]);
-        return top && top[1] >= 0.6 ? top[0] : null;
-      };
-
-      const handleVideoPlayback = async () => {
-        if (isProcessing) return;
-        isProcessing = true;
-
-        try {
-          const targetVideo = findMostVisibleVideo();
-
-          if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
-            currentPlayingVideo.pause();
-            currentPlayingVideo = null;
-          }
-
-          if (targetVideo && targetVideo !== currentPlayingVideo) {
-            pauseAllVideos(targetVideo);
-            setupVideoForMobile(targetVideo);
-
-            if (targetVideo.readyState < 2) {
-              targetVideo.load();
-              await new Promise((r) => setTimeout(r, 100));
-            }
-            if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
-              targetVideo.currentTime = 0.1;
-            }
-
-            try {
-              await targetVideo.play();
-              currentPlayingVideo = targetVideo;
-            } catch (err) {
-              if (!targetVideo.muted) {
-                targetVideo.muted = true;
-                try {
-                  await targetVideo.play();
-                  currentPlayingVideo = targetVideo;
-                } catch {}
-              } else if (targetVideo.currentTime === 0) {
-                targetVideo.currentTime = 0.1;
-              }
-            }
-          } else if (!targetVideo && currentPlayingVideo) {
-            currentPlayingVideo.pause();
-            currentPlayingVideo = null;
-          }
-        } finally {
-          isProcessing = false;
-        }
-      };
-
-      const intersectionObserver = new IntersectionObserver(
-        (entries) => {
-          for (const entry of entries) {
-            const video = entry.target as HTMLVideoElement;
-            videoVisibility.set(video, entry.intersectionRatio);
-          }
-          handleVideoPlayback();
-        },
-        { root: null, threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0], rootMargin: "10px" }
-      );
-
-      const initializeVideos = () => {
-        const vids = getAllVideos();
-        vids.forEach((video) => {
-          if (!video.hasAttribute("data-mobile-initialized")) {
-            setupVideoForMobile(video);
-            video.setAttribute("data-mobile-initialized", "true");
-          }
-          if (!videoVisibility.has(video)) {
-            videoVisibility.set(video, 0);
-            intersectionObserver.observe(video);
-          }
-        });
-      };
-
-      const mutationObserver = new MutationObserver((mutations) => {
-        let changed = false;
-        mutations.forEach((m) =>
-          m.addedNodes.forEach((n) => {
-            if (n.nodeType === 1 && (n as Element).querySelectorAll?.("video").length) changed = true;
-          })
-        );
-        if (changed) setTimeout(initializeVideos, 100);
-      });
-
-      setTimeout(initializeVideos, 100);
-      mutationObserver.observe(host, { childList: true, subtree: true });
-
-      return () => {
-        intersectionObserver.disconnect();
-        mutationObserver.disconnect();
-        videoVisibility.clear();
-        currentPlayingVideo = null;
-      };
-    }, deps);
-  };
-
-  useAutoplayIn(foodFeedRef, [spliks]);
-
   const coordsPretty = useMemo(() => {
     if (!coords) return "";
     return `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
   }, [coords]);
 
+  /* ======================= UI ======================= */
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 relative overflow-hidden">
-      {/* Animated background elements */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/3 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute top-3/4 right-1/4 w-80 h-80 bg-orange-500/3 rounded-full blur-3xl animate-pulse delay-1000" />
-        <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-yellow-500/2 rounded-full blur-3xl animate-pulse delay-2000" />
-      </div>
-
-      {/* Modern Mobile-First Header */}
-      <div className="relative z-10">
-        {/* Mobile Header */}
-        <div className="lg:hidden">
-          <div className="bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 p-1 rounded-b-3xl mx-4 mt-2 shadow-2xl">
-            <div className="bg-background/95 backdrop-blur-xl rounded-b-2xl p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-2xl blur opacity-75 animate-pulse" />
-                    <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-3 rounded-2xl shadow-lg">
-                      <Utensils className="h-6 w-6 text-white" />
-                    </div>
-                  </div>
-                  <div>
-                    <h1 className="text-2xl font-black bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
-                      Food
-                    </h1>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Sparkles className="h-3 w-3" />
-                      <span>Fresh • Viral • Tasty</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <Button
-                  onClick={openNearby}
-                  size="sm"
-                  className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 gap-1 px-3"
-                >
-                  <MapPin className="h-3 w-3" />
-                  <span className="text-xs font-medium">Find local restaurants</span>
-                </Button>
-              </div>
-
-              {/* Mobile Action Buttons */}
-              <div className="flex gap-2 mt-4">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => fetchFood(true, false)}
-                  disabled={refreshing}
-                  className="flex-1 bg-background/50 backdrop-blur border border-border/50 hover:bg-accent/50 hover:scale-[1.02] transition-all duration-300"
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                  Update
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => fetchFood(true, true)}
-                  disabled={refreshing}
-                  className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0 shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-300"
-                >
-                  <TrendingUp className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                  Shuffle
-                </Button>
+    // Simplified, solid background to avoid GPU overdraw flicker on scroll
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:backdrop-blur border-b">
+        <div className="mx-auto max-w-3xl px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-gradient-to-r from-orange-500 to-red-500 p-2 shadow">
+              <Utensils className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold">Food</h1>
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Sparkles className="h-3 w-3" />
+                <span>Tasty shorts near you</span>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Desktop Header */}
-        <div className="hidden lg:block">
-          <div className="bg-gradient-to-r from-background via-background/80 to-background backdrop-blur-xl border-b border-border/20 shadow-lg">
-            <div className="container mx-auto py-8 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-6">
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 rounded-3xl blur-lg opacity-75 animate-pulse" />
-                    <div className="relative bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 p-4 rounded-3xl shadow-2xl">
-                      <Utensils className="h-8 w-8 text-white" />
-                    </div>
-                  </div>
-                  <div>
-                    <h1 className="text-4xl font-black bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 bg-clip-text text-transparent mb-2">
-                      Food Paradise
-                    </h1>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Sparkles className="h-4 w-4 text-yellow-500" />
-                        <span>3-second viral clips</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <TrendingUp className="h-4 w-4 text-green-500" />
-                        <span>Fresh shuffle every time</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    onClick={openNearby}
-                    className="gap-2 bg-background/50 backdrop-blur border-2 border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all duration-300 hover:scale-105"
-                  >
-                    <MapPin className="h-4 w-4" />
-                    Find Nearby Restaurants
-                  </Button>
-                  
-                  <Button
-                    variant="outline"
-                    onClick={() => fetchFood(true, false)}
-                    disabled={refreshing}
-                    className="gap-2 bg-background/50 backdrop-blur border-2 border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all duration-300 hover:scale-105"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                    Update Feed
-                  </Button>
-                  
-                  <Button
-                    onClick={() => fetchFood(true, true)}
-                    disabled={refreshing}
-                    className="gap-2 bg-gradient-to-r from-purple-500 via-pink-500 to-red-500 hover:from-purple-600 hover:via-pink-600 hover:to-red-600 text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105"
-                  >
-                    <TrendingUp className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                    Shuffle & Discover
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <Button
+            onClick={openNearby}
+            size="sm"
+            className="gap-2"
+          >
+            <MapPin className="h-4 w-4" />
+            Find restaurants
+          </Button>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="relative z-10 pb-20 lg:pb-8">
+      <main className="mx-auto max-w-3xl px-2 sm:px-4 py-4">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 px-4">
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-full blur-lg opacity-75 animate-pulse" />
-              <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-6 rounded-full shadow-2xl">
-                <Loader2 className="h-8 w-8 text-white animate-spin" />
-              </div>
-            </div>
-            <div className="text-center mt-6">
-              <h3 className="text-xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent mb-2">
-                Loading deliciousness...
-              </h3>
-              <p className="text-sm text-muted-foreground">Preparing your personalized food feed</p>
-            </div>
+          <div className="flex flex-col items-center justify-center py-16">
+            <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+            <p className="text-sm text-muted-foreground">Loading your food feed…</p>
           </div>
         ) : spliks.length === 0 ? (
-          <div className="px-4 py-12 lg:py-20">
-            <Card className="max-w-md mx-auto bg-gradient-to-br from-background via-background/90 to-primary/5 backdrop-blur-xl border-2 border-primary/10 shadow-2xl">
+          <div className="px-4 py-12">
+            <Card className="max-w-md mx-auto">
               <CardContent className="p-8 text-center">
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-full blur-lg opacity-50 animate-pulse" />
-                  <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-4 rounded-full shadow-xl mx-auto w-fit">
-                    <Utensils className="h-12 w-12 text-white" />
-                  </div>
-                </div>
-                <h3 className="text-2xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent mb-3">
-                  No food videos yet
-                </h3>
-                <p className="text-muted-foreground mb-6 leading-relaxed">
-                  Be the first to upload a mouth-watering 3-second clip and start the food revolution!
-                </p>
-                <div className="flex flex-col gap-3">
-                  <Button 
-                    onClick={() => fetchFood(true, false)} 
-                    variant="outline" 
-                    disabled={refreshing}
-                    className="bg-background/50 backdrop-blur border-2 border-primary/20 hover:border-primary/40 hover:bg-primary/5 transition-all duration-300 hover:scale-105"
-                  >
-                    <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Updating..." : "Get Latest"}
-                  </Button>
-                  <Button 
-                    onClick={() => fetchFood(true, true)} 
-                    disabled={refreshing}
-                    className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
-                  >
-                    <Sparkles className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Shuffling..." : "Shuffle & Discover"}
-                  </Button>
-                </div>
+                <Utensils className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">No food videos yet</h3>
+                <p className="text-muted-foreground">Be the first to post a tasty 3-second clip!</p>
               </CardContent>
             </Card>
           </div>
         ) : (
-          <div className="px-2 lg:px-6 py-6">
-            {/* Mobile Feed Counter */}
-            <div className="lg:hidden text-center mb-4">
-              <div className="inline-flex items-center gap-2 bg-background/80 backdrop-blur-xl border border-border/50 rounded-full px-4 py-2 shadow-lg">
-                <div className="w-2 h-2 bg-gradient-to-r from-green-400 to-green-500 rounded-full animate-pulse" />
-                <span className="text-sm font-medium">
-                  {spliks.length} delicious videos
-                </span>
-                <Sparkles className="h-3 w-3 text-yellow-500" />
+          <div className="max-w-md sm:max-w-lg md:max-w-xl mx-auto space-y-4 md:space-y-6">
+            {spliks.map((splik) => (
+              <div key={splik.id}>
+                {/* Let SplikCard manage autoplay by itself (no extra observers = no flicker) */}
+                <SplikCard
+                  splik={splik as any}
+                  onSplik={() => {}}
+                  onReact={() => {}}
+                  onShare={() => {}}
+                />
               </div>
-            </div>
-
-            {/* Desktop Feed Counter */}
-            <div className="hidden lg:block text-center mb-8">
-              <div className="inline-flex items-center gap-3 bg-gradient-to-r from-background/80 via-background/60 to-background/80 backdrop-blur-xl border border-border/30 rounded-2xl px-6 py-3 shadow-xl">
-                <div className="w-3 h-3 bg-gradient-to-r from-green-400 to-green-500 rounded-full animate-pulse" />
-                <span className="text-lg font-semibold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
-                  {spliks.length} viral food videos loaded
-                </span>
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <TrendingUp className="h-4 w-4" />
-                  <span>Fresh shuffle every refresh</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Video Feed Container */}
-            <div className="max-w-md lg:max-w-2xl mx-auto">
-              <div
-                ref={foodFeedRef}
-                className="space-y-3 lg:space-y-6"
-              >
-                {spliks.map((splik, index) => (
-                  <div
-                    key={splik.id}
-                    className="relative group"
-                    style={{
-                      animationDelay: `${index * 100}ms`
-                    }}
-                  >
-                    {/* Mobile Card Enhancement */}
-                    <div className="lg:hidden relative">
-                      <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 via-red-500/10 to-pink-500/10 rounded-3xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                      <div className="relative bg-background/95 backdrop-blur-xl border border-border/20 rounded-3xl shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden">
-                        <SplikCard
-                          splik={splik as any}
-                          onSplik={() => console.log("Splik:", splik.id)}
-                          onReact={() => {}}
-                          onShare={() => {}}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Desktop Card Enhancement */}
-                    <div className="hidden lg:block relative">
-                      <div className="absolute inset-0 bg-gradient-to-r from-orange-500/20 via-red-500/20 to-pink-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-500 scale-110" />
-                      <div className="relative bg-gradient-to-br from-background/95 via-background/90 to-background/95 backdrop-blur-xl border-2 border-border/20 hover:border-primary/30 rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-500 hover:scale-[1.02] overflow-hidden">
-                        <SplikCard
-                          splik={splik as any}
-                          onSplik={() => console.log("Splik:", splik.id)}
-                          onReact={() => {}}
-                          onShare={() => {}}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Bottom Action Section */}
-            <div className="text-center mt-12 lg:mt-16">
-              <div className="bg-gradient-to-r from-background/80 via-background/60 to-background/80 backdrop-blur-xl border-2 border-border/20 rounded-3xl p-6 lg:p-8 max-w-lg mx-auto shadow-2xl">
-                <div className="flex items-center justify-center gap-2 mb-4">
-                  <Sparkles className="h-5 w-5 text-yellow-500 animate-pulse" />
-                  <h3 className="text-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
-                    Want more deliciousness?
-                  </h3>
-                  <Sparkles className="h-5 w-5 text-yellow-500 animate-pulse" />
-                </div>
-                
-                <div className="flex flex-col lg:flex-row gap-3 lg:gap-4">
-                  <Button
-                    onClick={() => fetchFood(true, false)}
-                    variant="outline"
-                    disabled={refreshing}
-                    className="flex-1 bg-background/50 backdrop-blur border-2 border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all duration-300 hover:scale-105"
-                  >
-                    <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Updating..." : "Get Latest"}
-                  </Button>
-                  <Button
-                    onClick={() => fetchFood(true, true)}
-                    disabled={refreshing}
-                    className="flex-1 bg-gradient-to-r from-purple-500 via-pink-500 to-red-500 hover:from-purple-600 hover:via-pink-600 hover:to-red-600 text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105"
-                  >
-                    <TrendingUp className={`h-4 w-4 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Shuffling..." : "Shuffle & Discover"}
-                  </Button>
-                </div>
-                
-                <p className="text-xs text-muted-foreground mt-4 opacity-75">
-                  Every shuffle brings you a completely new mix of viral food content
-                </p>
-              </div>
-            </div>
+            ))}
           </div>
         )}
       </main>
 
-      {/* Nearby Restaurants Modal - Enhanced */}
+      {/* Nearby Restaurants Modal */}
       <Dialog
         open={nearbyOpen}
         onOpenChange={(open) => {
           setNearbyOpen(open);
-          if (!open) resetSearchState();
+          if (!open) {
+            setLocStage("idle");
+            setCoords(null);
+            setLocationQuery("");
+            setNearby([]);
+            setNearbyError(null);
+            setFetchingNearby(false);
+            setDistanceKey("2km");
+            setCategoryKey("any");
+            setCustomCategory("");
+          }
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto bg-gradient-to-br from-background via-background/95 to-primary/5 backdrop-blur-xl border-2 border-border/20 shadow-2xl">
-          <DialogHeader className="space-y-4">
-            <DialogTitle className="flex items-center gap-3">
-              <div className="relative">
-                <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-red-500 rounded-2xl blur opacity-75" />
-                <div className="relative bg-gradient-to-r from-orange-500 to-red-500 p-2 rounded-2xl">
-                  <MapPin className="h-5 w-5 text-white" />
-                </div>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="flex items-center gap-2">
+              <div className="rounded-lg bg-gradient-to-r from-orange-500 to-red-500 p-2">
+                <MapPin className="h-4 w-4 text-white" />
               </div>
-              <span className="text-xl font-bold bg-gradient-to-r from-orange-500 to-red-500 bg-clip-text text-transparent">
-                Discover Amazing Restaurants
-              </span>
+              <span>Discover Amazing Restaurants</span>
             </DialogTitle>
-            <DialogDescription className="text-base leading-relaxed">
-              Find incredible restaurants near you, try them out, and share your 3-second food masterpiece with the world! 
-              Let's create the ultimate food community together.
+            <DialogDescription>
+              Find great spots nearby, then share your 3-second food masterpiece!
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6 mt-6">
-            {/* Privacy Notice - Enhanced */}
-            <div className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-950/20 rounded-2xl border border-blue-200 dark:border-blue-800/30">
-              <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-              <p className="text-sm text-blue-800 dark:text-blue-200">
-                <strong>Privacy first:</strong> We only access your location when you explicitly tap "Use my location"
-              </p>
+          <div className="space-y-6 mt-2">
+            <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+              <Info className="h-4 w-4" />
+              <p className="text-sm">We only access your location when you tap “Use location”.</p>
             </div>
 
-            {/* Location Input - Enhanced */}
             <div className="space-y-3">
-              <label className="text-sm font-medium text-foreground">Where are you looking?</label>
-              <div className="flex gap-3">
+              <label className="text-sm font-medium">Where are you looking?</label>
+              <div className="flex gap-2">
                 <Input
                   placeholder="City, neighborhood, or ZIP (e.g., Austin TX, 78701)"
                   value={locationQuery}
@@ -1017,59 +628,41 @@ export default function Food() {
                       setLocStage("idle");
                     }
                   }}
-                  className="flex-1 bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 focus:border-primary/50 rounded-2xl transition-all duration-300"
                   disabled={fetchingNearby}
                 />
                 <Button
                   variant="outline"
                   onClick={requestLocation}
-                  className="gap-2 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
                   disabled={fetchingNearby || locStage === "asking"}
+                  className="gap-2"
                 >
                   <LocateFixed className="h-4 w-4" />
-                  {locStage === "asking" ? "Locating..." : "Use location"}
+                  {locStage === "asking" ? "Locating…" : "Use location"}
                 </Button>
               </div>
             </div>
 
-            {/* Search Options - Enhanced */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Search radius</label>
-                <Select
-                  value={distanceKey}
-                  onValueChange={(v) => setDistanceKey(v as DistanceKey)}
-                  disabled={fetchingNearby}
-                >
-                  <SelectTrigger className="w-full bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 rounded-2xl transition-all duration-300">
-                    <SelectValue placeholder="Choose distance" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-background/95 backdrop-blur-xl border-2 border-border/20 rounded-2xl shadow-2xl">
+                <label className="text-sm font-medium">Search radius</label>
+                <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
+                  <SelectTrigger><SelectValue placeholder="Choose distance" /></SelectTrigger>
+                  <SelectContent>
                     {DISTANCE_OPTIONS.map((d) => (
-                      <SelectItem key={d.key} value={d.key} className="rounded-xl">
-                        {d.label}
-                      </SelectItem>
+                      <SelectItem key={d.key} value={d.key}>{d.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
-              <div className="lg:col-span-2 space-y-2">
-                <label className="text-sm font-medium text-foreground">Food category (optional)</label>
-                <div className="flex gap-3">
-                  <Select 
-                    value={categoryKey} 
-                    onValueChange={setCategoryKey} 
-                    disabled={fetchingNearby}
-                  >
-                    <SelectTrigger className="w-48 bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 rounded-2xl transition-all duration-300">
-                      <SelectValue placeholder="Any cuisine" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background/95 backdrop-blur-xl border-2 border-border/20 rounded-2xl shadow-2xl">
+              <div className="md:col-span-2 space-y-2">
+                <label className="text-sm font-medium">Food category (optional)</label>
+                <div className="flex gap-2">
+                  <Select value={categoryKey} onValueChange={setCategoryKey} disabled={fetchingNearby}>
+                    <SelectTrigger className="w-48"><SelectValue placeholder="Any cuisine" /></SelectTrigger>
+                    <SelectContent>
                       {CATEGORY_PRESETS.map((c) => (
-                        <SelectItem key={c.key} value={c.key} className="rounded-xl">
-                          {c.label}
-                        </SelectItem>
+                        <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1078,99 +671,71 @@ export default function Food() {
                     value={customCategory}
                     onChange={(e) => setCustomCategory(e.target.value)}
                     disabled={categoryKey !== "custom" || fetchingNearby}
-                    className="flex-1 bg-background/80 backdrop-blur border-2 border-border/30 hover:border-primary/30 focus:border-primary/50 rounded-2xl transition-all duration-300"
+                    className="flex-1"
                   />
                 </div>
               </div>
             </div>
 
-            {/* Location Status */}
             {locStage === "asking" && (
-              <div className="flex items-center gap-3 p-4 bg-orange-50 dark:bg-orange-950/20 rounded-2xl border border-orange-200 dark:border-orange-800/30">
-                <Loader2 className="h-5 w-5 animate-spin text-orange-600 dark:text-orange-400" />
-                <p className="text-sm text-orange-800 dark:text-orange-200">
-                  Requesting location permission... Please allow location access in your browser.
-                </p>
+              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <p className="text-sm">Requesting location permission…</p>
               </div>
             )}
 
             {coords && (
-              <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-2xl border border-green-200 dark:border-green-800/30">
-                <p className="text-sm text-green-800 dark:text-green-200">
-                  <span className="font-medium">📍 Location confirmed:</span>{" "}
+              <div className="p-3 bg-muted/30 rounded-lg">
+                <p className="text-sm">
+                  <span className="font-medium">Location confirmed:</span>{" "}
                   <span className="font-mono text-xs">{coordsPretty}</span>
-                  {locationQuery && (
-                    <span className="block mt-1 opacity-75">
-                      You can edit the location above to search a different area
-                    </span>
-                  )}
                 </p>
               </div>
             )}
 
-            {/* Search Button */}
             <div className="flex justify-end">
               <Button
-                onClick={runNearbySearch}
-                className="gap-2 bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 px-8"
+                onClick={async () => {
+                  await runNearbySearch();
+                }}
                 disabled={fetchingNearby || (!coords && !locationQuery.trim())}
+                className="gap-2"
               >
                 <SearchIcon className="h-4 w-4" />
-                {fetchingNearby ? "Searching..." : "Discover Restaurants"}
+                {fetchingNearby ? "Searching…" : "Discover Restaurants"}
               </Button>
             </div>
 
-            {/* Results Section */}
             {nearbyError && (
-              <div className="p-4 bg-red-50 dark:bg-red-950/20 rounded-2xl border border-red-200 dark:border-red-800/30">
-                <p className="text-sm text-red-800 dark:text-red-200 font-medium">
-                  {nearbyError}
-                </p>
+              <div className="p-3 bg-red-50 dark:bg-red-950/20 rounded-lg border border-red-200 dark:border-red-800/30">
+                <p className="text-sm text-red-800 dark:text-red-200 font-medium">{nearbyError}</p>
               </div>
             )}
 
             {fetchingNearby && (
-              <div className="flex items-center gap-4 p-6 bg-gradient-to-r from-primary/5 to-primary/10 rounded-2xl">
-                <div className="relative">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                </div>
-                <div>
-                  <p className="font-medium">Searching for amazing restaurants...</p>
-                  <p className="text-sm text-muted-foreground">This might take a moment</p>
-                </div>
+              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <p className="text-sm">Searching for restaurants…</p>
               </div>
             )}
 
             {!fetchingNearby && nearby.length > 0 && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-gradient-to-r from-green-400 to-green-500 rounded-full animate-pulse" />
-                  <h3 className="text-lg font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-                    Found {nearby.length} amazing restaurant{nearby.length !== 1 ? "s" : ""}!
-                  </h3>
-                </div>
-                <div className="max-h-[50vh] overflow-y-auto rounded-2xl border-2 border-border/20 bg-background/50 backdrop-blur">
-                  {nearby.map((restaurant, index) => (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Found {nearby.length} places</h3>
+                <div className="max-h-[50vh] overflow-y-auto rounded-lg border">
+                  {nearby.map((restaurant) => (
                     <div
                       key={restaurant.id}
-                      className="flex items-center justify-between p-4 border-b border-border/20 last:border-b-0 hover:bg-accent/40 transition-all duration-300 group"
-                      style={{ animationDelay: `${index * 50}ms` }}
+                      className="flex items-center justify-between p-3 border-b last:border-b-0"
                     >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-base font-semibold text-foreground truncate group-hover:text-primary transition-colors">
-                          {restaurant.name}
-                        </div>
-                        <div className="text-sm text-muted-foreground truncate mt-1">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">{restaurant.name}</div>
+                        <div className="text-xs text-muted-foreground truncate mt-0.5">
                           {restaurant.address}
-                          {restaurant.cuisine && (
-                            <span className="text-primary"> • {restaurant.cuisine}</span>
-                          )}
+                          {restaurant.cuisine && <span> • {restaurant.cuisine}</span>}
                         </div>
-                        <div className="flex items-center gap-1 mt-1">
-                          <MapPin className="h-3 w-3 text-green-500" />
-                          <span className="text-xs text-green-600 font-medium">
-                            {prettyDistance(restaurant.distanceKm)} away
-                          </span>
+                        <div className="text-xs mt-0.5">
+                          {prettyDistance(restaurant.distanceKm)} away
                         </div>
                       </div>
                       <a
@@ -1179,7 +744,7 @@ export default function Food() {
                         )}&ll=${restaurant.lat},${restaurant.lon}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white text-xs px-3 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 ml-3 flex-shrink-0"
+                        className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-md border hover:bg-accent"
                         title="Open in Google Maps"
                       >
                         View <ExternalLink className="h-3 w-3" />
@@ -1191,20 +756,19 @@ export default function Food() {
             )}
 
             {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
-              <div className="text-center p-6 bg-muted/20 rounded-2xl">
-                <p className="text-muted-foreground">
-                  No restaurants found in this area. Try expanding your search radius or exploring different categories.
+              <div className="text-center p-4 bg-muted/20 rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  No restaurants found. Try a bigger radius or another category.
                 </p>
               </div>
             )}
 
-            {/* Pro Tip */}
-            <div className="p-4 bg-gradient-to-r from-yellow-50 via-orange-50 to-red-50 dark:from-yellow-950/20 dark:via-orange-950/20 dark:to-red-950/20 rounded-2xl border border-yellow-200 dark:border-yellow-800/30">
+            <div className="p-3 bg-yellow-50 dark:bg-yellow-950/20 rounded-lg border border-yellow-200 dark:border-yellow-800/30">
               <div className="flex items-start gap-2">
-                <Sparkles className="h-4 w-4 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
-                <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                  <span className="font-semibold">Pro tip:</span> When you upload your food video, mention the restaurant name 
-                  in your title or description so others can discover these amazing spots too!
+                <Sparkles className="h-4 w-4 mt-0.5" />
+                <p className="text-sm">
+                  <span className="font-semibold">Pro tip:</span> Mention the restaurant name in your title
+                  or description so others can discover great spots too!
                 </p>
               </div>
             </div>
