@@ -148,9 +148,17 @@ const Index = () => {
         feed = allSpliks.slice(0, 60);
       }
 
-      // --- Attach profiles in ONE query (optional) ---
+      // --- Attach profiles in ONE query (optional) + normalize counters ---
       const ids = Array.from(new Set(feed.map((s: any) => s.user_id).filter(Boolean)));
-      let withProfiles = feed;
+      const normalizeCounts = (s: any) => ({
+        ...s,
+        profile: s.profile ?? null,
+        likes_count: Number.isFinite(Number(s?.likes_count)) ? Number(s.likes_count) : 0,
+        views_count: Number.isFinite(Number(s?.views_count)) ? Number(s.views_count) : 0,
+        comments_count: Number.isFinite(Number(s?.comments_count)) ? Number(s.comments_count) : 0,
+      });
+
+      let withProfiles: any[] = feed;
       if (ids.length > 0) {
         try {
           const { data: profilesData, error: pErr } = await supabase
@@ -160,11 +168,15 @@ const Index = () => {
           if (pErr) throw pErr;
 
           const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
-          withProfiles = feed.map((s: any) => ({ ...s, profile: pmap.get(s.user_id) }));
+          withProfiles = feed.map((s: any) =>
+            normalizeCounts({ ...s, profile: pmap.get(s.user_id) || null })
+          );
         } catch (e) {
           console.warn("Profiles batch fetch failed; proceeding without profiles:", e);
-          withProfiles = feed;
+          withProfiles = feed.map(normalizeCounts);
         }
+      } else {
+        withProfiles = feed.map(normalizeCounts);
       }
 
       setShuffleEpoch(Date.now());
@@ -325,7 +337,7 @@ const Index = () => {
               </p>
             </div>
 
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
+            <div className="max-w-[400px] sm=max-w-[500px] mx-auto space-y-4 md:space-y-6">
               {localSpliks.map((splik: any, index: number) => (
                 <div key={`${splik.id}-${shuffleEpoch}`} className="relative">
                   <SplikCard
