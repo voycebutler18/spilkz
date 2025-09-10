@@ -89,7 +89,6 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
         },
     }));
 
-/* Stable anon id for non-signed users */
 const getAnonKey = () => {
   try {
     let k = localStorage.getItem("feed:anon");
@@ -104,7 +103,6 @@ const getAnonKey = () => {
   }
 };
 
-/* Crypto random */
 const cRandom = () => {
   if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
     const u = new Uint32Array(1);
@@ -114,7 +112,6 @@ const cRandom = () => {
   return Math.random();
 };
 
-/* Shuffle utility */
 const shuffle = <T,>(arr: T[]) => {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -122,17 +119,6 @@ const shuffle = <T,>(arr: T[]) => {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
-};
-
-/* Soft “ranking” like big feeds: recency with a pinch of randomness */
-const rankSort = (rows: Splik[]) => {
-  const now = Date.now();
-  const tau = 1000 * 60 * 60 * 24 * 2; // ~2 days decay
-  return [...rows].sort((a, b) => {
-    const sa = Math.exp(-(now - new Date(a.created_at).getTime()) / tau) + cRandom() * 0.05;
-    const sb = Math.exp(-(now - new Date(b.created_at).getTime()) / tau) + cRandom() * 0.05;
-    return sb - sa;
-  });
 };
 
 /* =================================================================== */
@@ -163,7 +149,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  /* --------- load + ordering (FB/IG/TikTok-ish) --------- */
+  /* --------- load + ordering --------- */
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -188,39 +174,39 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         // user-scoped keys so each person has a different feed memory
         const userKey = user?.id || getAnonKey();
-        const SEEN_KEY = `feed:seen:${userKey}`;
         const LAST_FIRST_KEY = `feed:last-first:${userKey}`;
-        const LAST_PINNED_KEY = `feed:last-pinned-newest:${userKey}`;
+        const SEEN_NEWEST_ONCE_KEY = `feed:seen-newest-once:${userKey}`;
 
-        // load “seen” set
-        const seenRaw = localStorage.getItem(SEEN_KEY);
-        const seen = new Set<string>(seenRaw ? JSON.parse(seenRaw) : []);
-
-        // newest video
+        // newest by created_at
         const newest = [...all].sort(
           (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         )[0];
 
-        // Have we already pinned this exact newest once for this user?
-        const lastPinnedNewest = localStorage.getItem(LAST_PINNED_KEY);
+        const hasSeenNewestOnce = !!localStorage.getItem(SEEN_NEWEST_ONCE_KEY);
 
         let ordered: Splik[];
 
-        if (!lastPinnedNewest || lastPinnedNewest !== newest.id) {
-          // First visit since a brand-new upload: show newest first exactly once
-          ordered = [newest, ...rankSort(all.filter((x) => x.id !== newest.id))];
-          localStorage.setItem(LAST_PINNED_KEY, newest.id);
+        if (!hasSeenNewestOnce && newest) {
+          // First time the newest appears for this user/device: show it first once
+          const rest = all.filter((x) => x.id !== newest.id);
+          ordered = [newest, ...shuffle(rest)];
+          localStorage.setItem(SEEN_NEWEST_ONCE_KEY, newest.id);
         } else {
-          // After that, shuffle/rank the entire feed
-          ordered = rankSort(all);
+          // After that, pick a DIFFERENT first card at random every load
+          // and never repeat the same first twice in a row.
+          const pool = shuffle(all);
+          const prevFirst = localStorage.getItem(LAST_FIRST_KEY);
+
+          let firstIdx = Math.floor(cRandom() * pool.length);
+          if (pool.length > 1 && prevFirst && pool[firstIdx].id === prevFirst) {
+            firstIdx = (firstIdx + 1 + Math.floor(cRandom() * (pool.length - 1))) % pool.length;
+          }
+          const first = pool[firstIdx];
+          const rest = [...pool.slice(0, firstIdx), ...pool.slice(firstIdx + 1)];
+          ordered = [first, ...rest];
         }
 
-        // Avoid same first card as last time for this user
-        const prevFirst = localStorage.getItem(LAST_FIRST_KEY);
-        if (ordered.length > 1 && prevFirst && ordered[0].id === prevFirst) {
-          const j = 1 + Math.floor(cRandom() * (ordered.length - 1));
-          [ordered[0], ordered[j]] = [ordered[j], ordered[0]];
-        }
+        // remember last-first so we avoid repeating it next time
         localStorage.setItem(LAST_FIRST_KEY, ordered[0].id);
 
         setSpliks(ordered);
@@ -247,8 +233,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         // force DOM reorder + scroll top
         setOrderEpoch((e) => e + 1);
         containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
-
-        // mark-first-as-seen-on-visibility (persist) — handled in IO below
       } catch (e) {
         console.error(e);
       } finally {
@@ -289,19 +273,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     return () => { supabase.removeChannel(ch); };
   }, [user?.id]);
 
-  // mark seen helper (persist per user/anon)
-  const markSeen = (videoId: string) => {
-    const key = `feed:seen:${user?.id || getAnonKey()}`;
-    const raw = localStorage.getItem(key);
-    const set = new Set<string>(raw ? JSON.parse(raw) : []);
-    if (!set.has(videoId)) {
-      set.add(videoId);
-      // cap to reasonable size
-      const arr = Array.from(set).slice(-600);
-      localStorage.setItem(key, JSON.stringify(arr));
-    }
-  };
-
   // Mute all other videos
   const muteOtherVideos = (exceptIndex: number) => {
     videoRefs.current.forEach((video, index) => {
@@ -313,7 +284,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay + mark-seen ========== */
+  /* ========== Autoplay ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -333,10 +304,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
-          // mark as seen when it becomes the primary card
-          const s = spliks[index];
-          if (s) markSeen(s.id);
-
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
