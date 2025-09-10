@@ -89,20 +89,6 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
         },
     }));
 
-const getAnonKey = () => {
-  try {
-    let k = localStorage.getItem("feed:anon");
-    if (!k) {
-      // @ts-ignore
-      k = (crypto?.randomUUID?.() as string) || Math.random().toString(36).slice(2);
-      localStorage.setItem("feed:anon", k);
-    }
-    return k;
-  } catch {
-    return "anon-" + Math.random().toString(36).slice(2);
-  }
-};
-
 const cRandom = () => {
   if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
     const u = new Uint32Array(1);
@@ -149,7 +135,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  /* --------- load + ordering --------- */
+  /* --------- load + pure shuffle every time --------- */
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -165,49 +151,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           `);
 
         if (error) throw error;
+
         const all = normalizeSpliks((data as Splik[]) || []);
-        if (all.length === 0) {
-          setSpliks([]);
-          setLoading(false);
-          return;
-        }
-
-        // user-scoped keys so each person has a different feed memory
-        const userKey = user?.id || getAnonKey();
-        const LAST_FIRST_KEY = `feed:last-first:${userKey}`;
-        const SEEN_NEWEST_ONCE_KEY = `feed:seen-newest-once:${userKey}`;
-
-        // newest by created_at
-        const newest = [...all].sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )[0];
-
-        const hasSeenNewestOnce = !!localStorage.getItem(SEEN_NEWEST_ONCE_KEY);
-
-        let ordered: Splik[];
-
-        if (!hasSeenNewestOnce && newest) {
-          // First time the newest appears for this user/device: show it first once
-          const rest = all.filter((x) => x.id !== newest.id);
-          ordered = [newest, ...shuffle(rest)];
-          localStorage.setItem(SEEN_NEWEST_ONCE_KEY, newest.id);
-        } else {
-          // After that, pick a DIFFERENT first card at random every load
-          // and never repeat the same first twice in a row.
-          const pool = shuffle(all);
-          const prevFirst = localStorage.getItem(LAST_FIRST_KEY);
-
-          let firstIdx = Math.floor(cRandom() * pool.length);
-          if (pool.length > 1 && prevFirst && pool[firstIdx].id === prevFirst) {
-            firstIdx = (firstIdx + 1 + Math.floor(cRandom() * (pool.length - 1))) % pool.length;
-          }
-          const first = pool[firstIdx];
-          const rest = [...pool.slice(0, firstIdx), ...pool.slice(firstIdx + 1)];
-          ordered = [first, ...rest];
-        }
-
-        // remember last-first so we avoid repeating it next time
-        localStorage.setItem(LAST_FIRST_KEY, ordered[0].id);
+        const ordered = shuffle(all); // <-- ALWAYS shuffle everything on load
 
         setSpliks(ordered);
 
@@ -221,7 +167,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // preload favorites
+        // preload favorites for this user
         if (user?.id) {
           const { data: favs } = await supabase
             .from("favorites")
@@ -507,7 +453,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         return (
           <section
-            key={`${orderEpoch}-${s.id}`}
+            key={`${orderEpoch}-${i}-${s.id}`}
             data-index={i}
             className="snap-start min-h-[100svh] w-full flex items-center justify-center"
           >
