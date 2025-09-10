@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Heart,
+  // Heart,                // removed
   MessageCircle,
   Share2,
   Bookmark,
@@ -30,12 +30,11 @@ interface Splik {
   video_url: string;
   thumbnail_url?: string | null;
   user_id: string;
-  likes_count?: number | null;
-  comments_count?: number | null;
+  // likes_count?: number | null;   // removed
+  comments_count?: number | null;  // optional: you can remove later if not needed
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  /** joined profile for the creator */
   profile?: {
     id?: string;
     username?: string | null;
@@ -79,7 +78,7 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
     .filter(Boolean)
     .map((r) => ({
       ...r,
-      likes_count: Number.isFinite(r?.likes_count as any) ? (r!.likes_count as number) : 0,
+      // likes removed, keep comments safe if you rely on it
       comments_count: Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
       profile:
         r.profile ?? {
@@ -106,10 +105,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // social UI
-  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
-  const [likePendingIds, setLikePendingIds] = useState<Set<string>>(new Set());
-
   // favorites UI
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
@@ -131,7 +126,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // remember which index to jump to on mount (randomized)
   const initialScrollIndexRef = useRef<number | null>(null);
 
-  /* --------- Enhanced load effect with seen videos tracking + random start --------- */
+  /* --------- load + shuffle --------- */
   useEffect(() => {
     const load = async () => {
       try {
@@ -140,15 +135,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
             trim_start, trim_end,
-            likes_count, comments_count, created_at,
+            created_at,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
-          `); // no .order() — we shuffle
+          `); // likes fields removed
 
         if (error) throw error;
 
-        // normalize first so the rest of the pipeline is safe
         const allVideos = normalizeSpliks((data as Splik[]) || []);
 
         // session seen list
@@ -188,7 +182,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // choose a randomized starting index to scroll to (not the same as last time)
+        // randomized start index
         if (list.length > 0) {
           const START_IDX_KEY = "feed:last-start-index";
           const prevIdxStr = sessionStorage.getItem(START_IDX_KEY);
@@ -202,13 +196,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           initialScrollIndexRef.current = initIndex;
         }
 
-        // preload likes + favorites for this user
+        // preload favorites only
         if (user?.id) {
-          const [{ data: likes }, { data: favs }] = await Promise.all([
-            supabase.from("likes").select("splik_id").eq("user_id", user.id),
-            supabase.from("favorites").select("splik_id").eq("user_id", user.id),
-          ]);
-          if (likes) setLikedIds(new Set(likes.map((l: any) => l.splik_id)));
+          const { data: favs } = await supabase
+            .from("favorites")
+            .select("splik_id")
+            .eq("user_id", user.id);
           if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
       } catch (e) {
@@ -326,11 +319,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const startAt = Number(spliks[index]?.trim_start ?? 0);
           if (startAt > 0) video.currentTime = startAt;
 
-          // tight 3s loop at trim_start
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) video.currentTime = startAt;
           };
-          // remove any existing handler with the same reference then add once
           video.removeEventListener("timeupdate", onTimeUpdate);
           video.addEventListener("timeupdate", onTimeUpdate);
 
@@ -412,97 +403,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       video.play().catch(console.error);
       setIsPlaying((prev) => ({ ...prev, [index]: true }));
       setShowPauseButton((prev) => ({ ...prev, [index]: true }));
-    }
-  };
-
-  /* -------------------------- social actions -------------------------- */
-  const handleLike = async (splikId: string) => {
-    if (!user?.id) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like videos",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (likePendingIds.has(splikId)) return;
-    setLikePendingIds((prev) => new Set(prev).add(splikId));
-
-    const wasLiked = likedIds.has(splikId);
-
-    // optimistic toggle of heart state
-    setLikedIds((prev) => {
-      const ns = new Set(prev);
-      wasLiked ? ns.delete(splikId) : ns.add(splikId);
-      return ns;
-    });
-
-    // optimistic counter change (safe due to normalization)
-    setSpliks((prev) =>
-      prev.map((s) =>
-        s.id === splikId
-          ? {
-              ...s,
-              likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? -1 : 1)),
-            }
-          : s
-      )
-    );
-
-    try {
-      if (wasLiked) {
-        const { error } = await supabase
-          .from("likes")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("splik_id", splikId);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("likes")
-          .upsert(
-            { user_id: user.id, splik_id: splikId },
-            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
-          );
-        if (error) throw error;
-      }
-
-      // snap to the real count from DB
-      const { count } = await supabase
-        .from("likes")
-        .select("*", { head: true, count: "exact" })
-        .eq("splik_id", splikId);
-
-      if (typeof count === "number") {
-        setSpliks((prev) =>
-          prev.map((s) => (s.id === splikId ? { ...s, likes_count: count } : s))
-        );
-      }
-    } catch {
-      // revert local optimistic changes on error
-      setLikedIds((prev) => {
-        const ns = new Set(prev);
-        wasLiked ? ns.add(splikId) : ns.delete(splikId);
-        return ns;
-      });
-      setSpliks((prev) =>
-        prev.map((s) =>
-          s.id === splikId
-            ? {
-                ...s,
-                likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? 1 : -1)),
-              }
-            : s
-        )
-      );
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
-    } finally {
-      setLikePendingIds((prev) => {
-        const ns = new Set(prev);
-        ns.delete(splikId);
-        return ns;
-      });
     }
   };
 
@@ -724,18 +624,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               <div className="p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => handleLike(s.id)}
-                      disabled={likePendingIds.has(s.id)}
-                      className={likedIds.has(s.id) ? "text-red-500 hover:text-red-600" : "hover:text-red-500"}
-                      aria-pressed={likedIds.has(s.id)}
-                      title={likedIds.has(s.id) ? "Unlike" : "Like"}
-                    >
-                      <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
-                    </Button>
-
+                    {/* Like button removed */}
                     <Button
                       size="icon"
                       variant="ghost"
@@ -749,7 +638,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
+                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
