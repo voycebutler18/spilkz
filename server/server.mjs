@@ -16,7 +16,7 @@ const INDEX_HTML = path.join(DIST, "index.html");
 const SUPABASE_URL =
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
 
 const supabase =
   SUPABASE_URL && SUPABASE_ANON_KEY
@@ -25,7 +25,7 @@ const supabase =
 
 if (!supabase) {
   console.warn(
-    "[server] Supabase env missing (SUPABASE_URL/SUPABASE_ANON_KEY or VITE_ equivalents). " +
+    "[server] Supabase env missing (SUPABASE_URL/SUPABASE_ANON_KEY). " +
       "OG routes will use fallback image."
   );
 }
@@ -67,8 +67,7 @@ function escapeHtml(s = "") {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/"/g, "&quot;");
 }
 
 function absoluteBase(req) {
@@ -142,7 +141,10 @@ async function renderVideoOG(req, res, id) {
       .send(html);
   } catch (err) {
     console.error("OG route error:", err);
-    res.status(200).set("Cache-Control", "no-cache").sendFile(INDEX_HTML);
+    res
+      .status(200)
+      .set("Cache-Control", "no-cache")
+      .sendFile(INDEX_HTML);
   }
 }
 
@@ -163,7 +165,7 @@ app.get("*", (_req, res) => {
 });
 
 // ----------------------- boot -----------------------
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`[server] Listening on :${PORT} (serving ${DIST})`);
+  console.log(`Server listening on :${PORT}`);
 });
