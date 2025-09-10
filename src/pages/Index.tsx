@@ -1,6 +1,5 @@
 // src/pages/Index.tsx
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import SplikCard from "@/components/splik/SplikCard";
@@ -17,6 +16,20 @@ type SplikWithProfile = any;
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
 
+// --- helpers: normalize counters + filter out falsy rows ---
+const normalizeCounts = (s: any) => ({
+  ...s,
+  profile: s?.profile ?? null,
+  likes_count: Number.isFinite(Number(s?.likes_count)) ? Number(s.likes_count) : 0,
+  views_count: Number.isFinite(Number(s?.views_count)) ? Number(s.views_count) : 0,
+  comments_count: Number.isFinite(Number(s?.comments_count)) ? Number(s.comments_count) : 0,
+});
+
+const sanitizeFeed = (list: any[]) =>
+  (list || [])
+    .filter((s: any) => s && s.id)
+    .map(normalizeCounts);
+
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -28,7 +41,6 @@ const Index = () => {
 
   const feedStore = useFeedStore();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   useEffect(() => {
     document.title = "Splikz - Short Video Platform";
@@ -46,7 +58,7 @@ const Index = () => {
 
   // On mount, try to use preloaded store or session cache for instant paint
   useEffect(() => {
-    const cached = feedStore.feed.length
+    const cachedRaw = feedStore.feed.length
       ? feedStore.feed
       : (() => {
           try {
@@ -56,6 +68,8 @@ const Index = () => {
             return [];
           }
         })();
+
+    const cached = sanitizeFeed(cachedRaw);
 
     if (cached.length) {
       setLocalSpliks(cached);
@@ -71,7 +85,8 @@ const Index = () => {
   useEffect(() => {
     // keep store and local in sync if splash populated after this page mounted
     if (feedStore.feed.length) {
-      setLocalSpliks(feedStore.feed);
+      const safe = sanitizeFeed(feedStore.feed);
+      setLocalSpliks(safe);
       setLoading(false);
       setShuffleEpoch(Date.now());
     }
@@ -149,16 +164,9 @@ const Index = () => {
       }
 
       // --- Attach profiles in ONE query (optional) + normalize counters ---
-      const ids = Array.from(new Set(feed.map((s: any) => s.user_id).filter(Boolean)));
-      const normalizeCounts = (s: any) => ({
-        ...s,
-        profile: s.profile ?? null,
-        likes_count: Number.isFinite(Number(s?.likes_count)) ? Number(s.likes_count) : 0,
-        views_count: Number.isFinite(Number(s?.views_count)) ? Number(s.views_count) : 0,
-        comments_count: Number.isFinite(Number(s?.comments_count)) ? Number(s.comments_count) : 0,
-      });
-
+      const ids = Array.from(new Set(feed.map((s: any) => s?.user_id).filter(Boolean)));
       let withProfiles: any[] = feed;
+
       if (ids.length > 0) {
         try {
           const { data: profilesData, error: pErr } = await supabase
@@ -179,22 +187,25 @@ const Index = () => {
         withProfiles = feed.map(normalizeCounts);
       }
 
+      // Final safety before UI: drop any null/undefined rows
+      const safeFeed = sanitizeFeed(withProfiles);
+
       setShuffleEpoch(Date.now());
-      setLocalSpliks(withProfiles);
+      setLocalSpliks(safeFeed);
       setActiveIndex(0);
 
       // keep store + cache fresh for instant paints
       try {
-        useFeedStore.getState().setFeed(withProfiles);
+        useFeedStore.getState().setFeed(safeFeed);
         useFeedStore.getState().setLastFetchedAt(Date.now());
-        sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+        sessionStorage.setItem("feed:cached", JSON.stringify(safeFeed));
       } catch (e) {
         console.warn("Caching feed failed (store/sessionStorage):", e);
       }
 
       // Fire-and-forget impressions; never fail the fetch
       try {
-        withProfiles
+        safeFeed
           .filter((s: any) => s.isBoosted)
           .forEach((s: any) =>
             supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
@@ -337,20 +348,22 @@ const Index = () => {
               </p>
             </div>
 
-            <div className="max-w-[400px] sm=max-w-[500px] mx-auto space-y-4 md:space-y-6">
-              {localSpliks.map((splik: any, index: number) => (
-                <div key={`${splik.id}-${shuffleEpoch}`} className="relative">
-                  <SplikCard
-                    index={index}
-                    shouldLoad={shouldLoadIndex(index)}
-                    onPrimaryVisible={(i) => setActiveIndex(i)}
-                    splik={splik}
-                    onSplik={() => {}}
-                    onReact={() => {}}
-                    onShare={() => {}}
-                  />
-                </div>
-              ))}
+            <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
+              {localSpliks
+                .filter((s: any) => s && s.id) // final guard
+                .map((splik: any, index: number) => (
+                  <div key={`${splik.id}-${shuffleEpoch}`} className="relative">
+                    <SplikCard
+                      index={index}
+                      shouldLoad={shouldLoadIndex(index)}
+                      onPrimaryVisible={(i) => setActiveIndex(i)}
+                      splik={splik}
+                      onSplik={() => {}}
+                      onReact={() => {}}
+                      onShare={() => {}}
+                    />
+                  </div>
+                ))}
 
               <div className="text-center py-6 border-t border-border/40">
                 <p className="text-sm text-muted-foreground mb-3">Want to see more?</p>
