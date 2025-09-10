@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   Flame, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles,
+  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles, Eye
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -30,10 +30,11 @@ type Splik = {
   video_url: string;
   thumbnail_url?: string | null;
 
-  // server-side counters (seed from row)
-  hype_score?: number | null;   // total hypes (1 per user)
-  hype_givers?: number | null;  // unique users who hyped
+  // counters on the row
+  hype_score?: number | null;
+  hype_givers?: number | null;
   comments_count?: number | null;
+  views_count?: number | null;        // ← NEW (or view_count / views)
 
   profile?: any;
   mood?: string | null;
@@ -72,18 +73,20 @@ const toNum = (v: unknown, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-/* ============================ Card ============================ */
 export default function SplikCard(props: SplikCardProps) {
   const { splik: rawSplik, onSplik, onReact, onShare } = props;
-
   if (!rawSplik || !rawSplik.id) return null;
 
-  // Normalize safe copy
+  // normalize
   const splik: Splik = {
     ...rawSplik,
     hype_score: toNum(rawSplik.hype_score, 0),
     hype_givers: toNum(rawSplik.hype_givers, 0),
     comments_count: toNum(rawSplik.comments_count, 0),
+    views_count: toNum(
+      (rawSplik as any).views_count ?? (rawSplik as any).view_count ?? (rawSplik as any).views,
+      0
+    ),
     trim_start: toNum(rawSplik.trim_start, 0),
     trim_end: rawSplik.trim_end == null ? null : toNum(rawSplik.trim_end),
   };
@@ -94,23 +97,31 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  // Hype state (toggle: 0/1 per user)
+  // hype
   const [hasHyped, setHasHyped] = useState<boolean>(false);
   const [hypeCount, setHypeCount] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
   const [hypePending, setHypePending] = useState(false);
 
+  // comments
   const [commentsCount, setCommentsCount] = useState<number>(toNum(splik.comments_count, 0));
 
+  // views
+  const [viewCount, setViewCount] = useState<number>(toNum(splik.views_count, 0));
+  const viewPingSent = useRef(false); // ← ensure we only ping once per mount
+
+  // save
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // modals + user
   const [showShareModal, setShowShareModal] = useState(false);
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
+  // video + device
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
@@ -118,18 +129,14 @@ export default function SplikCard(props: SplikCardProps) {
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
 
-  const creatorSlug =
-    splik.profile?.username ||
-    splik.profile?.handle ||
-    splik.user_id;
+  const creatorSlug = splik.profile?.username || splik.profile?.handle || splik.user_id;
 
-  // 3s loop window (safe numbers)
+  // 3s loop window
   const START = Math.max(0, toNum(splik.trim_start, 0));
   const RAW_END = splik.trim_end == null ? START + 3 : toNum(splik.trim_end, START + 3);
   const END = Math.max(START, Math.min(START + 3, RAW_END));
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
-  /* ---------- helpers ---------- */
   const fetchCommentCount = useCallback(async () => {
     if (!splik.id) return;
     try {
@@ -138,9 +145,7 @@ export default function SplikCard(props: SplikCardProps) {
         .select("*", { count: "exact", head: true })
         .eq("splik_id", splik.id);
       setCommentsCount(count ?? 0);
-    } catch {
-      // keep prior values on failure
-    }
+    } catch {}
   }, [splik.id]);
 
   /* ---- autoplay / visibility ---- */
@@ -214,33 +219,49 @@ export default function SplikCard(props: SplikCardProps) {
       pauseIfCurrent(video);
       primedRef.current = false;
     };
-    // deps only what’s used
   }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
-  // enforce 3s loop
+  /* ---- loop + view ping on ≥1s ---- */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+
+    const sendViewPing = async () => {
+      if (viewPingSent.current) return;
+      viewPingSent.current = true;
+      setViewCount((c) => c + 1); // optimistic
+      try {
+        // 👇 rename to your actual SQL function if different
+        await supabase.rpc("register_view", { p_splik_id: splik.id });
+      } catch {
+        // if it fails, no big deal; realtime will correct or next play may retry
+      }
+    };
+
     const onTimeUpdate = () => {
+      // keep the 3s loop
       if (v.currentTime < START || v.currentTime >= END) {
         try { v.currentTime = SEEK_SAFE; } catch {}
       }
+      // fire once when they cross 1s into the clip
+      if (!viewPingSent.current) {
+        // allow tiny epsilon around the 1s mark
+        if (v.currentTime >= START + 1 - 0.02) {
+          void sendViewPing();
+        }
+      }
     };
+
     v.addEventListener("timeupdate", onTimeUpdate);
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
-  }, [START, END, SEEK_SAFE]);
+  }, [START, END, SEEK_SAFE, splik.id]);
 
+  // reset "view already sent" whenever this card is re-mounted/refreshed
   useEffect(() => {
-    if (load) {
-      primedRef.current = false;
-      try { videoRef.current?.load(); } catch {}
-    } else {
-      pauseIfCurrent(videoRef.current);
-      setIsPlaying(false);
-    }
-  }, [load]);
+    viewPingSent.current = false;
+  }, [splik.id]);
 
-  /* ---- state: user + my hype + realtime counters ---- */
+  /* ---- user + hype + realtime counters ---- */
   useEffect(() => {
     let mounted = true;
 
@@ -250,7 +271,6 @@ export default function SplikCard(props: SplikCardProps) {
       setCurrentUser(user);
 
       if (user && splik.id) {
-        // Did I hype this already?
         const { data: row } = await supabase
           .from("hype_reactions")
           .select("splik_id")
@@ -260,7 +280,6 @@ export default function SplikCard(props: SplikCardProps) {
         if (!mounted) return;
         setHasHyped(!!row);
 
-        // favorite?
         const { data: favRow } = await supabase
           .from("favorites").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
         if (!mounted) return;
@@ -272,21 +291,22 @@ export default function SplikCard(props: SplikCardProps) {
 
       await fetchCommentCount();
 
-      // realtime: hype counters live on spliks row (hype_score, hype_givers)
-      const hypeChannel = supabase
-        .channel(`splik-${splik.id}-hype`)
+      // one channel for hype + views + anything else on spliks row
+      const rowChannel = supabase
+        .channel(`splik-${splik.id}-row`)
         .on(
           "postgres_changes",
           { schema: "public", table: "spliks", event: "UPDATE", filter: `id=eq.${splik.id}` },
           (payload) => {
             const s = payload.new as any;
-            setHypeCount(toNum(s.hype_score, 0));
-            setHypeGivers(toNum(s.hype_givers, 0));
+            if (s.hype_score != null) setHypeCount(toNum(s.hype_score, 0));
+            if (s.hype_givers != null) setHypeGivers(toNum(s.hype_givers, 0));
+            const vc = s.views_count ?? s.view_count ?? s.views;
+            if (vc != null) setViewCount(toNum(vc, 0));
           }
         )
         .subscribe();
 
-      // realtime: comments count
       const commentsChannel = supabase
         .channel(`comments-${splik.id}`)
         .on(
@@ -297,7 +317,7 @@ export default function SplikCard(props: SplikCardProps) {
         .subscribe();
 
       return () => {
-        supabase.removeChannel(hypeChannel);
+        supabase.removeChannel(rowChannel);
         supabase.removeChannel(commentsChannel);
       };
     })();
@@ -305,7 +325,7 @@ export default function SplikCard(props: SplikCardProps) {
     return () => { mounted = false; };
   }, [splik.id, fetchCommentCount]);
 
-  /* ---- Hype toggle (like-style) ---- */
+  /* ---- Hype toggle ---- */
   const handleHypeToggle = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (hypePending) return;
@@ -317,9 +337,9 @@ export default function SplikCard(props: SplikCardProps) {
     }
 
     setHypePending(true);
-
-    // optimistic UI
     const goingToHype = !hasHyped;
+
+    // optimistic
     setHasHyped(goingToHype);
     setHypeCount((c) => Math.max(0, c + (goingToHype ? 1 : -1)));
     setHypeGivers((g) => Math.max(0, g + (goingToHype ? 1 : -1)));
@@ -327,7 +347,6 @@ export default function SplikCard(props: SplikCardProps) {
     try {
       const { data, error } = await supabase.rpc("toggle_hype", { p_splik_id: splik.id });
       if (error) throw error;
-
       const row = data?.[0];
       if (row) {
         setHypeCount(Number(row.hype_count) || 0);
@@ -335,7 +354,7 @@ export default function SplikCard(props: SplikCardProps) {
       }
       onSplik?.();
     } catch {
-      // revert on failure
+      // revert
       setHasHyped((prev) => !prev);
       setHypeCount((c) => Math.max(0, c + (hasHyped ? 1 : -1)));
       setHypeGivers((g) => Math.max(0, g + (hasHyped ? 1 : -1)));
@@ -398,13 +417,13 @@ export default function SplikCard(props: SplikCardProps) {
     toast({ title: "Link copied", description: "Share link copied to clipboard" });
   };
 
+  const { isMobile } = useDeviceType();
   const videoHeight = isMobile ? "60svh" : "500px";
   const isBoosted = Boolean((splik as any).isBoosted || (splik as any).is_currently_boosted || (((splik as any).boost_score ?? 0) > 0));
   const isOwner = currentUser && currentUser.id === splik.user_id;
 
-  // Optional: Top Hype badge
   const avgHype = hypeGivers > 0 ? hypeCount / Math.max(1, hypeGivers) : 0;
-  const showTopHypeBadge = hypeGivers >= 10 && avgHype >= 1.0; // keep simple since toggle is 0/1
+  const showTopHypeBadge = hypeGivers >= 10 && avgHype >= 1.0;
 
   return (
     <div
@@ -580,6 +599,12 @@ export default function SplikCard(props: SplikCardProps) {
               ({toNum(hypeGivers, 0).toLocaleString()})
             </span>
           </Button>
+
+          {/* Views (read-only display) */}
+          <div className="inline-flex items-center gap-2 px-2 py-1 text-muted-foreground">
+            <Eye className="h-4 w-4" />
+            <span className="text-xs font-medium tabular-nums">{toNum(viewCount, 0).toLocaleString()}</span>
+          </div>
 
           {/* Comments */}
           <Button
