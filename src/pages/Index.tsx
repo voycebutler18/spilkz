@@ -5,10 +5,10 @@ import { supabase } from "@/integrations/supabase/client";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
-import { Loader2, RefreshCw, Play } from "lucide-react";
+import { Loader2, Play } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { createHomeFeed, forceNewRotation } from "@/lib/feed";
+import { createHomeFeed } from "@/lib/feed";
 
 type SplikWithProfile = any;
 
@@ -16,12 +16,31 @@ type SplikWithProfile = any;
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
 
+// crypto-safe random
+const cRandom = () => {
+  if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
+    const u = new Uint32Array(1);
+    (crypto as any).getRandomValues(u);
+    return u[0] / 2 ** 32;
+  }
+  return Math.random();
+};
+
+// Fisher–Yates shuffle (always shuffle the full feed each mount)
+const shuffle = <T,>(arr: T[]) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(cRandom() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [spliks, setSpliks] = useState<SplikWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0); // who’s mostly visible
 
   const { toast } = useToast();
@@ -42,18 +61,14 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
-    fetchDynamicFeed();
+    fetchFeed(); // auto-load + auto-shuffle on every visit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
-    if (showToast) setRefreshing(true);
-    else setLoading(true);
-
+  const fetchFeed = async () => {
+    setLoading(true);
     try {
-      if (forceNewShuffle) forceNewRotation();
-
-      // 1) all spliks (recent first)
+      // 1) all spliks (recent first from DB)
       const { data: allSpliks, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
@@ -80,31 +95,24 @@ const Index = () => {
         .order("boost_score", { ascending: false })
         .limit(15);
 
-      // 3) build feed (shuffled by your helper)
+      // 3) build feed via your helper, then ALWAYS shuffle everything
       let feed = createHomeFeed(allSpliks || [], boostedSpliks || [], {
         userId: user?.id,
         feedType: "home",
         maxResults: 60,
       }) as SplikWithProfile[];
 
-      // 4) PIN newest at the very top
-      const newest = (allSpliks || [])[0];
-      if (newest) {
-        const idx = feed.findIndex((x: any) => x.id === newest.id);
-        if (idx > 0) {
-          const [item] = feed.splice(idx, 1);
-          feed = [item, ...feed];
-        }
-      }
+      // 🔀 no pinning — just shuffle the entire result on every mount
+      feed = shuffle(feed);
 
-      // 5) impressions
+      // 4) record impressions for boosted (fire and forget)
       feed
         .filter((s: any) => s.isBoosted)
         .forEach((s: any) =>
           supabase.rpc("increment_boost_impression", { p_splik_id: s.id }).catch(() => {})
         );
 
-      // 6) attach profiles
+      // 5) attach profiles
       const withProfiles = await Promise.all(
         feed.map(async (s: any) => {
           const { data: profileData } = await supabase
@@ -118,17 +126,8 @@ const Index = () => {
 
       setSpliks(withProfiles);
       setActiveIndex(0); // reset window to the first item
-
-      if (showToast) {
-        toast({
-          title: forceNewShuffle ? "Feed reshuffled!" : "Feed refreshed!",
-          description: forceNewShuffle
-            ? "Showing you a completely new mix"
-            : "Updated with latest content",
-        });
-      }
     } catch (e) {
-      console.error("Error fetching dynamic feed:", e);
+      console.error("Error fetching feed:", e);
       toast({
         title: "Error",
         description: "Failed to load videos. Please try again.",
@@ -137,12 +136,8 @@ const Index = () => {
       setSpliks([]);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
-
-  const refreshFeed = () => fetchDynamicFeed(true, true);
-  const refreshContent = () => fetchDynamicFeed(true, false);
 
   const handleUploadClick = () => {
     if (!user) {
@@ -192,39 +187,12 @@ const Index = () => {
 
   return (
     <div className="w-full">
-      {/* top controls */}
-      <div className="w-full pt-2 pb-2">
-        <div className="flex justify-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={refreshContent}
-            disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
-          >
-            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Updating..." : "Update"}
-          </Button>
-          <div className="h-4 w-px bg-border" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={refreshFeed}
-            disabled={refreshing || loading}
-            className="text-xs text-muted-foreground hover:text-primary transition-colors"
-          >
-            <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Shuffling..." : "Shuffle"}
-          </Button>
-        </div>
-      </div>
-
       {/* Feed */}
       <section className="w-full py-2 md:py-4 flex justify-center">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-            <p className="text-sm text-muted-foreground">Loading your personalized feed...</p>
+            <p className="text-sm text-muted-foreground">Loading your feed…</p>
           </div>
         ) : spliks.length === 0 ? (
           <Card className="max-w-md mx-auto mx-4">
@@ -233,12 +201,6 @@ const Index = () => {
               <h3 className="text-lg font-semibold mb-2">No Splikz Yet</h3>
               <p className="text-muted-foreground mb-4">Be the first to post a splik!</p>
               <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                <Button onClick={refreshContent} variant="outline" disabled={refreshing}>
-                  {refreshing ? "Loading..." : "Get Latest"}
-                </Button>
-                <Button onClick={refreshFeed} disabled={refreshing}>
-                  {refreshing ? "Shuffling..." : "Shuffle Feed"}
-                </Button>
                 <Button onClick={handleUploadClick} variant="default">
                   Upload
                 </Button>
@@ -247,12 +209,6 @@ const Index = () => {
           </Card>
         ) : (
           <div className="w-full px-2 sm:px-4">
-            <div className="max-w-[400px] sm:max-w-[500px] mx-auto mb-4">
-              <p className="text-xs text-center text-muted-foreground">
-                Showing {spliks.length} videos • Newest is pinned • Rest are shuffled
-              </p>
-            </div>
-
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
               {spliks.map((splik: any, index: number) => (
                 <div key={`${splik.id}-${index}`} className="relative">
@@ -267,26 +223,6 @@ const Index = () => {
                   />
                 </div>
               ))}
-
-              <div className="text-center py-6 border-t border-border/40">
-                <p className="text-sm text-muted-foreground mb-3">Want to see more?</p>
-                <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                  <Button
-                    onClick={refreshContent}
-                    variant="outline"
-                    disabled={refreshing}
-                    className="flex items-center gap-2"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Loading..." : "Get Latest"}
-                  </Button>
-                  <Button onClick={refreshFeed} disabled={refreshing} className="flex items-center gap-2">
-                    <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                    {refreshing ? "Shuffling..." : "Shuffle Feed"}
-                  </Button>
-                  <Button onClick={handleUploadClick}>Upload</Button>
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -299,10 +235,10 @@ const Index = () => {
           onClose={() => setUploadModalOpen(false)}
           onUploadComplete={() => {
             setUploadModalOpen(false);
-            fetchDynamicFeed();
+            fetchFeed(); // just reload (auto-shuffle will apply)
             toast({
               title: "Upload successful!",
-              description: "Your video is now live and appears at the top of feeds",
+              description: "Your video is live in the feed.",
             });
           }}
         />
