@@ -828,7 +828,7 @@ export default function Food() {
                   <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                   <div className="relative flex items-center gap-3">
                     <SearchIcon className="h-5 w-5" />
-                    <span>{fetchingNearby ? "Discovering…" : "Discover Culinary Gems"}</span>
+                    <span>{fetchingNearby ? "Searching…" : "Find Restaurants Near You"}</span>
                   </div>
                 </Button>
               </div>
