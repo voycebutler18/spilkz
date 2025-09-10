@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Heart,
   MessageCircle,
   Share2,
   Bookmark,
@@ -30,12 +29,10 @@ interface Splik {
   video_url: string;
   thumbnail_url?: string | null;
   user_id: string;
-  likes_count?: number | null;
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  /** joined profile for the creator */
   profile?: {
     id?: string;
     username?: string | null;
@@ -73,19 +70,69 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
-// True random shuffle using crypto API or Math.random fallback
-const shuffleArray = <T>(array: T[]): T[] => {
-  const shuffled = [...array];
-  const rand = () =>
-    typeof crypto !== "undefined" && crypto.getRandomValues
-      ? crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32
-      : Math.random();
+const normalizeSpliks = (rows: Splik[]): Splik[] =>
+  (rows ?? [])
+    .filter(Boolean)
+    .map((r) => ({
+      ...r,
+      comments_count: Number.isFinite(r?.comments_count as any)
+        ? (r!.comments_count as number)
+        : 0,
+      profile:
+        r.profile ?? {
+          id: r.user_id,
+          username: null,
+          display_name: null,
+          first_name: null,
+          last_name: null,
+          avatar_url: null,
+        },
+    }));
 
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+/* Stable anon id for non-signed users */
+const getAnonKey = () => {
+  try {
+    let k = localStorage.getItem("feed:anon");
+    if (!k) {
+      // @ts-ignore
+      k = (crypto?.randomUUID?.() as string) || Math.random().toString(36).slice(2);
+      localStorage.setItem("feed:anon", k);
+    }
+    return k;
+  } catch {
+    return "anon-" + Math.random().toString(36).slice(2);
   }
-  return shuffled;
+};
+
+/* Crypto random */
+const cRandom = () => {
+  if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
+    const u = new Uint32Array(1);
+    (crypto as any).getRandomValues(u);
+    return u[0] / 2 ** 32;
+  }
+  return Math.random();
+};
+
+/* Shuffle utility */
+const shuffle = <T,>(arr: T[]) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(cRandom() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+/* Soft “ranking” like big feeds: recency with a pinch of randomness */
+const rankSort = (rows: Splik[]) => {
+  const now = Date.now();
+  const tau = 1000 * 60 * 60 * 24 * 2; // ~2 days decay
+  return [...rows].sort((a, b) => {
+    const sa = Math.exp(-(now - new Date(a.created_at).getTime()) / tau) + cRandom() * 0.05;
+    const sb = Math.exp(-(now - new Date(b.created_at).getTime()) / tau) + cRandom() * 0.05;
+    return sb - sa;
+  });
 };
 
 /* =================================================================== */
@@ -95,10 +142,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // social UI
-  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
-  const [likePendingIds, setLikePendingIds] = useState<Set<string>>(new Set());
 
   // favorites UI
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
@@ -112,64 +155,111 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
-  const [activeIndex, setActiveIndex] = useState(0);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
   const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  /* --------- Load and shuffle videos (fresh every time) --------- */
+  // force-remount key to ensure DOM order changes on each shuffle
+  const [orderEpoch, setOrderEpoch] = useState(0);
+
+  /* --------- load + ordering (FB/IG/TikTok-ish) --------- */
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
       try {
         const { data, error } = await supabase
           .from("spliks")
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end,
-            likes_count, comments_count, created_at,
+            trim_start, trim_end, created_at,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
           `);
 
         if (error) throw error;
+        const all = normalizeSpliks((data as Splik[]) || []);
+        if (all.length === 0) {
+          setSpliks([]);
+          setLoading(false);
+          return;
+        }
 
-        // Get all videos and shuffle them completely fresh every time
-        const allVideos = [...((data as Splik[]) || [])];
-        const shuffledVideos = shuffleArray(allVideos);
+        // user-scoped keys so each person has a different feed memory
+        const userKey = user?.id || getAnonKey();
+        const SEEN_KEY = `feed:seen:${userKey}`;
+        const LAST_FIRST_KEY = `feed:last-first:${userKey}`;
+        const LAST_PINNED_KEY = `feed:last-pinned-newest:${userKey}`;
 
-        setSpliks(shuffledVideos);
+        // load “seen” set
+        const seenRaw = localStorage.getItem(SEEN_KEY);
+        const seen = new Set<string>(seenRaw ? JSON.parse(seenRaw) : []);
 
-        // init mute/pause UI
+        // newest video
+        const newest = [...all].sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )[0];
+
+        // Have we already pinned this exact newest once for this user?
+        const lastPinnedNewest = localStorage.getItem(LAST_PINNED_KEY);
+
+        let ordered: Splik[];
+
+        if (!lastPinnedNewest || lastPinnedNewest !== newest.id) {
+          // First visit since a brand-new upload: show newest first exactly once
+          ordered = [newest, ...rankSort(all.filter((x) => x.id !== newest.id))];
+          localStorage.setItem(LAST_PINNED_KEY, newest.id);
+        } else {
+          // After that, shuffle/rank the entire feed
+          ordered = rankSort(all);
+        }
+
+        // Avoid same first card as last time for this user
+        const prevFirst = localStorage.getItem(LAST_FIRST_KEY);
+        if (ordered.length > 1 && prevFirst && ordered[0].id === prevFirst) {
+          const j = 1 + Math.floor(cRandom() * (ordered.length - 1));
+          [ordered[0], ordered[j]] = [ordered[j], ordered[0]];
+        }
+        localStorage.setItem(LAST_FIRST_KEY, ordered[0].id);
+
+        setSpliks(ordered);
+
+        // init player UI
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
-        shuffledVideos.forEach((_, index) => {
+        ordered.forEach((_, index) => {
           mutedState[index] = false;
           pauseState[index] = true;
         });
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // preload likes + favorites for this user
+        // preload favorites
         if (user?.id) {
-          const [{ data: likes }, { data: favs }] = await Promise.all([
-            supabase.from("likes").select("splik_id").eq("user_id", user.id),
-            supabase.from("favorites").select("splik_id").eq("user_id", user.id),
-          ]);
-          if (likes) setLikedIds(new Set(likes.map((l: any) => l.splik_id)));
+          const { data: favs } = await supabase
+            .from("favorites")
+            .select("splik_id")
+            .eq("user_id", user.id);
           if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
+
+        // force DOM reorder + scroll top
+        setOrderEpoch((e) => e + 1);
+        containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
+
+        // mark-first-as-seen-on-visibility (persist) — handled in IO below
       } catch (e) {
         console.error(e);
       } finally {
         setLoading(false);
       }
     };
+
     load();
   }, [user?.id]);
 
-  /* ---------- realtime sync for favorites (this user) ---------- */
+  /* ---------- favorites realtime for this user ---------- */
   useEffect(() => {
     if (!user?.id) return;
     const ch = supabase
@@ -196,10 +286,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
       )
       .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
+    return () => { supabase.removeChannel(ch); };
   }, [user?.id]);
+
+  // mark seen helper (persist per user/anon)
+  const markSeen = (videoId: string) => {
+    const key = `feed:seen:${user?.id || getAnonKey()}`;
+    const raw = localStorage.getItem(key);
+    const set = new Set<string>(raw ? JSON.parse(raw) : []);
+    if (!set.has(videoId)) {
+      set.add(videoId);
+      // cap to reasonable size
+      const arr = Array.from(set).slice(-600);
+      localStorage.setItem(key, JSON.stringify(arr));
+    }
+  };
 
   // Mute all other videos
   const muteOtherVideos = (exceptIndex: number) => {
@@ -212,7 +313,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay logic ========== */
+  /* ========== Autoplay + mark-seen ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -222,11 +323,20 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
-        const index = Number((entry.target as HTMLElement).dataset.index);
+        const idxAttr = (entry.target as HTMLElement).dataset.index;
+        if (idxAttr == null) continue;
+
+        const index = Number(idxAttr);
+        if (!Number.isFinite(index) || index < 0 || index >= spliks.length) continue;
+
         const video = videoRefs.current[index];
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
+          // mark as seen when it becomes the primary card
+          const s = spliks[index];
+          if (s) markSeen(s.id);
+
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
@@ -240,7 +350,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const startAt = Number(spliks[index]?.trim_start ?? 0);
           if (startAt > 0) video.currentTime = startAt;
 
-          // tight 3s loop at trim_start
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) video.currentTime = startAt;
           };
@@ -251,7 +360,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             await video.play();
             currentPlayingVideo = video;
             currentPlayingIndex = index;
-            setActiveIndex(index);
             setIsPlaying((prev) => ({ ...prev, [index]: true }));
             setShowPauseButton((prev) => ({ ...prev, [index]: true }));
           } catch {
@@ -285,14 +393,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       Object.values(pauseTimeoutRefs.current).forEach((t) => t && clearTimeout(t));
     };
-  }, [spliks.length, muted, spliks]);
-
-  const scrollTo = (index: number) => {
-    const root = containerRef.current;
-    if (!root) return;
-    const child = root.querySelector<HTMLElement>(`[data-index="${index}"]`);
-    if (child) child.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  }, [spliks, muted, orderEpoch]);
 
   const toggleMute = (i: number) => {
     const v = videoRefs.current[i];
@@ -306,7 +407,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const handlePlayPause = (index: number) => {
     const video = videoRefs.current[index];
     if (!video) return;
-
     const currentlyPlaying = isPlaying[index] ?? false;
 
     if (currentlyPlaying) {
@@ -325,97 +425,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       video.play().catch(console.error);
       setIsPlaying((prev) => ({ ...prev, [index]: true }));
       setShowPauseButton((prev) => ({ ...prev, [index]: true }));
-    }
-  };
-
-  /* -------------------------- social actions -------------------------- */
-  const handleLike = async (splikId: string) => {
-    if (!user?.id) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to like videos",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (likePendingIds.has(splikId)) return;
-    setLikePendingIds((prev) => new Set(prev).add(splikId));
-
-    const wasLiked = likedIds.has(splikId);
-
-    // optimistic toggle of heart state
-    setLikedIds((prev) => {
-      const ns = new Set(prev);
-      wasLiked ? ns.delete(splikId) : ns.add(splikId);
-      return ns;
-    });
-
-    // optimistic counter change
-    setSpliks((prev) =>
-      prev.map((s) =>
-        s.id === splikId
-          ? {
-              ...s,
-              likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? -1 : 1)),
-            }
-          : s
-      )
-    );
-
-    try {
-      if (wasLiked) {
-        const { error } = await supabase
-          .from("likes")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("splik_id", splikId);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("likes")
-          .upsert(
-            { user_id: user.id, splik_id: splikId },
-            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
-          );
-        if (error) throw error;
-      }
-
-      // snap to the real count from DB
-      const { count } = await supabase
-        .from("likes")
-        .select("*", { head: true, count: "exact" })
-        .eq("splik_id", splikId);
-
-      if (typeof count === "number") {
-        setSpliks((prev) =>
-          prev.map((s) => (s.id === splikId ? { ...s, likes_count: count } : s))
-        );
-      }
-    } catch {
-      // revert local optimistic changes on error
-      setLikedIds((prev) => {
-        const ns = new Set(prev);
-        wasLiked ? ns.add(splikId) : ns.delete(splikId);
-        return ns;
-      });
-      setSpliks((prev) =>
-        prev.map((s) =>
-          s.id === splikId
-            ? {
-                ...s,
-                likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? 1 : -1)),
-              }
-            : s
-        )
-      );
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
-    } finally {
-      setLikePendingIds((prev) => {
-        const ns = new Set(prev);
-        ns.delete(splikId);
-        return ns;
-      });
     }
   };
 
@@ -449,7 +458,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         toast({ title: "Added to favorites" });
       }
     } catch {
-      // revert on error
+      // revert
       setSavedIds((prev) => {
         const ns = new Set(prev);
         currentlySaved ? ns.add(splikId) : ns.delete(splikId);
@@ -531,7 +540,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         return (
           <section
-            key={s.id}
+            key={`${orderEpoch}-${s.id}`}
             data-index={i}
             className="snap-start min-h-[100svh] w-full flex items-center justify-center"
           >
@@ -568,7 +577,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   playsInline
                   muted={muted[i] ?? false}
                   preload="metadata"
-                  onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
+                  onEnded={() => {
+                    const next = Math.min(i + 1, spliks.length - 1);
+                    const root = containerRef.current;
+                    const child = root?.querySelector<HTMLElement>(`[data-index="${next}"]`);
+                    child?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
                   onLoadedData={() => {
                     const video = videoRefs.current[i];
                     if (video && video.currentTime === 0) video.currentTime = 0.1;
@@ -583,28 +597,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 >
                   {videoIsPlaying ? (
                     shouldShowPauseButton && (
-                      <button
-                        aria-label="Pause"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePlayPause(i);
-                        }}
-                      >
+                      <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4">
                         <Pause className="h-10 w-10 text-white drop-shadow-lg" />
-                      </button>
+                      </span>
                     )
                   ) : (
-                    <button
-                      aria-label="Play"
-                      className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handlePlayPause(i);
-                      }}
-                    >
+                    <span className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors">
                       <Play className="h-8 w-8 text-white ml-1" />
-                    </button>
+                    </span>
                   )}
                 </div>
 
@@ -640,18 +640,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     <Button
                       size="icon"
                       variant="ghost"
-                      onClick={() => handleLike(s.id)}
-                      disabled={likePendingIds.has(s.id)}
-                      className={likedIds.has(s.id) ? "text-red-500 hover:text-red-600" : "hover:text-red-500"}
-                      aria-pressed={likedIds.has(s.id)}
-                      title={likedIds.has(s.id) ? "Unlike" : "Like"}
-                    >
-                      <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
-                    </Button>
-
-                    <Button
-                      size="icon"
-                      variant="ghost"
                       onClick={() => openComments(s)}
                       className="hover:text-blue-500"
                     >
@@ -672,7 +660,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     </Button>
                   </div>
 
-                  {/* Save / Saved with indicator */}
+                  {/* Save / Saved */}
                   <Button
                     size="icon"
                     variant="ghost"
