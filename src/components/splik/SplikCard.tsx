@@ -1,4 +1,3 @@
-// src/components/splik/SplikCard.tsx
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -15,7 +14,6 @@ import {
   VolumeX,
   Rocket,
   Sparkles,
-  Eye,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -49,7 +47,6 @@ type Splik = {
   hype_score?: number | null;
   hype_givers?: number | null;
   comments_count?: number | null;
-  views_count?: number | null;
 
   profile?: any;
   mood?: string | null;
@@ -79,20 +76,6 @@ const toNum = (v: unknown, fallback = 0) => {
 };
 const toTitle = (s: string) =>
   s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-
-const getAnonKey = () => {
-  try {
-    let k = localStorage.getItem("splik_anon_key");
-    if (!k) {
-      // @ts-ignore
-      k = (crypto?.randomUUID?.() as string) || Math.random().toString(36).slice(2);
-      localStorage.setItem("splik_anon_key", k);
-    }
-    return k;
-  } catch {
-    return "anon-" + Math.random().toString(36).slice(2);
-  }
-};
 
 /* ---- global play/pause coordination ---- */
 let CURRENT_PLAYING: HTMLVideoElement | null = null;
@@ -126,7 +109,6 @@ export default function SplikCard(props: SplikCardProps) {
     hype_score: toNum(raw.hype_score, 0),
     hype_givers: toNum(raw.hype_givers, 0),
     comments_count: toNum(raw.comments_count, 0),
-    views_count: toNum(raw.views_count, 0),
     trim_start: toNum(raw.trim_start, 0),
     trim_end: raw.trim_end == null ? null : toNum(raw.trim_end),
   };
@@ -146,11 +128,6 @@ export default function SplikCard(props: SplikCardProps) {
   const [commentsCount, setCommentsCount] = useState<number>(
     toNum(splik.comments_count, 0)
   );
-
-  // views (seeded), plus guards to avoid double record
-  const [viewsCount, setViewsCount] = useState<number>(toNum(splik.views_count, 0));
-  const hasViewedRef = useRef(false);
-  const viewTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -177,27 +154,6 @@ export default function SplikCard(props: SplikCardProps) {
   const END = Math.max(START, Math.min(START + 3, RAW_END));
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
-  /* --------------------- Record a view after 1s --------------------- */
-  const recordView = async () => {
-    if (hasViewedRef.current) return;
-
-    // optimistic bump so you see it immediately
-    hasViewedRef.current = true;
-    setViewsCount((v) => v + 1);
-
-    try {
-      await supabase.rpc("record_view", {
-        p_splik_id: splik.id,
-        p_anon_key: getAnonKey(),
-      });
-      // realtime INSERT listener or spliks UPDATE will reconcile
-    } catch (err) {
-      console.error("record_view failed:", err);
-      hasViewedRef.current = false;
-      setViewsCount((v) => Math.max(0, v - 1));
-    }
-  };
-
   /* ---------- autoplay / visibility ---------- */
   useEffect(() => {
     const video = videoRef.current;
@@ -222,10 +178,6 @@ export default function SplikCard(props: SplikCardProps) {
       if (document.hidden) {
         pauseIfCurrent(video);
         setIsPlaying(false);
-        if (viewTimerRef.current) {
-          clearTimeout(viewTimerRef.current);
-          viewTimerRef.current = null;
-        }
       }
     };
 
@@ -262,13 +214,6 @@ export default function SplikCard(props: SplikCardProps) {
             try {
               await playExclusive(video);
               setIsPlaying(true);
-
-              // Start the 1s timer when visible & playing
-              if (!hasViewedRef.current && !viewTimerRef.current) {
-                viewTimerRef.current = setTimeout(() => {
-                  recordView();
-                }, 1000);
-              }
             } catch {
               setIsPlaying(false);
             }
@@ -277,10 +222,6 @@ export default function SplikCard(props: SplikCardProps) {
             video.muted = true;
             video.setAttribute("muted", "true");
             setIsPlaying(false);
-            if (viewTimerRef.current) {
-              clearTimeout(viewTimerRef.current);
-              viewTimerRef.current = null;
-            }
           }
         }
       },
@@ -297,10 +238,6 @@ export default function SplikCard(props: SplikCardProps) {
       video.removeEventListener("loadedmetadata", onLoadedMetadata);
       pauseIfCurrent(video);
       primedRef.current = false;
-      if (viewTimerRef.current) {
-        clearTimeout(viewTimerRef.current);
-        viewTimerRef.current = null;
-      }
     };
   }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
@@ -322,15 +259,6 @@ export default function SplikCard(props: SplikCardProps) {
     return () => v.removeEventListener("timeupdate", onTimeUpdate);
   }, [START, END, SEEK_SAFE]);
 
-  // Reset view tracking on card change or load flip
-  useEffect(() => {
-    hasViewedRef.current = false;
-    if (viewTimerRef.current) {
-      clearTimeout(viewTimerRef.current);
-      viewTimerRef.current = null;
-    }
-  }, [splik.id, START, load]);
-
   // reload video element when load flag flips
   useEffect(() => {
     if (load) {
@@ -341,10 +269,6 @@ export default function SplikCard(props: SplikCardProps) {
     } else {
       pauseIfCurrent(videoRef.current);
       setIsPlaying(false);
-      if (viewTimerRef.current) {
-        clearTimeout(viewTimerRef.current);
-        viewTimerRef.current = null;
-      }
     }
   }, [load]);
 
@@ -384,35 +308,26 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // Seed views from splik_views (so it "sticks" across refresh)
-      try {
-        const { count } = await supabase
-          .from("splik_views")
-          .select("*", { count: "exact", head: true })
-          .eq("splik_id", splik.id);
-        if (mounted && typeof count === "number") setViewsCount(count);
-      } catch {}
-
-      // Realtime: listen to both spliks UPDATE and splik_views INSERT
+      // Realtime counters from spliks row (no views)
       const ch = supabase
-        .channel(`splik-${splik.id}-counters`)
-        // live counters if your triggers update the parent row
+        .channel(`spliks-${splik.id}-counters`)
         .on(
           "postgres_changes",
-          { schema: "public", table: "spliks", event: "UPDATE", filter: `id=eq.${splik.id}` },
+          {
+            schema: "public",
+            table: "spliks",
+            event: "UPDATE",
+            filter: `id=eq.${splik.id}`,
+          },
           (payload) => {
             const s = payload.new as any;
-            if (s.hype_score !== undefined) setHypeScore(toNum(s.hype_score, 0));
-            if (s.hype_givers !== undefined) setHypeGivers(toNum(s.hype_givers, 0));
-            if (s.comments_count !== undefined) setCommentsCount(toNum(s.comments_count, 0));
-            if (s.views_count !== undefined) setViewsCount(toNum(s.views_count, 0));
+            if (s.hype_score !== undefined)
+              setHypeScore(toNum(s.hype_score, 0));
+            if (s.hype_givers !== undefined)
+              setHypeGivers(toNum(s.hype_givers, 0));
+            if (s.comments_count !== undefined)
+              setCommentsCount(toNum(s.comments_count, 0));
           }
-        )
-        // instant view bump when a view row is created
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "splik_views", event: "INSERT", filter: `splik_id=eq.${splik.id}` },
-          () => setViewsCount((v) => v + 1)
         )
         .subscribe();
 
@@ -507,13 +422,6 @@ export default function SplikCard(props: SplikCardProps) {
       }
       await playExclusive(video);
       setIsPlaying(true);
-
-      // Start view timer when manually playing
-      if (!hasViewedRef.current && !viewTimerRef.current) {
-        viewTimerRef.current = setTimeout(() => {
-          recordView();
-        }, 1000);
-      }
     }
   };
 
@@ -786,20 +694,6 @@ export default function SplikCard(props: SplikCardProps) {
             <MessageCircle className="h-4 w-4" />
             <span className="text-xs font-medium">
               {commentsCount.toLocaleString()}
-            </span>
-          </Button>
-
-          {/* Views (read-only) */}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled
-            className="flex items-center gap-2 opacity-100"
-            title="Views"
-          >
-            <Eye className="h-4 w-4" />
-            <span className="text-xs font-medium">
-              {viewsCount.toLocaleString()}
             </span>
           </Button>
 
