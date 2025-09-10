@@ -1,3 +1,4 @@
+
 // src/components/dashboard/VideoUploadModal.tsx
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -236,7 +237,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
 
   // === NEW: a single place to close + redirect to Profile ==================
   const goToProfile = useCallback(async () => {
-    // make sure we have a uid even if state hasn’t caught up
+    // make sure we have a uid even if state hasn't caught up
     let uid = currentUser?.id as string | undefined;
     if (!uid) {
       const { data } = await supabase.auth.getUser();
@@ -295,6 +296,43 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       return new Blob([data], { type: "video/mp4" });
     } finally {
       setTranscoding(false);
+      setTranscodeProgress(0);
+    }
+  }, [getFFmpeg]);
+
+  // NEW: Trim video to exactly 3 seconds
+  const trimVideoToThreeSeconds = useCallback(async (sourceFile: Blob | File, startTime: number): Promise<Blob> => {
+    setTranscodeProgress(1);
+    
+    try {
+      const ffmpeg = await getFFmpeg();
+      const inputName = "input.mp4";
+      const outputName = "trimmed.mp4";
+      
+      // Write the source file
+      await ffmpeg.writeFile(inputName, await fetchFile(sourceFile));
+      
+      // Trim to exactly 3 seconds starting from startTime
+      await ffmpeg.exec([
+        "-i", inputName,
+        "-ss", startTime.toString(), // Start time
+        "-t", "3.0", // Duration (exactly 3 seconds)
+        "-vf", "scale='min(1280,iw)':-2", // Scale if needed
+        "-r", "30", // Frame rate
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-c:a", "aac",
+        "-ac", "1",
+        "-b:a", "96k",
+        "-movflags", "+faststart",
+        "-avoid_negative_ts", "make_zero", // Handle timing issues
+        outputName
+      ]);
+      
+      const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+      return new Blob([data], { type: "video/mp4" });
+    } finally {
       setTranscodeProgress(0);
     }
   }, [getFFmpeg]);
@@ -361,7 +399,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       };
 
       if (isMOV(selectedFile)) {
-        toast({ title: "Converting MOV → MP4", description: "We’ll upload MP4 so it plays everywhere." });
+        toast({ title: "Converting MOV → MP4", description: "We'll upload MP4 so it plays everywhere." });
         const mp4Blob = await transcodeMovToMp4(selectedFile);
         setUploadSource(mp4Blob);
         setUploadExt("mp4");
@@ -595,60 +633,69 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     setUploadProgress(1);
 
     try {
-      const ext = uploadExt || "mp4";
-      const videoPath = `${user.id}/${Date.now()}.${ext}`;
-
-      const { publicUrl } = await uploadWithProgress("spliks", videoPath, uploadSource);
-
-      // Exactly 3s window
+      // Calculate the exact 3-second window
       const selectedStart = Math.min(
         Math.max(0, trimRange[0]),
         Math.max(0, originalDuration - 0.05)
       );
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
 
+      // TRIM THE VIDEO TO EXACTLY 3 SECONDS
+      toast({ title: "Processing video", description: "Trimming to exactly 3 seconds..." });
+      const trimmedVideo = await trimVideoToThreeSeconds(uploadSource, selectedStart);
+      
+      const ext = "mp4"; // Always MP4 after trimming
+      const videoPath = `${user.id}/${Date.now()}.${ext}`;
+
+      const { publicUrl } = await uploadWithProgress("spliks", videoPath, trimmedVideo);
+
       const baseDesc =
         (description || "").trim() ||
-        (showTrimmer ? `Trimmed: ${selectedStart.toFixed(1)}s - ${enforcedEnd.toFixed(1)}s` : "");
+        `Trimmed: ${selectedStart.toFixed(1)}s - ${enforcedEnd.toFixed(1)}s`;
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
-      // Poster from chosen frame
+      // Generate poster from the trimmed video (now the frame will be at the relative position)
       let thumbnail_url: string | null = null;
-      let savedCoverTime = coverTime;
+      let savedCoverTime = coverTime - selectedStart; // Adjust for trimmed start
       try {
-        const thumbSecond = Math.min(enforcedEnd - 0.05, Math.max(selectedStart + 0.05, coverTime));
-        const posterBlob = await makePosterFromVideoSource(frameSource ?? uploadSource, thumbSecond);
+        // Since the video is now trimmed, the cover time should be relative to the new start (0)
+        const relativeCoverTime = Math.min(2.95, Math.max(0.05, coverTime - selectedStart));
+        const posterBlob = await makePosterFromVideoSource(trimmedVideo, relativeCoverTime);
         const thumbPath = `${user.id}/${Date.now()}_poster.jpg`;
         const poster = await uploadBlob("spliks", thumbPath, posterBlob);
         thumbnail_url = poster.publicUrl || null;
-        savedCoverTime = thumbSecond;
+        savedCoverTime = relativeCoverTime;
       } catch (e) {
         console.warn("Poster generation failed:", e);
+        savedCoverTime = 1.5; // Default to middle
       }
 
       const payload: any = {
         user_id: user.id,
         title,
         description: finalDescription.trim(),
-        duration: MAX_VIDEO_DURATION,
-        file_size: (uploadSource as Blob).size ?? file?.size ?? null,
-        mime_type: uploadMime || "video/mp4",
+        duration: MAX_VIDEO_DURATION, // Always 3 seconds now
+        file_size: trimmedVideo.size, // Use trimmed video size
+        mime_type: "video/mp4", // Always MP4 after processing
         status: "active",
-        trim_start: selectedStart,
-        trim_end: enforcedEnd,
+        trim_start: 0, // Trimmed video starts at 0
+        trim_end: MAX_VIDEO_DURATION, // Trimmed video ends at 3
         is_food: isFood,
         video_path: videoPath,
         video_url: publicUrl,
         thumbnail_url,
         cover_time: savedCoverTime,
+        // Store original timing info for reference (optional - add to DB schema if needed)
+        // original_trim_start: selectedStart,
+        // original_trim_end: enforcedEnd,
       };
 
       const { error: dbError } = await supabase.from("spliks").insert(payload);
       if (dbError) throw dbError;
 
       setUploadProgress(100);
-      toast({ title: "Upload successful!", description: "Saved as a 3-second Splik." });
+      toast({ title: "Upload successful!", description: "Your 3-second Splik has been saved." });
 
       // Reset UI
       setFile(null);
@@ -668,11 +715,13 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       setVideoError(null);
       setShowTrimmer(false);
       setTrimRange([0, 3]);
+      setCoverTime(1.5);
       setUploadSpeedMBps(0);
       setUploadETA(null);
 
       onUploadComplete();
-      onClose();
+      // Use goToProfile instead of just onClose to redirect to profile
+      goToProfile();
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload video", variant: "destructive" });
@@ -742,17 +791,24 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
               <div className="flex items-center gap-2">
                 <Smartphone className="h-4 w-4" />
                 <AlertDescription className="text-xs">
-                  On mobile, you’ll see a conversion status if you upload a MOV.
+                  On mobile, you'll see a conversion status if you upload a MOV.
                 </AlertDescription>
               </div>
             </Alert>
           )}
 
-          {processingVideo ? (
+          {processingVideo || transcoding ? (
             <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
               <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Processing your video…</h3>
-              <p className="text-sm text-muted-foreground">Preparing the 3-second clip</p>
+              <h3 className="text-lg font-semibold mb-2">
+                {transcoding ? "Converting video to MP4..." : "Processing your video…"}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {transcoding 
+                  ? `Converting for compatibility... ${transcodeProgress}%`
+                  : "Preparing the 3-second clip"
+                }
+              </p>
             </div>
           ) : !file ? (
             <div
@@ -787,27 +843,18 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                 </Alert>
               )}
 
-              {transcoding && (
-                <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-                  <p className="text-sm font-medium">
-                    Converting MOV to MP4 for preview & upload… {transcodeProgress}%
-                  </p>
-                </div>
-              )}
-
               {/* Video + overlay controls */}
               <div className="flex justify-center">
                 <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
                   <div className="relative" style={{ paddingBottom: "177.78%" }}>
-                    {!videoPreview && !transcoding ? (
+                    {!videoPreview ? (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
                         <Film className="h-10 w-10 opacity-70 mb-2" />
                         <p className="text-sm font-medium">Preparing preview…</p>
                       </div>
                     ) : null}
 
-                    {videoPreview && !transcoding ? (
+                    {videoPreview ? (
                       <>
                         <video
                           ref={videoRef}
@@ -895,7 +942,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                 <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
                   <div className="flex items-center gap-2">
                     <Scissors className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-medium">Pick any spot (we’ll save 3s)</span>
+                    <span className="text-sm font-medium">Pick any spot (we'll save 3s)</span>
                   </div>
 
                   <div className="space-y-3">
@@ -956,7 +1003,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                     </SelectContent>
                   </Select>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    If chosen, we’ll tag the description with <code>#mood=&lt;value&gt;</code>.
+                    If chosen, we'll tag the description with <code>#mood=&lt;value&gt;</code>.
                   </p>
                 </div>
 
@@ -990,14 +1037,17 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                     <div className="flex items-center gap-1">
                       <Info className="h-3.5 w-3.5" />
                       <span>
-                        Uploading… {uploadProgress}%{uploadETA ? ` • ETA ${uploadETA}` : ""}
+                        {transcodeProgress > 0 
+                          ? `Processing video... ${transcodeProgress}%`
+                          : `Uploading... ${uploadProgress}%${uploadETA ? ` • ETA ${uploadETA}` : ""}`
+                        }
                       </span>
                     </div>
                     <div className="font-mono">
                       {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
                     </div>
                   </div>
-                  <Progress value={uploading ? uploadProgress : 0} className="w-full" />
+                  <Progress value={transcodeProgress > 0 ? transcodeProgress : uploadProgress} className="w-full" />
                 </div>
               )}
 
@@ -1021,6 +1071,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                     setVideoError(null);
                     setShowTrimmer(false);
                     setTrimRange([0, 3]);
+                    setCoverTime(1.5);
                     setUploadSpeedMBps(0);
                     setUploadETA(null);
                   }}
@@ -1033,7 +1084,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
                   {uploading ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Uploading…
+                      {transcodeProgress > 0 ? "Processing..." : "Uploading..."}
                     </>
                   ) : (
                     "Upload Splik"
