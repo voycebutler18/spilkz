@@ -1,4 +1,3 @@
-
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -74,6 +73,21 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
+// True random shuffle using crypto API or Math.random fallback
+const shuffleArray = <T>(array: T[]): T[] => {
+  const shuffled = [...array];
+  const rand = () =>
+    typeof crypto !== "undefined" && crypto.getRandomValues
+      ? crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32
+      : Math.random();
+
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
@@ -104,10 +118,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  // remember which index to jump to on mount (randomized)
-  const initialScrollIndexRef = useRef<number | null>(null);
-
-  /* --------- Enhanced load effect with seen videos tracking + random start --------- */
+  /* --------- Load and shuffle videos (fresh every time) --------- */
   useEffect(() => {
     const load = async () => {
       try {
@@ -120,67 +131,25 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
-          `); // no .order() — we shuffle
+          `);
 
         if (error) throw error;
 
+        // Get all videos and shuffle them completely fresh every time
         const allVideos = [...((data as Splik[]) || [])];
+        const shuffledVideos = shuffleArray(allVideos);
 
-        // session seen list
-        const SEEN_KEY = "feed:seen-videos";
-        const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
-        const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
-
-        const unseen = allVideos.filter((v) => !seenVideoIds.has(v.id));
-        const pool = unseen.length > 0 ? unseen : allVideos;
-        if (unseen.length === 0) sessionStorage.removeItem(SEEN_KEY);
-
-        // Fisher–Yates (crypto-backed)
-        const list = [...pool];
-        const rand = () =>
-          typeof crypto !== "undefined" && (crypto as any).getRandomValues
-            ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
-            : Math.random();
-
-        for (let i = list.length - 1; i > 0; i--) {
-          const j = Math.floor(rand() * (i + 1));
-          [list[i], list[j]] = [list[j], list[i]];
-        }
-
-        // avoid repeating the same *first* card as last time
-        const LAST_FIRST_KEY = "feed:last-first-id";
-        const prevFirst = sessionStorage.getItem(LAST_FIRST_KEY);
-        if (list.length > 1 && prevFirst && list[0]?.id === prevFirst) {
-          const j = 1 + Math.floor(rand() * (list.length - 1));
-          [list[0], list[j]] = [list[j], list[0]];
-        }
-        if (list[0]) sessionStorage.setItem(LAST_FIRST_KEY, list[0].id);
-
-        setSpliks(list);
+        setSpliks(shuffledVideos);
 
         // init mute/pause UI
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
-        list.forEach((_, index) => {
+        shuffledVideos.forEach((_, index) => {
           mutedState[index] = false;
           pauseState[index] = true;
         });
         setMuted(mutedState);
         setShowPauseButton(pauseState);
-
-        // choose a randomized starting index to scroll to (not the same as last time)
-        if (list.length > 0) {
-          const START_IDX_KEY = "feed:last-start-index";
-          const prevIdxStr = sessionStorage.getItem(START_IDX_KEY);
-          const prevIdx = prevIdxStr ? parseInt(prevIdxStr, 10) : -1;
-
-          let initIndex = Math.floor(rand() * list.length);
-          if (list.length > 1 && initIndex === prevIdx) {
-            initIndex = (initIndex + 1) % list.length;
-          }
-          sessionStorage.setItem(START_IDX_KEY, String(initIndex));
-          initialScrollIndexRef.current = initIndex;
-        }
 
         // preload likes + favorites for this user
         if (user?.id) {
@@ -199,33 +168,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
     load();
   }, [user?.id]);
-
-  // After the list renders and the observer attaches, jump to the randomized start index
-  useEffect(() => {
-    if (!spliks.length) return;
-    const idx = initialScrollIndexRef.current;
-    if (idx == null) return;
-
-    // allow one tick for DOM + observer to be ready
-    const t = setTimeout(() => {
-      const root = containerRef.current;
-      if (!root) return;
-      const child = root.querySelector<HTMLElement>(`[data-index="${idx}"]`);
-      if (child) child.scrollIntoView({ behavior: "instant", block: "start" as ScrollLogicalPosition });
-    }, 60);
-    return () => clearTimeout(t);
-  }, [spliks.length]);
-
-  // Track when videos are viewed (mark as seen)
-  const markVideoAsSeen = (videoId: string) => {
-    const SEEN_KEY = "feed:seen-videos";
-    const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
-    const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
-    if (!seenVideoIds.has(videoId)) {
-      seenVideoIds.add(videoId);
-      sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seenVideoIds]));
-    }
-  };
 
   /* ---------- realtime sync for favorites (this user) ---------- */
   useEffect(() => {
@@ -270,7 +212,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Enhanced Autoplay with seen tracking ========== */
+  /* ========== Autoplay logic ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -285,10 +227,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
-          // Mark as seen
-          const splik = spliks[index];
-          if (splik) markVideoAsSeen(splik.id);
-
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
@@ -306,8 +244,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) video.currentTime = startAt;
           };
-          // ensure we do not stack listeners
-          video.onplaying = video.onplaying; // no-op to keep TS happy
           video.removeEventListener("timeupdate", onTimeUpdate);
           video.addEventListener("timeupdate", onTimeUpdate);
 
