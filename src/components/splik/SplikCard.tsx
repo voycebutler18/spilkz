@@ -31,8 +31,8 @@ type Splik = {
   thumbnail_url?: string | null;
 
   // server-side counters (seed from row)
-  hype_score?: number | null;   // total flames across users (0..3 per user)
-  hype_givers?: number | null;  // unique users who gave >0 hype
+  hype_score?: number | null;   // total hypes (1 per user)
+  hype_givers?: number | null;  // unique users who hyped
   comments_count?: number | null;
 
   profile?: any;
@@ -72,8 +72,6 @@ const toNum = (v: unknown, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-const MAX_HYPE = 3;
-
 /* ============================ Card ============================ */
 export default function SplikCard(props: SplikCardProps) {
   const { splik: rawSplik, onSplik, onReact, onShare } = props;
@@ -96,10 +94,11 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  // Hype state
-  const [myHype, setMyHype] = useState<number>(0); // 0..3 (monotonic)
-  const [hypeScore, setHypeScore] = useState<number>(toNum(splik.hype_score, 0));
+  // Hype state (toggle: 0/1 per user)
+  const [hasHyped, setHasHyped] = useState<boolean>(false);
+  const [hypeCount, setHypeCount] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
+  const [hypePending, setHypePending] = useState(false);
 
   const [commentsCount, setCommentsCount] = useState<number>(toNum(splik.comments_count, 0));
 
@@ -251,15 +250,15 @@ export default function SplikCard(props: SplikCardProps) {
       setCurrentUser(user);
 
       if (user && splik.id) {
-        // my hype (from per-user table)
+        // Did I hype this already?
         const { data: row } = await supabase
-          .from("hype_reactions") // table name in your project
-          .select("amount")
+          .from("hype_reactions")
+          .select("splik_id")
           .eq("user_id", user.id)
           .eq("splik_id", splik.id)
           .maybeSingle();
         if (!mounted) return;
-        setMyHype(row?.amount ?? 0);
+        setHasHyped(!!row);
 
         // favorite?
         const { data: favRow } = await supabase
@@ -267,7 +266,7 @@ export default function SplikCard(props: SplikCardProps) {
         if (!mounted) return;
         setIsSaved(!!favRow);
       } else {
-        setMyHype(0);
+        setHasHyped(false);
         setIsSaved(false);
       }
 
@@ -281,7 +280,7 @@ export default function SplikCard(props: SplikCardProps) {
           { schema: "public", table: "spliks", event: "UPDATE", filter: `id=eq.${splik.id}` },
           (payload) => {
             const s = payload.new as any;
-            setHypeScore(toNum(s.hype_score, 0));
+            setHypeCount(toNum(s.hype_score, 0));
             setHypeGivers(toNum(s.hype_givers, 0));
           }
         )
@@ -306,9 +305,10 @@ export default function SplikCard(props: SplikCardProps) {
     return () => { mounted = false; };
   }, [splik.id, fetchCommentCount]);
 
-  /* ---- Hype add (monotonic: 0 -> 1 -> 2 -> 3; then no-op) ---- */
-  const addHype = async (e?: React.MouseEvent) => {
+  /* ---- Hype toggle (like-style) ---- */
+  const handleHypeToggle = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (hypePending) return;
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -316,35 +316,32 @@ export default function SplikCard(props: SplikCardProps) {
       return;
     }
 
-    if (myHype >= MAX_HYPE) {
-      // Optional: tiny toast to indicate cap
-      // toast({ title: "Max hype reached", description: "You’ve already given 3 🔥", variant: "default" });
-      return;
-    }
-
-    const next = Math.min(MAX_HYPE, myHype + 1);
-    const delta = next - myHype;
+    setHypePending(true);
 
     // optimistic UI
-    setMyHype(next);
-    setHypeScore((t) => t + delta);
-    if (myHype === 0) setHypeGivers((g) => g + 1);
+    const goingToHype = !hasHyped;
+    setHasHyped(goingToHype);
+    setHypeCount((c) => Math.max(0, c + (goingToHype ? 1 : -1)));
+    setHypeGivers((g) => Math.max(0, g + (goingToHype ? 1 : -1)));
 
     try {
-      // Server guarantees monotonic increase
-      const { error } = await supabase.rpc("upsert_hype", {
-        p_splik_id: splik.id,
-        p_amount: next,
-      });
+      const { data, error } = await supabase.rpc("toggle_hype", { p_splik_id: splik.id });
       if (error) throw error;
-      // Realtime will snap totals if needed
+
+      const row = data?.[0];
+      if (row) {
+        setHypeCount(Number(row.hype_count) || 0);
+        setHasHyped(Boolean(row.user_hyped));
+      }
       onSplik?.();
-    } catch (err) {
+    } catch {
       // revert on failure
-      setMyHype((prev) => prev - delta);
-      setHypeScore((t) => t - delta);
-      if (myHype === 0) setHypeGivers((g) => Math.max(0, g - 1));
-      toast({ title: "Error", description: "Failed to add hype", variant: "destructive" });
+      setHasHyped((prev) => !prev);
+      setHypeCount((c) => Math.max(0, c + (hasHyped ? 1 : -1)));
+      setHypeGivers((g) => Math.max(0, g + (hasHyped ? 1 : -1)));
+      toast({ title: "Error", description: "Failed to update hype", variant: "destructive" });
+    } finally {
+      setHypePending(false);
     }
   };
 
@@ -406,20 +403,8 @@ export default function SplikCard(props: SplikCardProps) {
   const isOwner = currentUser && currentUser.id === splik.user_id;
 
   // Optional: Top Hype badge
-  const avgHype = hypeGivers > 0 ? hypeScore / Math.max(1, hypeGivers) : 0;
-  const showTopHypeBadge = hypeGivers >= 10 && avgHype >= 2.3;
-
-  /* --- Small inline components --- */
-  const HypeMeter = ({ level }: { level: number }) => (
-    <div className="flex items-center gap-1">
-      {[1, 2, 3].map((n) => (
-        <span
-          key={n}
-          className={`h-2.5 w-3 rounded-sm ${n <= level ? "bg-orange-500" : "bg-muted"}`}
-        />
-      ))}
-    </div>
-  );
+  const avgHype = hypeGivers > 0 ? hypeCount / Math.max(1, hypeGivers) : 0;
+  const showTopHypeBadge = hypeGivers >= 10 && avgHype >= 1.0; // keep simple since toggle is 0/1
 
   return (
     <div
@@ -573,33 +558,27 @@ export default function SplikCard(props: SplikCardProps) {
 
         {/* ACTIONS */}
         <div className="flex items-center justify-between gap-1">
-          {/* Hype (monotonic) */}
+          {/* Hype (toggle) */}
           <Button
             variant="ghost"
             size="sm"
-            onClick={addHype}
-            disabled={myHype >= MAX_HYPE}
+            onClick={handleHypeToggle}
+            disabled={hypePending}
             className={cn(
               "flex items-center gap-2 transition-colors",
-              myHype > 0 && "text-orange-500 hover:text-orange-600",
-              myHype >= MAX_HYPE && "opacity-80 cursor-default"
+              hasHyped && "text-orange-500 hover:text-orange-600"
             )}
-            aria-pressed={myHype > 0}
-            title={myHype >= MAX_HYPE ? "Max hype reached" : "Add hype"}
+            aria-pressed={hasHyped}
+            title={hasHyped ? "Un-hype" : "Hype"}
           >
-            <Flame className={cn("h-4 w-4", myHype > 0 && "fill-current")} />
-            <HypeMeter level={myHype} />
+            <Flame className={cn("h-4 w-4", hasHyped && "fill-current")} />
+            <span className="text-xs font-semibold">Hype</span>
             <span className="text-xs font-medium tabular-nums">
-              {toNum(hypeScore, 0).toLocaleString()}
+              {toNum(hypeCount, 0).toLocaleString()}
             </span>
             <span className="text-[10px] text-muted-foreground">
               ({toNum(hypeGivers, 0).toLocaleString()})
             </span>
-            {myHype > 0 && (
-              <span className="text-[10px] font-semibold rounded px-1 py-0.5 bg-orange-500/10 text-orange-600">
-                {myHype}/{MAX_HYPE}
-              </span>
-            )}
           </Button>
 
           {/* Comments */}
