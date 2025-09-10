@@ -12,23 +12,30 @@ import { useFeedStore } from "@/store/feedStore";
 
 type SplikWithProfile = any;
 
-// Rolling window: keep 5 videos “live” at any time
 const LOAD_WINDOW = 5;
 const HALF = Math.floor(LOAD_WINDOW / 2);
 
-// --- helpers: normalize counters + filter out falsy rows ---
-const normalizeCounts = (s: any) => ({
-  ...s,
-  profile: s?.profile ?? null,
-  likes_count: Number.isFinite(Number(s?.likes_count)) ? Number(s.likes_count) : 0,
-  views_count: Number.isFinite(Number(s?.views_count)) ? Number(s.views_count) : 0,
-  comments_count: Number.isFinite(Number(s?.comments_count)) ? Number(s.comments_count) : 0,
-});
+/** ---------- helpers: normalize counters + filter out falsy rows (likes-safe) ---------- */
+const normalizeCounts = (row: any) => {
+  const s = row ?? {};
+  const toNum = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return {
+    ...s,
+    profile: s.profile ?? null,
+    // likes removed; keep a harmless 0 to protect any legacy code paths
+    likes_count: toNum(s?.likes_count),
+    views_count: toNum(s?.views_count),
+    comments_count: toNum(s?.comments_count),
+  };
+};
 
-const sanitizeFeed = (list: any[]) =>
-  (list || [])
-    .filter((s: any) => s && s.id)
-    .map(normalizeCounts);
+const sanitize = (list: any[]) =>
+  (list ?? [])
+    .filter((s) => s && s.id)       // drop undefined/null rows
+    .map(normalizeCounts);          // normalize after filtering
 
 const Index = () => {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -36,7 +43,7 @@ const Index = () => {
   const [localSpliks, setLocalSpliks] = useState<SplikWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0); // who’s mostly visible
+  const [activeIndex, setActiveIndex] = useState(0);
   const [shuffleEpoch, setShuffleEpoch] = useState(0);
 
   const feedStore = useFeedStore();
@@ -48,15 +55,13 @@ const Index = () => {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) =>
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) =>
       setUser(session?.user ?? null)
     );
     return () => subscription.unsubscribe();
   }, []);
 
-  // On mount, try to use preloaded store or session cache for instant paint
+  // On mount: use cached/store feed if available
   useEffect(() => {
     const cachedRaw = feedStore.feed.length
       ? feedStore.feed
@@ -64,28 +69,24 @@ const Index = () => {
           try {
             const raw = sessionStorage.getItem("feed:cached");
             return raw ? JSON.parse(raw) : [];
-          } catch {
-            return [];
-          }
+          } catch { return []; }
         })();
 
-    const cached = sanitizeFeed(cachedRaw);
+    const cached = sanitize(cachedRaw);
 
     if (cached.length) {
       setLocalSpliks(cached);
       setLoading(false);
       setShuffleEpoch(Date.now());
     } else {
-      // No preloaded feed (direct visit to /home): do a fast fetch
       fetchDynamicFeed(false, false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    // keep store and local in sync if splash populated after this page mounted
     if (feedStore.feed.length) {
-      const safe = sanitizeFeed(feedStore.feed);
+      const safe = sanitize(feedStore.feed);
       setLocalSpliks(safe);
       setLoading(false);
       setShuffleEpoch(Date.now());
@@ -93,17 +94,11 @@ const Index = () => {
   }, [feedStore.feed]);
 
   const fetchDynamicFeed = async (showToast = false, forceNewShuffle = false) => {
-    if (showToast) setRefreshing(true);
-    else setLoading(true);
+    if (showToast) setRefreshing(true); else setLoading(true);
 
     try {
-      // Don't let a helper blow up the whole fetch
       if (forceNewShuffle) {
-        try {
-          forceNewRotation();
-        } catch (e) {
-          console.warn("forceNewRotation failed:", e);
-        }
+        try { forceNewRotation(); } catch (e) { console.warn("forceNewRotation failed:", e); }
       }
 
       const nowIso = new Date().toISOString();
@@ -117,25 +112,25 @@ const Index = () => {
 
       if (allResp.error) {
         console.error("All spliks query failed:", allResp.error);
-        throw allResp.error; // no feed without this
+        throw allResp.error;
       }
-      const allSpliks = allResp.data || [];
+
+      // likes-safe normalization up front
+      const allSpliks = sanitize(allResp.data || []);
 
       // --- Fetch boosted (optional, never fatal) ---
       let boostedSpliks: any[] = [];
       try {
         const boostedResp = await supabase
           .from("spliks")
-          .select(
-            `
+          .select(`
             *,
             boosted_videos!inner(
               boost_level,
               end_date,
               status
             )
-          `
-          )
+          `)
           .gt("boost_score", 0)
           .eq("boosted_videos.status", "active")
           .gt("boosted_videos.end_date", nowIso)
@@ -143,14 +138,13 @@ const Index = () => {
           .limit(15);
 
         if (boostedResp.error) throw boostedResp.error;
-        boostedSpliks = boostedResp.data || [];
+        boostedSpliks = sanitize(boostedResp.data || []);
       } catch (e) {
-        // RLS / missing relation / column? Just carry on without boosted.
         console.warn("Boosted query failed (continuing without boosted):", e);
         boostedSpliks = [];
       }
 
-      // --- Build feed (guard helper) ---
+      // --- Build feed (createHomeFeed now receives normalized rows) ---
       let feed: any[] = [];
       try {
         feed = createHomeFeed(allSpliks, boostedSpliks, {
@@ -163,9 +157,12 @@ const Index = () => {
         feed = allSpliks.slice(0, 60);
       }
 
-      // --- Attach profiles in ONE query (optional) + normalize counters ---
-      const ids = Array.from(new Set(feed.map((s: any) => s?.user_id).filter(Boolean)));
-      let withProfiles: any[] = feed;
+      // Guard in case createHomeFeed returns any holes
+      const baseFeed = sanitize(feed);
+
+      // --- Attach profiles in ONE query (optional) ---
+      const ids = Array.from(new Set(baseFeed.map((s: any) => s.user_id).filter(Boolean)));
+      let withProfiles: any[] = baseFeed;
 
       if (ids.length > 0) {
         try {
@@ -176,25 +173,24 @@ const Index = () => {
           if (pErr) throw pErr;
 
           const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
-          withProfiles = feed.map((s: any) =>
+          withProfiles = baseFeed.map((s: any) =>
             normalizeCounts({ ...s, profile: pmap.get(s.user_id) || null })
           );
         } catch (e) {
           console.warn("Profiles batch fetch failed; proceeding without profiles:", e);
-          withProfiles = feed.map(normalizeCounts);
+          withProfiles = baseFeed.map(normalizeCounts);
         }
       } else {
-        withProfiles = feed.map(normalizeCounts);
+        withProfiles = baseFeed.map(normalizeCounts);
       }
 
-      // Final safety before UI: drop any null/undefined rows
-      const safeFeed = sanitizeFeed(withProfiles);
+      const safeFeed = sanitize(withProfiles);
 
       setShuffleEpoch(Date.now());
       setLocalSpliks(safeFeed);
       setActiveIndex(0);
 
-      // keep store + cache fresh for instant paints
+      // cache/store
       try {
         useFeedStore.getState().setFeed(safeFeed);
         useFeedStore.getState().setLastFetchedAt(Date.now());
@@ -203,7 +199,7 @@ const Index = () => {
         console.warn("Caching feed failed (store/sessionStorage):", e);
       }
 
-      // Fire-and-forget impressions; never fail the fetch
+      // fire-and-forget impressions
       try {
         safeFeed
           .filter((s: any) => s.isBoosted)
@@ -217,9 +213,7 @@ const Index = () => {
       if (showToast) {
         toast({
           title: forceNewShuffle ? "Feed reshuffled!" : "Feed refreshed!",
-          description: forceNewShuffle
-            ? "Showing you a completely new mix"
-            : "Updated with latest content",
+          description: forceNewShuffle ? "Showing you a completely new mix" : "Updated with latest content",
         });
       }
     } catch (e: any) {
@@ -229,7 +223,6 @@ const Index = () => {
         description: e?.message || "Failed to load videos. Please try again.",
         variant: "destructive",
       });
-      // Don’t wipe out current list on error—leave existing feed if any.
       setLocalSpliks((prev) => prev ?? []);
     } finally {
       setLoading(false);
@@ -250,31 +243,6 @@ const Index = () => {
       return;
     }
     setUploadModalOpen(true);
-  };
-
-  const handleSplik = async (_id: string) => {};
-  const handleReact = async (_id: string) => {
-    if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to react to videos",
-        variant: "default",
-      });
-      return;
-    }
-  };
-  const handleShare = async (splikId: string) => {
-    const url = `${window.location.origin}/video/${splikId}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "Check out this Splik!", url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        toast({ title: "Link copied!", description: "Copied to clipboard" });
-      }
-    } catch {
-      toast({ title: "Failed to share", description: "Please try again", variant: "destructive" });
-    }
   };
 
   const shouldLoadIndex = (i: number) => {
@@ -350,7 +318,7 @@ const Index = () => {
 
             <div className="max-w-[400px] sm:max-w-[500px] mx-auto space-y-4 md:space-y-6">
               {localSpliks
-                .filter((s: any) => s && s.id) // final guard
+                .filter((s: any) => s && s.id)
                 .map((splik: any, index: number) => (
                   <div key={`${splik.id}-${shuffleEpoch}`} className="relative">
                     <SplikCard
@@ -396,7 +364,6 @@ const Index = () => {
           onClose={() => setUploadModalOpen(false)}
           onUploadComplete={() => {
             setUploadModalOpen(false);
-            // refresh but keep instant paint
             fetchDynamicFeed();
             toast({
               title: "Upload successful!",
