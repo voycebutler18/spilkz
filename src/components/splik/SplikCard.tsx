@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
-  Heart, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
+  MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
   Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,7 +15,6 @@ import ShareModal from "@/components/ShareModal";
 import CommentsModal from "@/components/CommentsModal";
 import ReportModal from "@/components/ReportModal";
 import BoostModal from "@/components/BoostModal";
-import LikesModal from "@/components/LikesModal";
 import { useDeviceType } from "@/hooks/use-device-type";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -31,8 +30,7 @@ type Splik = {
   video_url: string;
   thumbnail_url?: string | null;
 
-  // seed counts from row for instant display
-  likes_count?: number | string | null;
+  // likes removed
   comments_count?: number | string | null;
 
   profile?: any;
@@ -44,7 +42,7 @@ type Splik = {
 
 interface SplikCardProps {
   splik: Splik & { isBoosted?: boolean; is_currently_boosted?: boolean; boost_score?: number };
-  onSplik?: () => void;
+  onSplik?: () => void; // kept for compatibility, unused now
   onReact?: () => void;
   onShare?: () => void;
   index?: number;
@@ -74,15 +72,13 @@ const toNum = (v: unknown, fallback = 0) => {
 
 /* ============================ Card ============================ */
 export default function SplikCard(props: SplikCardProps) {
-  const { splik: rawSplik, onSplik, onReact, onShare } = props;
+  const { splik: rawSplik, onReact, onShare } = props;
 
-  // If parent ever passes an undefined/null item, avoid crashing the tree
   if (!rawSplik || !rawSplik.id) return null;
 
-  // Make a safe, normalized copy
+  // Safe, normalized copy (likes removed)
   const splik: Splik = {
     ...rawSplik,
-    likes_count: toNum(rawSplik.likes_count, 0),
     comments_count: toNum(rawSplik.comments_count, 0),
     trim_start: toNum(rawSplik.trim_start, 0),
     trim_end: rawSplik.trim_end == null ? null : toNum(rawSplik.trim_end),
@@ -94,19 +90,16 @@ export default function SplikCard(props: SplikCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
 
-  const [isLiked, setIsLiked] = useState(false);
-  const [likesCount, setLikesCount] = useState<number>(toNum(splik.likes_count, 0));
+  // likes removed
   const [commentsCount, setCommentsCount] = useState<number>(toNum(splik.comments_count, 0));
 
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [likePending, setLikePending] = useState(false);
 
   const [showShareModal, setShowShareModal] = useState(false);
   const [showCommentsModal, setShowCommentsModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showBoostModal, setShowBoostModal] = useState(false);
-  const [showLikesModal, setShowLikesModal] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -128,17 +121,16 @@ export default function SplikCard(props: SplikCardProps) {
   const SEEK_SAFE = Math.max(0.05, START + 0.05);
 
   /* ---------- helpers ---------- */
-  const fetchExactCounts = useCallback(async () => {
+  const fetchCommentCount = useCallback(async () => {
     if (!splik.id) return;
     try {
-      const [{ count: likes0 }, { count: comments0 }] = await Promise.all([
-        supabase.from("likes").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
-        supabase.from("comments").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
-      ]);
-      setLikesCount(likes0 ?? 0);
+      const { count: comments0 } = await supabase
+        .from("comments")
+        .select("*", { count: "exact", head: true })
+        .eq("splik_id", splik.id);
       setCommentsCount(comments0 ?? 0);
     } catch {
-      // keep prior values on failure
+      // keep prior value
     }
   }, [splik.id]);
 
@@ -183,7 +175,6 @@ export default function SplikCard(props: SplikCardProps) {
         for (const entry of entries) {
           const mostlyVisible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
 
-          // ✅ only announce when mostly visible
           if (mostlyVisible) props.onPrimaryVisible?.(idx);
 
           if (!load) continue;
@@ -214,7 +205,6 @@ export default function SplikCard(props: SplikCardProps) {
       pauseIfCurrent(video);
       primedRef.current = false;
     };
-    // 🔧 only depend on what’s used
   }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
   // enforce 3s loop
@@ -240,7 +230,7 @@ export default function SplikCard(props: SplikCardProps) {
     }
   }, [load]);
 
-  /* ---- state: user + exact counts + realtime recount ---- */
+  /* ---- state: user + favorites + realtime comments ---- */
   useEffect(() => {
     let mounted = true;
 
@@ -250,88 +240,34 @@ export default function SplikCard(props: SplikCardProps) {
       setCurrentUser(user);
 
       if (user && splik.id) {
-        const { data: likeRow } = await supabase
-          .from("likes").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
-        if (!mounted) return;
-        setIsLiked(!!likeRow);
-
         const { data: favRow } = await supabase
           .from("favorites").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
         if (!mounted) return;
         setIsSaved(!!favRow);
       } else {
-        setIsLiked(false);
         setIsSaved(false);
       }
 
-      await fetchExactCounts();
+      await fetchCommentCount();
 
       if (!splik.id) return;
-
-      const likesChannel = supabase
-        .channel(`likes-${splik.id}`)
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "likes", event: "*", filter: `splik_id=eq.${splik.id}` },
-          fetchExactCounts
-        )
-        .subscribe();
 
       const commentsChannel = supabase
         .channel(`comments-${splik.id}`)
         .on(
           "postgres_changes",
           { schema: "public", table: "comments", event: "*", filter: `splik_id=eq.${splik.id}` },
-          fetchExactCounts
+          fetchCommentCount
         )
         .subscribe();
 
       return () => {
-        supabase.removeChannel(likesChannel);
         supabase.removeChannel(commentsChannel);
       };
     })();
 
     return () => { mounted = false; };
-  }, [splik.id, fetchExactCounts]);
-
-  /* ---- like / unlike ---- */
-  const handleSplik = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (likePending || !splik.id) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
-      return;
-    }
-
-    setLikePending(true);
-    const wantLike = !isLiked;
-
-    // optimistic
-    setIsLiked(wantLike);
-    setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? 1 : -1)));
-
-    try {
-      if (wantLike) {
-        await supabase.from("likes").upsert(
-          { user_id: user.id, splik_id: splik.id },
-          { onConflict: "user_id,splik_id", ignoreDuplicates: true }
-        );
-      } else {
-        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-      }
-      await fetchExactCounts(); // snap to truth
-      onSplik?.();
-    } catch {
-      setIsLiked((prev) => !prev);
-      setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? -1 : 1)));
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
-    } finally {
-      setLikePending(false);
-    }
-  };
+  }, [splik.id, fetchCommentCount]);
 
   const handlePlayToggle = async () => {
     const video = videoRef.current;
@@ -535,28 +471,8 @@ export default function SplikCard(props: SplikCardProps) {
           </DropdownMenu>
         </div>
 
-        {/* ACTIONS */}
+        {/* ACTIONS (likes removed) */}
         <div className="flex items-center justify-between gap-1">
-          {/* Like toggle (heart) */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleSplik}
-            disabled={likePending}
-            className={cn("flex items-center gap-2 transition-colors",
-              isLiked && "text-red-500 hover:text-red-600")}
-            aria-pressed={isLiked}
-          >
-            <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            <span
-              className="text-xs font-medium cursor-pointer hover:underline underline-offset-4"
-              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }}
-              title="View who liked"
-            >
-              {toNum(likesCount, 0).toLocaleString()}
-            </span>
-          </Button>
-
           {/* Comments */}
           <Button
             variant="ghost"
@@ -618,9 +534,9 @@ export default function SplikCard(props: SplikCardProps) {
           </div>
         )}
 
-        {toNum(likesCount, 0) === 0 && toNum(commentsCount, 0) === 0 && (
+        {toNum(commentsCount, 0) === 0 && (
           <div className="mt-2 text-xs text-muted-foreground text-center italic">
-            Be the first to react! 💜
+            Be the first to comment!
           </div>
         )}
       </div>
@@ -637,7 +553,7 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showCommentsModal}
         onClose={async () => {
           setShowCommentsModal(false);
-          await fetchExactCounts(); // stay in sync with modal truth
+          await fetchCommentCount(); // refresh after commenting
         }}
         splikId={splik.id}
         splikTitle={splik.title}
@@ -659,14 +575,6 @@ export default function SplikCard(props: SplikCardProps) {
           videoTitle={splik.title || splik.description}
         />
       )}
-
-      {/* Likes list (works logged out) */}
-      <LikesModal
-        isOpen={showLikesModal}
-        onClose={() => setShowLikesModal(false)}
-        splikId={splik.id}
-        onCountDelta={(d) => setLikesCount((c) => Math.max(0, (c ?? 0) + d))}
-      />
     </div>
   );
 }
