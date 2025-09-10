@@ -1,852 +1,1049 @@
-// src/components/splik/SplikCard.tsx
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Link } from "react-router-dom";
-import {
-  Heart, MessageCircle, Share2, MoreVertical, Flag, UserX, Copy,
-  Bookmark, BookmarkCheck, Volume2, VolumeX, Rocket, Sparkles, Eye,
-} from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+// src/components/dashboard/VideoUploadModal.tsx
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
-import FollowButton from "@/components/FollowButton";
-import ShareModal from "@/components/ShareModal";
-import CommentsModal from "@/components/CommentsModal";
-import ReportModal from "@/components/ReportModal";
-import BoostModal from "@/components/BoostModal";
-import LikesModal from "@/components/LikesModal";
-import { useDeviceType } from "@/hooks/use-device-type";
-import { useToast } from "@/components/ui/use-toast";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Upload, X, Loader2, Scissors, Play, Pause, Volume2, VolumeX,
+  AlertCircle, Film, Zap, Smartphone, Info, Utensils, Image as ImageIcon,
+} from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/components/ui/use-toast";
+import { Progress } from "@/components/ui/progress";
+import { Slider } from "@/components/ui/slider";
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
 
-/* ------------------------- Types ------------------------- */
-type Splik = {
-  id: string;
-  user_id: string;
-  title?: string | null;
-  description?: string | null;
-  video_url: string;
-  thumbnail_url?: string | null;
+// ffmpeg v0.12+ API
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile } from "@ffmpeg/util";
 
-  likes_count?: number | null;
-  comments_count?: number | null;
-  views_count?: number | null;
+const isIOS =
+  typeof navigator !== "undefined" &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.userAgent.includes("Mac") && "ontouchend" in document));
+const isMobile =
+  typeof navigator !== "undefined" &&
+  (/Mobi|Android/i.test(navigator.userAgent) || isIOS);
 
-  profile?: any;
-  mood?: string | null;
-  status?: string | null;
-  trim_start?: number | null;
-  trim_end?: number | null;
-};
-
-interface SplikCardProps {
-  splik: Splik & { isBoosted?: boolean; is_currently_boosted?: boolean; boost_score?: number };
-  onSplik?: () => void;
-  onReact?: () => void;
-  onShare?: () => void;
-  index?: number;
-  shouldLoad?: boolean;
-  onPrimaryVisible?: (index: number) => void;
+interface VideoUploadModalProps {
+  open: boolean;
+  onClose: () => void;
+  onUploadComplete: () => void;
 }
 
-/* ---- global play/pause coordination ---- */
-let CURRENT_PLAYING: HTMLVideoElement | null = null;
-const playExclusive = async (el: HTMLVideoElement) => {
-  if (CURRENT_PLAYING && CURRENT_PLAYING !== el) { try { CURRENT_PLAYING.pause(); } catch {} }
-  CURRENT_PLAYING = el;
-  try { await el.play(); } catch {}
-};
-const pauseIfCurrent = (el: HTMLVideoElement | null) => {
-  if (!el) return;
-  if (CURRENT_PLAYING === el) CURRENT_PLAYING = null;
-  try { el.pause(); } catch {}
-};
-const toTitle = (s: string) => s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+const MAX_VIDEO_DURATION = 3;
+const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024;
+const MOBILE_MAX_SIZE = 1024 * 1024 * 1024;
 
-/* ============================ Card ============================ */
-export default function SplikCard(props: SplikCardProps) {
-  const { splik, onSplik, onReact, onShare } = props;
-  const idx = props.index ?? 0;
-  const load = props.shouldLoad ?? true;
+const MOOD_OPTIONS = [
+  { value: "happy", label: "Happy" },
+  { value: "chill", label: "Chill" },
+  { value: "hype", label: "Hype" },
+  { value: "romance", label: "Romance" },
+  { value: "aww", label: "Aww" },
+  { value: "funny", label: "Funny" },
+  { value: "excited", label: "Excited" },
+  { value: "relaxed", label: "Relaxed" },
+  { value: "inspired", label: "Inspired" },
+  { value: "nostalgic", label: "Nostalgic" },
+  { value: "motivated", label: "Motivated" },
+  { value: "surprised", label: "Surprised" },
+  { value: "sad", label: "Sad" },
+  { value: "angry", label: "Angry" },
+  { value: "cozy", label: "Cozy" },
+  { value: "neutral", label: "Neutral / Natural" },
+] as const;
 
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const value = bytes / Math.pow(k, i);
+  return `${value.toFixed(i === 0 ? 0 : 2)} ${sizes[i]}`;
+};
+
+/** Poster from video at a specific time */
+async function makePosterFromVideoSource(source: Blob | File, atSeconds = 1): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.crossOrigin = "anonymous";
+
+    const url = URL.createObjectURL(source);
+    video.src = url;
+
+    const cleanup = () => {
+      try { URL.revokeObjectURL(url); } catch {}
+      try { video.pause(); } catch {}
+      video.removeAttribute("src");
+      video.load();
+    };
+
+    video.onerror = () => {
+      cleanup();
+      reject(new Error("Failed to read video for poster"));
+    };
+
+    video.onloadedmetadata = () => {
+      const safeTarget =
+        Number.isFinite(video.duration) && video.duration > 0
+          ? Math.min(Math.max(0.1, atSeconds), Math.max(0.1, video.duration - 0.1))
+          : 1.0;
+
+      const onSeeked = () => {
+        try {
+          const targetWidth = 720;
+          const ratio = video.videoWidth > 0 ? video.videoHeight / video.videoWidth : 16 / 9;
+          const canvas = document.createElement("canvas");
+          canvas.width = targetWidth;
+          canvas.height = Math.round(targetWidth * ratio);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas context failed");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob(
+            (blob) => {
+              cleanup();
+              if (blob) resolve(blob);
+              else reject(new Error("Poster encode failed"));
+            },
+            "image/jpeg",
+            0.85
+          );
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      };
+
+      video.currentTime = safeTarget;
+      video.onseeked = onSeeked;
+    };
+  });
+}
+
+/** Upload a Blob via a signed URL */
+async function uploadBlob(bucket: string, path: string, blob: Blob): Promise<{ publicUrl: string }> {
+  const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path);
+  if (error || !data?.signedUrl) throw error || new Error("Failed to create signed upload URL.");
+
+  await fetch(data.signedUrl, {
+    method: "PUT",
+    headers: {
+      "content-type": blob.type || "application/octet-stream",
+      "cache-control": "31536000, immutable",
+    },
+    body: blob,
+  });
+
+  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
+  return { publicUrl: pub.publicUrl };
+}
+
+export default function VideoUploadModal({ open, onClose, onUploadComplete }: VideoUploadModalProps) {
+  const navigate = useNavigate();
+
+  const [file, setFile] = useState<File | null>(null);
+
+  // The thing we actually upload (mp4 if transcoded from mov)
+  const [uploadSource, setUploadSource] = useState<Blob | File | null>(null);
+  const [uploadExt, setUploadExt] = useState<string>("mp4");
+  const [uploadMime, setUploadMime] = useState<string>("video/mp4");
+  // For extracting frames
+  const [frameSource, setFrameSource] = useState<Blob | File | null>(null);
+
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+
+  const [isFood, setIsFood] = useState(false);
+  const [mood, setMood] = useState<string>("");
+
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeedMBps, setUploadSpeedMBps] = useState(0);
+  const [uploadETA, setUploadETA] = useState<string | null>(null);
+
+  const [videoPreview, setVideoPreview] = useState<string | null>(null);
+  const [originalDuration, setOriginalDuration] = useState<number>(0);
+  const [processingVideo, setProcessingVideo] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
 
-  const [posterVisible, setPosterVisible] = useState(true);
+  // 3s window (we clamp to 3.0s automatically)
+  const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]);
 
-  const [isLiked, setIsLiked] = useState(false);
-  const [likesCount, setLikesCount] = useState<number>(splik.likes_count ?? 0);
-  const [commentsCount, setCommentsCount] = useState<number>(splik.comments_count ?? 0);
-  const [viewsCount, setViewsCount] = useState<number>(splik.views_count ?? 0);
-
-  const [isSaved, setIsSaved] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [likePending, setLikePending] = useState(false);
-
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [showCommentsModal, setShowCommentsModal] = useState(false);
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [showBoostModal, setShowBoostModal] = useState(false);
-  const [showLikesModal, setShowLikesModal] = useState(false);
+  const [showTrimmer, setShowTrimmer] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  // Cover time (selected inside the video)
+  const [coverTime, setCoverTime] = useState(1.5);
+
+  const [transcoding, setTranscoding] = useState(false);
+  const [transcodeProgress, setTranscodeProgress] = useState(0);
+  const ffmpegRef = useRef<FFmpeg | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const primedRef = useRef(false);
-  const primePromiseRef = useRef<Promise<void> | null>(null);
-
-  const loopTimerRef = useRef<number | null>(null);
-  const lastSeekTimeRef = useRef(0);
-
-  const { isMobile } = useDeviceType();
+  const seekBarRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const animationRef = useRef<number>();
   const { toast } = useToast();
 
-  const creatorSlug = splik.profile?.username || splik.profile?.handle || splik.user_id;
+  const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi,.mkv";
+  const maxFileSize = isMobile ? MOBILE_MAX_SIZE : DESKTOP_MAX_SIZE;
 
-  // 3s loop window
-  const START = Math.max(0, Number(splik.trim_start ?? 0));
-  const RAW_END = Number.isFinite(Number(splik.trim_end)) ? Number(splik.trim_end) : START + 3;
-  const END = Math.max(START, Math.min(START + 3, RAW_END));
-  const SEEK_SAFE = Math.max(0.05, START + 0.05);
+  const isMOV = (f: File | null) =>
+    !!f && (f.type === "video/quicktime" || /\.mov$/i.test(f.name));
 
-  /* ---------- URLs for sharing ---------- */
-  const PUBLIC_SITE_URL =
-    import.meta.env.VITE_PUBLIC_SITE_URL || window.location.origin.replace(/\/$/, "");
-  const OG_FUNCTION_BASE = (import.meta.env.VITE_OG_FUNCTION_BASE || "").replace(/\/$/, "");
-
-  // Human-friendly page
-  const VIEW_URL = `${PUBLIC_SITE_URL}/video/${splik.id}`;
-
-  // Crawler-friendly OG Function (ensures correct cover poster on social)
-  const OG_URL = OG_FUNCTION_BASE
-    ? `${OG_FUNCTION_BASE}/${splik.id}`
-    : `https://izeheflwfguwinizihmx.supabase.co/functions/v1/clever-worker/${splik.id}`;
-
-  /* ---------- helpers for smooth video transitions ---------- */
-  const seekTo = (v: HTMLVideoElement, t: number) =>
-    new Promise<void>((resolve) => {
-      const done = () => {
-        v.removeEventListener("seeked", done);
-        resolve();
-      };
-      v.addEventListener("seeked", done, { once: true });
-      try { v.currentTime = t; } catch { resolve(); }
-    });
-
-  const primeToStart = async (v: HTMLVideoElement) => {
-    if (primedRef.current) return;
-    if (v.readyState < 1) {
-      await new Promise<void>((res) => {
-        const on = () => { v.removeEventListener("loadedmetadata", on); res(); };
-        v.addEventListener("loadedmetadata", on, { once: true });
-      });
-    }
-    await seekTo(v, SEEK_SAFE);
-    primedRef.current = true;
-  };
-
-  const hidePosterWhenPainted = (v: HTMLVideoElement) => {
-    // @ts-ignore
-    if (v.requestVideoFrameCallback) {
-      // @ts-ignore
-      v.requestVideoFrameCallback(() => setPosterVisible(false));
-    } else {
-      const onPlaying = () => { setPosterVisible(false); v.removeEventListener("playing", onPlaying); };
-      v.addEventListener("playing", onPlaying, { once: true });
+  const inferMimeFromName = (name: string): string => {
+    const ext = name.split(".").pop()?.toLowerCase();
+    switch (ext) {
+      case "mp4": return "video/mp4";
+      case "mov": return "video/quicktime";
+      case "webm": return "video/webm";
+      case "flv": return "video/x-flv";
+      case "avi": return "video/x-msvideo";
+      case "mkv": return "video/x-matroska";
+      default: return "video/mp4";
     }
   };
 
-  /* ---------- Enhanced loop enforcement (esp. mobile) ---------- */
-  const enforceLoop = useCallback((v: HTMLVideoElement) => {
-    if (!v) return;
-    const now = performance.now();
-    if (now - lastSeekTimeRef.current < 100) return;
-
-    const t = v.currentTime;
-    if (t < START || t >= END) {
-      try {
-        v.currentTime = SEEK_SAFE;
-        lastSeekTimeRef.current = now;
-      } catch (e) {
-        console.warn("Failed to seek video:", e);
-      }
-    }
-  }, [START, END, SEEK_SAFE]);
-
-  const startLoopTimer = useCallback((v: HTMLVideoElement) => {
-    if (loopTimerRef.current) clearInterval(loopTimerRef.current);
-    const interval = isMobile ? 100 : 250;
-    loopTimerRef.current = window.setInterval(() => {
-      if (v && isPlaying && !v.paused) enforceLoop(v);
-    }, interval);
-  }, [isMobile, isPlaying, enforceLoop]);
-
-  const stopLoopTimer = useCallback(() => {
-    if (loopTimerRef.current) {
-      clearInterval(loopTimerRef.current);
-      loopTimerRef.current = null;
-    }
-  }, []);
-
-  /* ---------- counts fetch ---------- */
-  const fetchExactCounts = useCallback(async () => {
-    try {
-      const [{ count: likes0 }, { count: comments0 }, { data: srow }] = await Promise.all([
-        supabase.from("likes").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
-        supabase.from("comments").select("*", { count: "exact", head: true }).eq("splik_id", splik.id),
-        supabase.from("spliks").select("views_count").eq("id", splik.id).maybeSingle(),
-      ]);
-      setLikesCount(likes0 ?? 0);
-      setCommentsCount(comments0 ?? 0);
-      setViewsCount(srow?.views_count ?? 0);
-    } catch {}
-  }, [splik.id]);
-
-  // view de-dup per session + per video
-  const sessionId = useMemo(() => {
-    if (typeof window === "undefined") return "server";
-    const key = "view:sid";
-    let sid = sessionStorage.getItem(key);
-    if (!sid) {
-      sid = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-      sessionStorage.setItem(key, sid);
-    }
-    return sid;
-  }, []);
-
-  const viewedOnceRef = useRef(false);
-  const viewTimerRef = useRef<number | null>(null);
-
-  const markView = useCallback(async () => {
-    if (viewedOnceRef.current) return;
-    const perSplikKey = `viewed:${splik.id}`;
-    if (sessionStorage.getItem(perSplikKey) === "1") {
-      viewedOnceRef.current = true;
-      return;
-    }
-    viewedOnceRef.current = true;
-    sessionStorage.setItem(perSplikKey, "1");
-    setViewsCount((v) => (v ?? 0) + 1);
-
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      await supabase.rpc("safe_increment_view", {
-        p_splik_id: splik.id,
-        p_session_id: sessionId,
-        p_viewer_id: user?.id ?? null,
-      });
-    } catch (e) {
-      console.warn("safe_increment_view failed:", e);
-    }
-  }, [sessionId, splik.id]);
-
-  /* ---- autoplay / visibility ---- */
-  useEffect(() => {
-    const v = videoRef.current;
-    const el = cardRef.current;
-    if (!v || !el) return;
-
-    if (!load) {
-      pauseIfCurrent(v);
-      v.muted = true;
-      setIsPlaying(false);
-      stopLoopTimer();
-    }
-
-    v.playsInline = true;
-    v.setAttribute("playsinline", "true");
-    // @ts-expect-error
-    v.setAttribute("webkit-playsinline", "true");
-    v.muted = isMuted;
-    if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
-    v.controls = false;
-
-    const onVisibilityChange = () => {
-      if (document.hidden) {
-        pauseIfCurrent(v);
-        setIsPlaying(false);
-        stopLoopTimer();
-      }
-    };
-
-    const io = new IntersectionObserver(async (entries) => {
-      entries.forEach(async (entry) => {
-        const mostlyVisible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
-        if (mostlyVisible && props.onPrimaryVisible) props.onPrimaryVisible(idx);
-        if (!load) return;
-
-        if (mostlyVisible) {
-          if (!viewedOnceRef.current) {
-            if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
-            viewTimerRef.current = window.setTimeout(markView, 1200);
-          }
-
-          try {
-            if (!primedRef.current) {
-              const p = primePromiseRef.current || primeToStart(v);
-              primePromiseRef.current = p;
-              await p;
-            }
-          } catch {}
-
-          v.muted = isMuted;
-          if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
-
-          try {
-            await playExclusive(v);
-            setIsPlaying(true);
-            startLoopTimer(v);
-            hidePosterWhenPainted(v);
-          } catch {
-            setIsPlaying(false);
-            stopLoopTimer();
-          }
-        } else {
-          if (!viewedOnceRef.current && viewTimerRef.current) {
-            window.clearTimeout(viewTimerRef.current);
-            viewTimerRef.current = null;
-          }
-          pauseIfCurrent(v);
-          stopLoopTimer();
-          try { if (primedRef.current) v.currentTime = SEEK_SAFE; } catch {}
-          v.muted = true; v.setAttribute("muted", "true");
-          setIsPlaying(false);
-          setPosterVisible(true);
-        }
-      });
-    }, { threshold: [0, 0.25, 0.5, 0.7, 1], rootMargin: "0px 0px -10% 0px" });
-
-    io.observe(el);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      io.disconnect();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      pauseIfCurrent(v);
-      stopLoopTimer();
-      primedRef.current = false;
-      if (viewTimerRef.current) window.clearTimeout(viewTimerRef.current);
-    };
-  }, [isMuted, SEEK_SAFE, load, idx, props.onPrimaryVisible, markView, startLoopTimer, stopLoopTimer]);
-
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-
-    const onTimeUpdate = () => enforceLoop(v);
-    const onEnded = () => {
-      try {
-        v.currentTime = SEEK_SAFE;
-        if (isPlaying && !v.paused) v.play();
-      } catch {}
-    };
-    const onSeeking = () => {
-      const t = v.currentTime;
-      if (t < START || t >= END) {
-        try { v.currentTime = SEEK_SAFE; } catch {}
-      }
-    };
-
-    v.addEventListener("timeupdate", onTimeUpdate);
-    v.addEventListener("ended", onEnded);
-    v.addEventListener("seeking", onSeeking);
-
-    return () => {
-      v.removeEventListener("timeupdate", onTimeUpdate);
-      v.removeEventListener("ended", onEnded);
-      v.removeEventListener("seeking", onSeeking);
-    };
-  }, [START, END, SEEK_SAFE, isPlaying, enforceLoop]);
-
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (isPlaying && !v.paused) startLoopTimer(v);
-    else stopLoopTimer();
-    return () => stopLoopTimer();
-  }, [isPlaying, startLoopTimer, stopLoopTimer]);
-
-  useEffect(() => {
-    if (load) {
-      primedRef.current = false;
-    } else {
-      pauseIfCurrent(videoRef.current);
-      setIsPlaying(false);
-      stopLoopTimer();
-    }
-  }, [load, stopLoopTimer]);
-
-  /* ---- state: user + exact counts + realtime recount ---- */
+  // Keep current user in sync
   useEffect(() => {
     let mounted = true;
-
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+    supabase.auth.getUser().then(({ data }) => {
       if (!mounted) return;
-      setCurrentUser(user);
+      setCurrentUser(data.user ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setCurrentUser(session?.user ?? null);
+    });
+    return () => {
+      mounted = false;
+      sub?.subscription.unsubscribe();
+    };
+  }, []);
 
-      if (user) {
-        const { data: likeRow } = await supabase
-          .from("likes").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
-        if (!mounted) return;
-        setIsLiked(!!likeRow);
+  // === NEW: a single place to close + redirect to Profile ==================
+  const goToProfile = useCallback(async () => {
+    // make sure we have a uid even if state hasn’t caught up
+    let uid = currentUser?.id as string | undefined;
+    if (!uid) {
+      const { data } = await supabase.auth.getUser();
+      uid = data.user?.id;
+    }
+    onClose();
+    // let the dialog unmount before navigating
+    setTimeout(() => {
+      navigate(uid ? `/profile/${uid}` : "/profile");
+    }, 0);
+  }, [currentUser?.id, navigate, onClose]);
+  // ========================================================================
 
-        const { data: favRow } = await supabase
-          .from("favorites").select("id").eq("user_id", user.id).eq("splik_id", splik.id).maybeSingle();
-        if (!mounted) return;
-        setIsSaved(!!favRow);
-      } else {
-        setIsLiked(false);
-        setIsSaved(false);
+  useEffect(() => {
+    return () => {
+      if (videoPreview) URL.revokeObjectURL(videoPreview);
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [videoPreview]);
+
+  const getFFmpeg = useCallback(async () => {
+    if (ffmpegRef.current) return ffmpegRef.current;
+    const ffmpeg = new FFmpeg();
+    ffmpeg.on("progress", ({ progress }) => {
+      if (typeof progress === "number") {
+        setTranscodeProgress(Math.min(99, Math.round(progress * 100)));
       }
+    });
+    await ffmpeg.load();
+    ffmpegRef.current = ffmpeg;
+    return ffmpeg;
+  }, []);
 
-      await fetchExactCounts();
+  const transcodeMovToMp4 = useCallback(async (movFile: File): Promise<Blob> => {
+    setTranscoding(true);
+    setTranscodeProgress(1);
+    try {
+      const ffmpeg = await getFFmpeg();
+      const inputName = "input.mov";
+      const outputName = "output.mp4";
+      await ffmpeg.writeFile(inputName, await fetchFile(movFile));
+      await ffmpeg.exec([
+        "-i", inputName,
+        "-vf", "scale='min(1280,iw)':-2",
+        "-r", "30",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "28",
+        "-c:a", "aac",
+        "-ac", "1",
+        "-b:a", "96k",
+        "-movflags", "+faststart",
+        outputName
+      ]);
+      const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
+      return new Blob([data], { type: "video/mp4" });
+    } finally {
+      setTranscoding(false);
+      setTranscodeProgress(0);
+    }
+  }, [getFFmpeg]);
 
-      const likesChannel = supabase
-        .channel(`likes-${splik.id}`)
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "likes", event: "*", filter: `splik_id=eq.${splik.id}` },
-          fetchExactCounts
-        )
-        .subscribe();
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
 
-      const commentsChannel = supabase
-        .channel(`comments-${splik.id}`)
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "comments", event: "*", filter: `splik_id=eq.${splik.id}` },
-          fetchExactCounts
-        )
-        .subscribe();
+    setVideoError(null);
+    setVideoReady(false);
+    setProcessingVideo(true);
 
-      const viewsChannel = supabase
-        .channel(`views-${splik.id}`)
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "spliks", event: "UPDATE", filter: `id=eq.${splik.id}` },
-          (payload) => {
-            const v = (payload.new as any)?.views_count;
-            if (typeof v === "number") setViewsCount(v);
-          }
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(likesChannel);
-        supabase.removeChannel(commentsChannel);
-        supabase.removeChannel(viewsChannel);
-      };
-    })();
-
-    return () => { mounted = false; };
-  }, [splik.id, fetchExactCounts]);
-
-  /* ---- like / unlike ---- */
-  const handleSplik = async (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (likePending) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      toast({ title: "Sign in required", description: "Please sign in to like videos", variant: "destructive" });
+    const fileType = selectedFile.type || inferMimeFromName(selectedFile.name);
+    const validTypes = ["video/mp4", "video/quicktime", "video/x-flv", "video/webm", "video/x-msvideo", "video/x-matroska"];
+    if (!validTypes.includes(fileType)) {
+      toast({ title: "Invalid file type", description: "Please upload MP4, MOV, FLV, WebM, AVI or MKV", variant: "destructive" });
+      setProcessingVideo(false);
       return;
     }
 
-    setLikePending(true);
-    const wantLike = !isLiked;
-
-    setIsLiked(wantLike);
-    setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? 1 : -1)));
+    if (selectedFile.size > maxFileSize) {
+      toast({
+        title: "File too large",
+        description: `Max file size is ${formatBytes(maxFileSize)} on ${isMobile ? "mobile" : "desktop"}.`,
+        variant: "destructive",
+      });
+      setProcessingVideo(false);
+      return;
+    }
 
     try {
-      if (wantLike) {
-        await supabase.from("likes").upsert(
-          { user_id: user.id, splik_id: splik.id },
-          { onConflict: "user_id,splik_id", ignoreDuplicates: true }
-        );
-      } else {
-        await supabase.from("likes").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-      }
-      await fetchExactCounts();
-      onSplik?.();
-    } catch {
-      setIsLiked((prev) => !prev);
-      setLikesCount((p) => Math.max(0, (p ?? 0) + (wantLike ? -1 : 1)));
-      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
-    } finally {
-      setLikePending(false);
-    }
-  };
+      setFile(selectedFile);
+      const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
+      setTitle(fileName);
 
-  const handlePlayToggle = async () => {
-    const video = videoRef.current;
-    if (!video || !load) return;
+      const prepareFromUrl = async (url: string) => {
+        setVideoPreview(url);
+        const probe = document.createElement("video");
+        probe.preload = "metadata";
+        probe.src = url;
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (ok: boolean, err?: any) => {
+            if (settled) return;
+            settled = true;
+            probe.src = "";
+            probe.removeAttribute("src");
+            probe.load();
+            ok ? resolve() : reject(err);
+          };
+          probe.onloadedmetadata = () => {
+            const duration = probe.duration;
+            if (!isFinite(duration) || duration <= 0) return finish(false, new Error("Invalid video duration"));
+            setOriginalDuration(duration);
+            setShowTrimmer(duration > MAX_VIDEO_DURATION);
+            const end = Math.min(MAX_VIDEO_DURATION, duration);
+            setTrimRange([0, end]);
+            setCoverTime(Math.min(duration, end / 2));
+            finish(true);
+          };
+          probe.onerror = () => finish(false, new Error("Failed to read preview metadata."));
+          setTimeout(() => finish(false, new Error("Video metadata timeout")), 8000);
+        });
+      };
+
+      if (isMOV(selectedFile)) {
+        toast({ title: "Converting MOV → MP4", description: "We’ll upload MP4 so it plays everywhere." });
+        const mp4Blob = await transcodeMovToMp4(selectedFile);
+        setUploadSource(mp4Blob);
+        setUploadExt("mp4");
+        setUploadMime("video/mp4");
+        setFrameSource(mp4Blob);
+        await prepareFromUrl(URL.createObjectURL(mp4Blob));
+      } else {
+        setUploadSource(selectedFile);
+        const ext = (selectedFile.name.split(".").pop() || "mp4").toLowerCase();
+        setUploadExt(ext);
+        setUploadMime(selectedFile.type || inferMimeFromName(selectedFile.name));
+        setFrameSource(selectedFile);
+        await prepareFromUrl(URL.createObjectURL(selectedFile));
+      }
+    } catch (err: any) {
+      console.error("Error processing video:", err);
+      setVideoError(err?.message || "Failed to process your video.");
+      setFile(null);
+      setUploadSource(null);
+      setFrameSource(null);
+      if (videoPreview) {
+        URL.revokeObjectURL(videoPreview);
+        setVideoPreview(null);
+      }
+    } finally {
+      setProcessingVideo(false);
+    }
+  }, [toast, maxFileSize, videoPreview, transcodeMovToMp4]);
+
+  useEffect(() => {
+    if (!videoRef.current || !videoPreview) return;
+    const el = videoRef.current;
+    const onMeta = () => {
+      el.currentTime = trimRange[0];
+      setVideoReady(true);
+      setVideoError(null);
+    };
+    const onCanPlay = () => setVideoReady(true);
+    const onErr = (e: Event) => {
+      console.error("Video preview error:", e);
+      setVideoError("Preview failed. You can still upload.");
+      setVideoReady(false);
+    };
+    el.addEventListener("loadedmetadata", onMeta);
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("error", onErr);
+    return () => {
+      el.removeEventListener("loadedmetadata", onMeta);
+      el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("error", onErr);
+    };
+  }, [videoPreview, trimRange]);
+
+  useEffect(() => {
+    if (!videoRef.current || !isPlaying) return;
+    const el = videoRef.current;
+    const tick = () => {
+      if (el.currentTime >= trimRange[1] || el.currentTime < trimRange[0]) {
+        el.currentTime = trimRange[0];
+      }
+      setCurrentTime(el.currentTime);
+      if (isPlaying) animationRef.current = requestAnimationFrame(tick);
+    };
+    animationRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    };
+  }, [isPlaying, trimRange]);
+
+  // Keyboard shortcut: press "C" to set cover at current frame
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "c") setCoverAtCurrent();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentTime, trimRange]);
+
+  const togglePlayPause = () => {
+    if (!videoRef.current || !videoReady || videoError) return;
     if (isPlaying) {
-      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); return; }
-      pauseIfCurrent(video); setIsPlaying(false); stopLoopTimer();
+      videoRef.current.pause();
+      setIsPlaying(false);
     } else {
-      try { video.currentTime = SEEK_SAFE; } catch {}
-      if (isMuted) { video.muted = false; video.removeAttribute("muted"); setIsMuted(false); }
-      await playExclusive(video); setIsPlaying(true); startLoopTimer(video);
+      if (
+        videoRef.current.currentTime < trimRange[0] ||
+        videoRef.current.currentTime >= trimRange[1]
+      ) {
+        videoRef.current.currentTime = trimRange[0];
+      }
+      videoRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => {
+          videoRef.current!.muted = true;
+          setIsMuted(true);
+          videoRef.current!
+            .play()
+            .then(() => setIsPlaying(true))
+            .catch(() => setVideoError("Playback failed. Unsupported codec?"));
+        });
     }
   };
 
   const toggleMute = () => {
-    const video = videoRef.current; if (!video) return;
-    const next = !isMuted; video.muted = next;
-    if (next) video.setAttribute("muted", "true"); else video.removeAttribute("muted");
-    setIsMuted(next);
+    if (!videoRef.current) return;
+    const m = !isMuted;
+    videoRef.current.muted = m;
+    setIsMuted(m);
   };
 
-  // Save/unsave (favorites)
-  const toggleFavorite = useCallback(async () => {
-    if (saving) return;
+  const handleSeek = (value: number[]) => {
+    if (!videoRef.current) return;
+    const [pos] = value;
+    const newTime = Math.max(trimRange[0], Math.min(pos, trimRange[1]));
+    videoRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to save videos",
-        variant: "destructive",
-      });
+  /** Enforce a 3.0s window even if the user drags beyond */
+  const handleTrimChange = (value: number[]) => {
+    if (!value || value.length < 2) return;
+    let [start, end] = value as [number, number];
+
+    start = Math.max(0, Math.min(start, originalDuration));
+    end = Math.max(0, Math.min(end, originalDuration));
+
+    const [prevStart, prevEnd] = trimRange;
+    const movedStart = Math.abs(start - prevStart) > Math.abs(end - prevEnd);
+
+    const maxEndFromStart = Math.min(start + MAX_VIDEO_DURATION, originalDuration);
+    const minStartFromEnd = Math.max(end - MAX_VIDEO_DURATION, 0);
+
+    if (end - start > MAX_VIDEO_DURATION) {
+      if (movedStart) end = maxEndFromStart;
+      else start = minStartFromEnd;
+    }
+
+    setTrimRange([start, end]);
+
+    const savedEnd = Math.min(start + MAX_VIDEO_DURATION, end, originalDuration);
+    const mid = start + Math.min(savedEnd - start, MAX_VIDEO_DURATION) / 2;
+    // keep cover inside the saved window
+    setCoverTime(Math.min(savedEnd - 0.05, Math.max(start + 0.05, mid)));
+
+    if (videoRef.current) {
+      if (videoRef.current.currentTime < start || videoRef.current.currentTime > savedEnd) {
+        videoRef.current.currentTime = start;
+        setCurrentTime(start);
+      }
+    }
+  };
+
+  const uploadWithProgress = async (bucket: string, filePath: string, blob: Blob) => {
+    const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(filePath);
+    if (error || !data?.signedUrl) throw error || new Error("Failed to create signed upload URL.");
+
+    setUploading(true);
+    setUploadProgress(0);
+    setUploadSpeedMBps(0);
+    setUploadETA(null);
+
+    const startedAt = Date.now();
+    const totalBytes = blob.size;
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", data.signedUrl, true);
+      xhr.setRequestHeader("content-type", (blob as any).type || "application/octet-stream");
+      xhr.setRequestHeader("cache-control", "31536000, immutable");
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const loaded = event.loaded;
+        const pct = Math.max(1, Math.floor((loaded / totalBytes) * 100));
+        setUploadProgress(pct);
+
+        const seconds = (Date.now() - startedAt) / 1000;
+        if (seconds > 0) {
+          const MBps = (loaded / (1024 * 1024)) / seconds;
+          setUploadSpeedMBps(MBps);
+
+          const remainingBytes = totalBytes - loaded;
+          const etaSec = MBps > 0 ? remainingBytes / (MBps * 1024 * 1024) : 0;
+          const m = Math.floor(etaSec / 60);
+          const s = Math.max(0, Math.ceil(etaSec % 60));
+          setUploadETA(`${m > 0 ? `${m}m ` : ""}${s}s`);
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Upload failed (network error)."));
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Upload failed (status ${xhr.status}).`));
+      };
+
+      xhr.send(blob);
+    });
+
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    return { publicUrl: pub.publicUrl };
+  };
+
+  // === Cover selection in-video ===========================================
+  const setCoverAtCurrent = () => {
+    // Clamp inside the saved 3s window
+    const start = trimRange[0];
+    const end = Math.min(start + MAX_VIDEO_DURATION, trimRange[1], originalDuration);
+    const t = Math.min(end - 0.05, Math.max(start + 0.05, currentTime));
+    setCoverTime(t);
+    toast({ title: "Cover set", description: `Using frame at ${t.toFixed(2)}s` });
+  };
+
+  const onVideoDoubleClick = () => setCoverAtCurrent();
+
+  // ========================================================================
+
+  const handleUpload = async () => {
+    if (!uploadSource || !title) {
+      toast({ title: "Missing information", description: "Please provide a video file and title", variant: "destructive" });
       return;
     }
 
-    setSaving(true);
-    const next = !isSaved;
-    setIsSaved(next); // optimistic
+    const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !user) {
+      toast({ title: "Session required", description: "Please log in to upload videos.", variant: "destructive" });
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(1);
 
     try {
-      if (next) {
-        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splik.id });
-        toast({ title: "Added to favorites", description: "Video saved to your favorites" });
-      } else {
-        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splik.id);
-        toast({ title: "Removed from favorites", description: "Video removed from your favorites" });
+      const ext = uploadExt || "mp4";
+      const videoPath = `${user.id}/${Date.now()}.${ext}`;
+
+      const { publicUrl } = await uploadWithProgress("spliks", videoPath, uploadSource);
+
+      // Exactly 3s window
+      const selectedStart = Math.min(
+        Math.max(0, trimRange[0]),
+        Math.max(0, originalDuration - 0.05)
+      );
+      const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
+
+      const baseDesc =
+        (description || "").trim() ||
+        (showTrimmer ? `Trimmed: ${selectedStart.toFixed(1)}s - ${enforcedEnd.toFixed(1)}s` : "");
+      const moodTag = mood ? ` #mood=${mood}` : "";
+      const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
+
+      // Poster from chosen frame
+      let thumbnail_url: string | null = null;
+      let savedCoverTime = coverTime;
+      try {
+        const thumbSecond = Math.min(enforcedEnd - 0.05, Math.max(selectedStart + 0.05, coverTime));
+        const posterBlob = await makePosterFromVideoSource(frameSource ?? uploadSource, thumbSecond);
+        const thumbPath = `${user.id}/${Date.now()}_poster.jpg`;
+        const poster = await uploadBlob("spliks", thumbPath, posterBlob);
+        thumbnail_url = poster.publicUrl || null;
+        savedCoverTime = thumbSecond;
+      } catch (e) {
+        console.warn("Poster generation failed:", e);
       }
-    } catch {
-      setIsSaved(!next); // rollback
-      toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
+
+      const payload: any = {
+        user_id: user.id,
+        title,
+        description: finalDescription.trim(),
+        duration: MAX_VIDEO_DURATION,
+        file_size: (uploadSource as Blob).size ?? file?.size ?? null,
+        mime_type: uploadMime || "video/mp4",
+        status: "active",
+        trim_start: selectedStart,
+        trim_end: enforcedEnd,
+        is_food: isFood,
+        video_path: videoPath,
+        video_url: publicUrl,
+        thumbnail_url,
+        cover_time: savedCoverTime,
+      };
+
+      const { error: dbError } = await supabase.from("spliks").insert(payload);
+      if (dbError) throw dbError;
+
+      setUploadProgress(100);
+      toast({ title: "Upload successful!", description: "Saved as a 3-second Splik." });
+
+      // Reset UI
+      setFile(null);
+      setUploadSource(null);
+      setUploadExt("mp4");
+      setUploadMime("video/mp4");
+      setFrameSource(null);
+      if (videoPreview) URL.revokeObjectURL(videoPreview);
+      setVideoPreview(null);
+      setTitle("");
+      setDescription("");
+      setIsFood(false);
+      setMood("");
+      setCurrentTime(0);
+      setIsPlaying(false);
+      setVideoReady(false);
+      setVideoError(null);
+      setShowTrimmer(false);
+      setTrimRange([0, 3]);
+      setUploadSpeedMBps(0);
+      setUploadETA(null);
+
+      onUploadComplete();
+      onClose();
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      toast({ title: "Upload failed", description: error.message || "Failed to upload video", variant: "destructive" });
     } finally {
-      setSaving(false);
-    }
-  }, [saving, isSaved, splik.id, toast]);
-
-  /* ------ SHARE / COPY: always use OG_URL so socials render the real cover ------ */
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(OG_URL);
-    toast({ title: "Link copied", description: "This link shows the video cover on socials." });
-  };
-
-  const handleShare = async () => {
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: splik.title || "Splikz", url: OG_URL });
-      } else {
-        setShowShareModal(true);
-        await navigator.clipboard.writeText(OG_URL);
-        toast({ title: "Link copied", description: "Paste it anywhere to share" });
-      }
-      onShare?.();
-    } catch {
-      setShowShareModal(true);
+      setUploading(false);
     }
   };
 
-  const videoHeight = isMobile ? "60svh" : "500px";
-  const isBoosted = Boolean((splik as any).isBoosted || (splik as any).is_currently_boosted || (((splik as any).boost_score ?? 0) > 0));
-  const isOwner = currentUser && currentUser.id === splik.user_id;
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+      const fakeEvent = { target: { files: [droppedFile] } } as unknown as React.ChangeEvent<HTMLInputElement>;
+      handleFileSelect(fakeEvent);
+    }
+  }, [handleFileSelect]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 10);
+    return `${mins}:${secs.toString().padStart(2, "0")}.${ms}`;
+  };
+
+  // Helper for cover marker position on seek bar
+  const coverPct = (() => {
+    const span = Math.max(0.001, trimRange[1] - trimRange[0]);
+    return ((coverTime - trimRange[0]) / span) * 100;
+  })();
 
   return (
-    <div
-      ref={cardRef}
-      data-splik-id={splik.id}
-      id={`splik-${splik.id}`}
-      className={cn(
-        "relative isolate bg-card rounded-xl overflow-hidden shadow-lg border border-border w-full max-w-[500px] mx-auto",
-        isBoosted && "ring-2 ring-primary/50"
-      )}
+    <Dialog
+      open={open}
+      // if the dialog is closed (X, overlay click, ESC), go to Profile
+      onOpenChange={(v) => {
+        if (!v) goToProfile();
+      }}
     >
-      {/* VIDEO */}
-      <div
-        className="relative bg-black overflow-hidden group rounded-t-xl -mt-px"
-        style={{ height: videoHeight, maxHeight: "80svh" }}
-        onClick={handlePlayToggle}
-      >
-        <div className="pointer-events-none absolute left-0 right-0 -top-px h-5 bg-black z-10 rounded-t-xl" />
-        <div className="absolute top-2 left-3 z-30 pointer-events-none">
-          <div className="flex items-center gap-1.5 rounded-full px-3 py-1 bg-black/80 backdrop-blur-sm shadow-md">
-            <Sparkles className="h-4 w-4 text-white/80" />
-            <span className="text-sm font-bold text-white">Feed</span>
-          </div>
-        </div>
-
-        {isOwner && (
-          <div className="absolute top-2 right-3 z-40">
-            <button
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowBoostModal(true); }}
-              className="relative flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold bg-white text-black shadow-lg ring-1 ring-black/10 hover:bg-white/90 transition-colors"
-            >
-              <Rocket className="h-4 w-4" />
-              Promote
-            </button>
-          </div>
-        )}
-
-        {isBoosted && (
-          <div className="absolute top-2 right-[11.5rem] z-30 pointer-events-none">
-            <Badge className="bg-primary text-white border-0 px-2 py-1">
-              <Rocket className="h-3 w-3 mr-1" />
-              Promoted
-            </Badge>
-          </div>
-        )}
-
-        {/* Poster overlay that fades when first frame paints */}
-        {splik.thumbnail_url && (
-          <img
-            src={splik.thumbnail_url}
-            alt=""
-            className={cn(
-              "absolute inset-0 w-full h-full object-cover transition-opacity duration-150 z-20",
-              posterVisible ? "opacity-100" : "opacity-0"
-            )}
-            draggable={false}
-          />
-        )}
-
-        <video
-          ref={videoRef}
-          src={load ? splik.video_url : undefined}
-          poster={splik.thumbnail_url || undefined}
-          className="block w-full h-full object-cover"
-          autoPlay={false}
-          loop={false}
-          muted={isMuted}
-          playsInline
-          controls={false}
-          // @ts-expect-error
-          webkit-playsinline="true"
-          disablePictureInPicture
-          disableRemotePlayback
-          controlsList="nodownload noplaybackrate noremoteplayback"
-          preload={load ? "auto" : "metadata"}
-          data-splik-id={splik.id}
-          data-video-id={splik.id}
-        />
-
-        {/* Mute/Unmute */}
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        {/* Manual close button in the corner (routes to Profile) */}
         <button
-          onClick={(e) => { e.stopPropagation(); toggleMute(); }}
-          className="absolute bottom-3 right-3 z-50 pointer-events-auto bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
-          aria-label={isMuted ? "Unmute" : "Mute"}
+          type="button"
+          onClick={goToProfile}
+          className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20"
+          aria-label="Close and go to profile"
         >
-          {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+          <X className="h-4 w-4" />
         </button>
-      </div>
 
-      {/* CREATOR + MENU */}
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <Link to={`/creator/${creatorSlug}`} className="flex items-center space-x-3 group flex-1 min-w-0">
-              <Avatar className="h-10 w-10 ring-2 ring-primary/20 group-hover:ring-primary/40 transition-all">
-                <AvatarImage src={splik.profile?.avatar_url || undefined} />
-                <AvatarFallback>
-                  {splik.profile?.display_name?.[0] ||
-                    splik.profile?.first_name?.[0] ||
-                    splik.profile?.username?.[0] ||
-                    "U"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-sm group-hover:text-primary transition-colors truncate">
-                  {splik.profile?.display_name ||
-                    splik.profile?.first_name ||
-                    splik.profile?.username ||
-                    "Unknown User"}
-                </p>
-                <p className="text-xs text-muted-foreground truncate">
-                  @{splik.profile?.username || splik.profile?.handle || "unknown"}
-                </p>
+        <DialogHeader className="sticky top-0 bg-background z-10 pb-2">
+          <DialogTitle>Upload Your 3-Second Splik</DialogTitle>
+          <DialogDescription>Pick any moment; we always save a 3.0s clip.</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <Alert className="border-primary/20 bg-primary/5">
+            <div className="flex items-center gap-2">
+              <Zap className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-sm">
+                <strong>Tip:</strong> MP4 uploads & plays everywhere. MOVs convert automatically.
+              </AlertDescription>
+            </div>
+          </Alert>
+
+          {isMobile && (
+            <Alert className="border-muted-foreground/20 bg-muted/10">
+              <div className="flex items-center gap-2">
+                <Smartphone className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  On mobile, you’ll see a conversion status if you upload a MOV.
+                </AlertDescription>
               </div>
-            </Link>
+            </Alert>
+          )}
 
-            <FollowButton
-              profileId={splik.user_id}
-              username={splik.profile?.username || splik.profile?.handle || splik.profile?.first_name}
-              size="sm"
-              variant="default"
-            />
-          </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 ml-2 flex-shrink-0">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={5}>
-            {currentUser?.id === splik.user_id && (
-              <DropdownMenuItem onClick={() => setShowBoostModal(true)} className="cursor-pointer text-primary">
-                <Rocket className="h-4 w-4 mr-2" />
-                Promote Video
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={handleCopyLink} className="cursor-pointer">
-              <Copy className="h-4 w-4 mr-2" />
-              Copy Link (social)
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowReportModal(true)} className="cursor-pointer">
-              <Flag className="h-4 w-4 mr-2" />
-              Report
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => toast({ title: "User blocked", description: "You won't see content from this user anymore" })}
-              className="cursor-pointer"
+          {processingVideo ? (
+            <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
+              <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Processing your video…</h3>
+              <p className="text-sm text-muted-foreground">Preparing the 3-second clip</p>
+            </div>
+          ) : !file ? (
+            <div
+              className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer"
+              onDrop={handleDrop}
+              onDragOver={(e) => e.preventDefault()}
+              onClick={() => fileInputRef.current?.click()}
             >
-              <UserX className="h-4 w-4 mr-2" />
-              Block User
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
+              <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
+              <p className="text-xs text-muted-foreground mb-2">
+                Supported: MP4 (preferred), MOV, FLV, WebM, AVI, MKV (max {formatBytes(maxFileSize)})
+              </p>
+              <p className="text-xs text-primary font-medium">Saved length is always 3.0s</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={acceptedFormats}
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {videoError && (
+                <Alert className="border-yellow-500/20 bg-yellow-500/5">
+                  <AlertCircle className="h-4 w-4 text-yellow-600" />
+                  <AlertDescription className="text-sm">
+                    <strong>Note:</strong> {videoError}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {transcoding && (
+                <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+                  <p className="text-sm font-medium">
+                    Converting MOV to MP4 for preview & upload… {transcodeProgress}%
+                  </p>
+                </div>
+              )}
+
+              {/* Video + overlay controls */}
+              <div className="flex justify-center">
+                <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
+                  <div className="relative" style={{ paddingBottom: "177.78%" }}>
+                    {!videoPreview && !transcoding ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
+                        <Film className="h-10 w-10 opacity-70 mb-2" />
+                        <p className="text-sm font-medium">Preparing preview…</p>
+                      </div>
+                    ) : null}
+
+                    {videoPreview && !transcoding ? (
+                      <>
+                        <video
+                          ref={videoRef}
+                          src={videoPreview}
+                          className="absolute inset-0 w-full h-full object-cover"
+                          loop={false}
+                          muted={isMuted}
+                          playsInline
+                          preload="metadata"
+                          controls={false}
+                          onDoubleClick={onVideoDoubleClick}
+                        />
+
+                        {!videoReady && !videoError && (
+                          <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
+                            <Loader2 className="h-8 w-8 animate-spin text-white" />
+                          </div>
+                        )}
+
+                        {videoReady && !videoError && (
+                          <div className="absolute inset-0 flex flex-col justify-end p-4 gap-2 bg-gradient-to-b from-black/20 via-transparent to-black/40">
+                            {/* Play/Pause big target */}
+                            <button
+                              onClick={togglePlayPause}
+                              className="absolute inset-0 w-full h-full"
+                              aria-label="Toggle playback"
+                            />
+
+                            {/* Bottom controls */}
+                            <div className="relative z-10 space-y-2 pointer-events-none">
+                              <div className="flex justify-between items-center text-white text-xs font-medium pointer-events-auto">
+                                <span>{formatTime(currentTime - trimRange[0])}</span>
+                                <span className="opacity-90">Saved length: <strong>3.0s</strong></span>
+                              </div>
+
+                              {/* Seek + cover marker */}
+                              <div className="relative" ref={seekBarRef}>
+                                <Slider
+                                  value={[currentTime]}
+                                  min={trimRange[0]}
+                                  max={trimRange[1]}
+                                  step={0.01}
+                                  onValueChange={handleSeek}
+                                  className="w-full pointer-events-auto"
+                                />
+                                {/* cover marker */}
+                                <div
+                                  className="absolute -top-1 h-4 w-0.5 bg-white/90 rounded-sm pointer-events-none"
+                                  style={{ left: `calc(${coverPct}% - 1px)` }}
+                                  title="Cover frame"
+                                />
+                              </div>
+
+                              <div className="flex items-center justify-between pointer-events-auto">
+                                <button
+                                  onClick={toggleMute}
+                                  className="bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow"
+                                  aria-label={isMuted ? "Unmute" : "Mute"}
+                                >
+                                  {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+                                </button>
+
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={(e) => { e.stopPropagation(); setCoverAtCurrent(); }}
+                                  className="ml-auto flex items-center gap-2"
+                                >
+                                  <ImageIcon className="h-4 w-4" />
+                                  Set cover (C / double-tap)
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              {/* Trim picker (3s window auto-enforced) */}
+              {videoPreview && showTrimmer && (
+                <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Scissors className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">Pick any spot (we’ll save 3s)</span>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Start: {trimRange[0].toFixed(2)}s</span>
+                      <span className="font-bold text-primary">Saved: 3.00s</span>
+                      <span>End: {Math.min(trimRange[0] + 3, originalDuration).toFixed(2)}s</span>
+                    </div>
+
+                    <Slider
+                      value={trimRange}
+                      min={0}
+                      max={Math.max(originalDuration, 3)}
+                      step={0.01}
+                      onValueChange={handleTrimChange}
+                      className="my-4 touch-none select-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Details */}
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="title">Title</Label>
+                  <Input
+                    id="title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Enter a title for your Splik"
+                    disabled={uploading}
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="description">Description (optional)</Label>
+                  <Input
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Add a description"
+                    disabled={uploading}
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="mood">Mood (optional)</Label>
+                  <Select value={mood} onValueChange={setMood} disabled={uploading}>
+                    <SelectTrigger id="mood" className="w-full">
+                      <SelectValue placeholder="Choose the mood for this video (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MOOD_OPTIONS.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    If chosen, we’ll tag the description with <code>#mood=&lt;value&gt;</code>.
+                  </p>
+                </div>
+
+                <div className="mt-2 flex items-center justify-between rounded-md border p-3">
+                  <div className="flex items-start gap-2">
+                    <Utensils className="h-4 w-4 text-primary mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium">Food video</p>
+                      <p className="text-xs text-muted-foreground">
+                        If enabled, this video will also appear on the Food page.
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => setIsFood((v) => !v)}
+                    variant={isFood ? "default" : "outline"}
+                    className={isFood ? "bg-gradient-to-r from-purple-600 to-cyan-500 text-white" : ""}
+                    disabled={uploading}
+                  >
+                    <Utensils className="h-4 w-4 mr-2" />
+                    {isFood ? "Food Enabled" : "Mark as Food"}
+                  </Button>
+                </div>
+              </div>
+
+              {uploading && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1">
+                      <Info className="h-3.5 w-3.5" />
+                      <span>
+                        Uploading… {uploadProgress}%{uploadETA ? ` • ETA ${uploadETA}` : ""}
+                      </span>
+                    </div>
+                    <div className="font-mono">
+                      {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
+                    </div>
+                  </div>
+                  <Progress value={uploading ? uploadProgress : 0} className="w-full" />
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setFile(null);
+                    setUploadSource(null);
+                    setUploadExt("mp4");
+                    setUploadMime("video/mp4");
+                    setFrameSource(null);
+                    if (videoPreview) URL.revokeObjectURL(videoPreview);
+                    setVideoPreview(null);
+                    setTitle("");
+                    setDescription("");
+                    setIsFood(false);
+                    setMood("");
+                    setIsPlaying(false);
+                    setVideoReady(false);
+                    setVideoError(null);
+                    setShowTrimmer(false);
+                    setTrimRange([0, 3]);
+                    setUploadSpeedMBps(0);
+                    setUploadETA(null);
+                  }}
+                  disabled={uploading}
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Remove
+                </Button>
+                <Button onClick={handleUpload} disabled={uploading || !title}>
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading…
+                    </>
+                  ) : (
+                    "Upload Splik"
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-
-        {/* ACTIONS */}
-        <div className="flex items-center justify-between gap-1">
-          {/* Like */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleSplik}
-            disabled={likePending}
-            className={cn("flex items-center gap-2 transition-colors",
-              isLiked && "text-red-500 hover:text-red-600")}
-            aria-pressed={isLiked}
-          >
-            <Heart className={cn("h-4 w-4", isLiked && "fill-current")} />
-            <span
-              className="text-xs font-medium cursor-pointer hover:underline underline-offset-4"
-              onClick={(e) => { e.stopPropagation(); setShowLikesModal(true); }}
-              title="View who liked"
-            >
-              {(likesCount ?? 0).toLocaleString()}
-            </span>
-          </Button>
-
-          {/* Comments */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => { setShowCommentsModal(true); onReact?.(); }}
-            className="flex items-center gap-2 hover:text-blue-500"
-          >
-            <MessageCircle className="h-4 w-4" />
-            <span className="text-xs font-medium">{(commentsCount ?? 0).toLocaleString()}</span>
-          </Button>
-
-          {/* Views */}
-          <div className="inline-flex items-center gap-2 px-2 py-1 text-muted-foreground">
-            <Eye className="h-4 w-4" />
-            <span className="text-xs font-medium">{(viewsCount ?? 0).toLocaleString()}</span>
-          </div>
-
-          {/* Share (uses OG_URL for correct social card) */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleShare}
-            className="flex items-center gap-2 hover:text-green-500"
-          >
-            <Share2 className="h-4 w-4" />
-            <span className="text-xs font-medium">Share</span>
-          </Button>
-
-          {/* Save */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); toggleFavorite(); }}
-            disabled={saving}
-            className={cn("flex items-center gap-2 transition-colors",
-              isSaved ? "text-yellow-400 hover:text-yellow-500" : "")}
-            aria-pressed={isSaved}
-          >
-            {isSaved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
-            <span className="text-xs font-medium">{isSaved ? "Saved" : "Save"}</span>
-          </Button>
-        </div>
-
-        {/* Title + Description */}
-        {splik.title && <p className="mt-2 text-sm font-semibold">{splik.title}</p>}
-        {splik.description && <p className="mt-1 text-sm">{splik.description}</p>}
-
-        {splik.mood && (
-          <div className="mt-3">
-            <Badge variant="secondary" className="px-2 py-0.5 text-[10px] rounded-full">
-              {toTitle(String(splik.mood))}
-            </Badge>
-          </div>
-        )}
-
-        {(likesCount ?? 0) === 0 && (commentsCount ?? 0) === 0 && (viewsCount ?? 0) === 0 && (
-          <div className="mt-2 text-xs text-muted-foreground text-center italic">
-            Be the first to react! 💜
-          </div>
-        )}
-      </div>
-
-      {/* MODALS */}
-      <ShareModal
-        isOpen={showShareModal}
-        onClose={() => setShowShareModal(false)}
-        videoId={splik.id}
-        videoTitle={splik.title || "Check out this video"}
-        // Always feed the OG URL so socials pull the real cover
-        // @ts-ignore
-        shareUrl={OG_URL}
-        // You can also render the on-site page if your modal shows both:
-        // @ts-ignore
-        viewUrl={VIEW_URL}
-      />
-
-      <CommentsModal
-        isOpen={showCommentsModal}
-        onClose={async () => {
-          setShowCommentsModal(false);
-          await fetchExactCounts();
-        }}
-        splikId={splik.id}
-        splikTitle={splik.title}
-      />
-
-      <ReportModal
-        isOpen={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        videoId={splik.id}
-        videoTitle={splik.title || splik.description || "Untitled Video"}
-        creatorName={splik.profile?.display_name || splik.profile?.username || "Unknown Creator"}
-      />
-
-      {showBoostModal && (
-        <BoostModal
-          isOpen={showBoostModal}
-          onClose={() => setShowBoostModal(false)}
-          splikId={splik.id}
-          videoTitle={splik.title || splik.description}
-        />
-      )}
-
-      <LikesModal
-        isOpen={showLikesModal}
-        onClose={() => setShowLikesModal(false)}
-        splikId={splik.id}
-        onCountDelta={(d) => setLikesCount((c) => Math.max(0, (c ?? 0) + d))}
-      />
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
