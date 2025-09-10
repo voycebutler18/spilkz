@@ -135,7 +135,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  /* --------- load + pure shuffle every time --------- */
+  /* --------- load + pure shuffle every time (no pinning) --------- */
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -153,7 +153,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (error) throw error;
 
         const all = normalizeSpliks((data as Splik[]) || []);
-        const ordered = shuffle(all); // <-- ALWAYS shuffle everything on load
+        let ordered = shuffle(all);
+
+        // Ensure the first video differs from the previous refresh
+        const LAST_FIRST_KEY = "feed:last-first-id";
+        const prevFirstId = sessionStorage.getItem(LAST_FIRST_KEY);
+        if (ordered.length > 1 && prevFirstId && ordered[0]?.id === prevFirstId) {
+          const j = 1 + Math.floor(cRandom() * (ordered.length - 1));
+          [ordered[0], ordered[j]] = [ordered[j], ordered[0]];
+        }
+        if (ordered[0]) sessionStorage.setItem(LAST_FIRST_KEY, ordered[0].id);
 
         setSpliks(ordered);
 
