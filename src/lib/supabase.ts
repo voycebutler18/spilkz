@@ -1,15 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-// Add error checking
-if (!supabaseUrl || !supabaseKey) {
-  console.error('Missing Supabase environment variables');
-  console.error('VITE_SUPABASE_URL:', supabaseUrl);
-  console.error('VITE_SUPABASE_PUBLISHABLE_KEY:', supabaseKey ? 'Set' : 'Missing');
-  throw new Error('Missing Supabase environment variables');
-}
+const supabaseUrl = 'https://izeheflwfguwinizihmx.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6ZWhlZmx3Zmd1d2luaXppaG14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY5NDAyNzEsImV4cCI6MjA3MjUxNjI3MX0.s243LZphO7lOUqqsYQrBjZg62WjenonPZrgrzjzqjVM';
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -74,40 +66,3 @@ export interface GestureReply {
   created_at: string;
   profile?: Profile;
 }
-
-// Helper functions to safely access data
-export const getSafeSplikData = (splik: Partial<Splik> | null | undefined) => {
-  if (!splik) {
-    return {
-      likes_count: 0,
-      comments_count: 0,
-      view_count: 0,
-      views: 0,
-    };
-  }
-
-  return {
-    ...splik,
-    likes_count: splik.likes_count ?? 0,
-    comments_count: splik.comments_count ?? 0,
-    view_count: splik.view_count ?? splik.views ?? 0,
-    views: splik.views ?? splik.view_count ?? 0,
-  };
-};
-
-export const getSafeProfileData = (profile: Partial<Profile> | null | undefined) => {
-  if (!profile) {
-    return {
-      followers_count: 0,
-      following_count: 0,
-      spliks_count: 0,
-    };
-  }
-
-  return {
-    ...profile,
-    followers_count: profile.followers_count ?? 0,
-    following_count: profile.following_count ?? 0,
-    spliks_count: profile.spliks_count ?? 0,
-  };
-};
