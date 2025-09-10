@@ -180,10 +180,13 @@ export default function SplikCard(props: SplikCardProps) {
 
     const io = new IntersectionObserver(
       async (entries) => {
-        entries.forEach(async (entry) => {
+        for (const entry of entries) {
           const mostlyVisible = entry.isIntersecting && entry.intersectionRatio >= 0.7;
-          props.onPrimaryVisible?.(idx);
-          if (!load) return;
+
+          // ✅ only announce when mostly visible
+          if (mostlyVisible) props.onPrimaryVisible?.(idx);
+
+          if (!load) continue;
 
           if (mostlyVisible) {
             try { if (!primedRef.current) primeToStart(); else video.currentTime = SEEK_SAFE; } catch {}
@@ -195,7 +198,7 @@ export default function SplikCard(props: SplikCardProps) {
             video.muted = true; video.setAttribute("muted", "true");
             setIsPlaying(false);
           }
-        });
+        }
       },
       { threshold: [0, 0.25, 0.5, 0.7, 1], rootMargin: "0px 0px -10% 0px" }
     );
@@ -211,7 +214,8 @@ export default function SplikCard(props: SplikCardProps) {
       pauseIfCurrent(video);
       primedRef.current = false;
     };
-  }, [isMuted, START, END, SEEK_SAFE, load, idx, props]);
+    // 🔧 only depend on what’s used
+  }, [isMuted, START, END, SEEK_SAFE, load, idx, props.onPrimaryVisible]);
 
   // enforce 3s loop
   useEffect(() => {
