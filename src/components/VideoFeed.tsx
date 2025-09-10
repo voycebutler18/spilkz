@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  // Heart,                // removed
   MessageCircle,
   Share2,
   Bookmark,
@@ -17,6 +16,7 @@ import {
   Send,
   Play,
   Pause,
+  Shuffle,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,8 +30,7 @@ interface Splik {
   video_url: string;
   thumbnail_url?: string | null;
   user_id: string;
-  // likes_count?: number | null;   // removed
-  comments_count?: number | null;  // optional: you can remove later if not needed
+  comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
@@ -78,8 +77,9 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
     .filter(Boolean)
     .map((r) => ({
       ...r,
-      // likes removed, keep comments safe if you rely on it
-      comments_count: Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
+      comments_count: Number.isFinite(r?.comments_count as any)
+        ? (r!.comments_count as number)
+        : 0,
       profile:
         r.profile ?? {
           id: r.user_id,
@@ -91,8 +91,48 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
         },
     }));
 
-/** Crypto backed random when available */
-const rand = () =>
+/** anon key for logged-out personalization */
+const getAnonKey = () => {
+  try {
+    let k = localStorage.getItem("feed_anon_key");
+    if (!k) {
+      // @ts-ignore
+      k =
+        (crypto?.randomUUID?.() as string) ||
+        Math.random().toString(36).slice(2);
+      localStorage.setItem("feed_anon_key", k);
+    }
+    return k;
+  } catch {
+    return "anon-" + Math.random().toString(36).slice(2);
+  }
+};
+
+/** tiny string hash + seeded PRNG (mulberry32) for stable shuffles */
+const hashString = (s: string) => {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+};
+const mulberry32 = (seed: number) => () => {
+  let t = (seed += 0x6d2b79f5);
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const seededShuffle = <T,>(arr: T[], rnd: () => number) => {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+};
+
+/** crypto random (fallback to Math.random) */
+const strongRandom = () =>
   typeof crypto !== "undefined" && (crypto as any).getRandomValues
     ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
     : Math.random();
@@ -123,52 +163,47 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  // remember which index to jump to on mount (randomized)
-  const initialScrollIndexRef = useRef<number | null>(null);
+  // reshuffle trigger (increment to reshuffle)
+  const [shuffleTick, setShuffleTick] = useState(0);
 
-  /* --------- load + shuffle --------- */
+  // load + shuffle
   useEffect(() => {
     const load = async () => {
+      setLoading(true);
       try {
         const { data, error } = await supabase
           .from("spliks")
-          .select(`
+          .select(
+            `
             id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end,
-            created_at,
+            trim_start, trim_end, created_at,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
-          `); // likes fields removed
+          `
+          );
 
         if (error) throw error;
 
         const allVideos = normalizeSpliks((data as Splik[]) || []);
 
-        // session seen list
-        const SEEN_KEY = "feed:seen-videos";
-        const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
-        const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
+        // --- PERSONALIZED + PER-REFRESH SHUFFLE ---
+        const baseId = user?.id ?? getAnonKey();
+        const salt = strongRandom().toString(); // new each refresh & each Shuffle click
+        const seed = hashString(`${baseId}|${salt}|${Date.now()}`);
+        const rnd = mulberry32(seed);
 
-        const unseen = allVideos.filter((v) => !seenVideoIds.has(v.id));
-        const pool = unseen.length > 0 ? unseen : allVideos;
-        if (unseen.length === 0) sessionStorage.removeItem(SEEN_KEY);
-
-        // Fisher–Yates
-        const list = [...pool];
-        for (let i = list.length - 1; i > 0; i--) {
-          const j = Math.floor(rand() * (i + 1));
-          [list[i], list[j]] = [list[j], list[i]];
+        // Fresh videos on top (last 24h), both groups shuffled
+        const FRESH_HOURS = 24;
+        const cutoff = Date.now() - FRESH_HOURS * 3600_000;
+        const fresh: Splik[] = [];
+        const rest: Splik[] = [];
+        for (const v of allVideos) {
+          (new Date(v.created_at).getTime() >= cutoff ? fresh : rest).push(v);
         }
-
-        // avoid repeating the same first card as last time
-        const LAST_FIRST_KEY = "feed:last-first-id";
-        const prevFirst = sessionStorage.getItem(LAST_FIRST_KEY);
-        if (list.length > 1 && prevFirst && list[0]?.id === prevFirst) {
-          const j = 1 + Math.floor(rand() * (list.length - 1));
-          [list[0], list[j]] = [list[j], list[0]];
-        }
-        if (list[0]) sessionStorage.setItem(LAST_FIRST_KEY, list[0].id);
+        seededShuffle(fresh, rnd);
+        seededShuffle(rest, rnd);
+        const list = [...fresh, ...rest];
 
         setSpliks(list);
 
@@ -182,21 +217,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // randomized start index
-        if (list.length > 0) {
-          const START_IDX_KEY = "feed:last-start-index";
-          const prevIdxStr = sessionStorage.getItem(START_IDX_KEY);
-          const prevIdx = prevIdxStr ? parseInt(prevIdxStr, 10) : -1;
-
-          let initIndex = Math.floor(rand() * list.length);
-          if (list.length > 1 && initIndex === prevIdx) {
-            initIndex = (initIndex + 1) % list.length;
-          }
-          sessionStorage.setItem(START_IDX_KEY, String(initIndex));
-          initialScrollIndexRef.current = initIndex;
-        }
-
-        // preload favorites only
+        // favorites preload
         if (user?.id) {
           const { data: favs } = await supabase
             .from("favorites")
@@ -208,36 +229,18 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         console.error(e);
       } finally {
         setLoading(false);
+        setActiveIndex(0);
+        // always start at top after a fresh shuffle
+        setTimeout(() => {
+          const root = containerRef.current;
+          if (!root) return;
+          const child = root.querySelector<HTMLElement>(`[data-index="0"]`);
+          if (child) child.scrollIntoView({ behavior: "instant", block: "start" as ScrollLogicalPosition });
+        }, 50);
       }
     };
     load();
-  }, [user?.id]);
-
-  // After the list renders and the observer attaches, jump to the randomized start index
-  useEffect(() => {
-    if (!spliks.length) return;
-    const idx = initialScrollIndexRef.current;
-    if (idx == null) return;
-
-    const t = setTimeout(() => {
-      const root = containerRef.current;
-      if (!root) return;
-      const child = root.querySelector<HTMLElement>(`[data-index="${idx}"]`);
-      if (child) child.scrollIntoView({ behavior: "instant", block: "start" as ScrollLogicalPosition });
-    }, 60);
-    return () => clearTimeout(t);
-  }, [spliks.length]);
-
-  // Track when videos are viewed (mark as seen)
-  const markVideoAsSeen = (videoId: string) => {
-    const SEEN_KEY = "feed:seen-videos";
-    const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
-    const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
-    if (!seenVideoIds.has(videoId)) {
-      seenVideoIds.add(videoId);
-      sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seenVideoIds]));
-    }
-  };
+  }, [user?.id, shuffleTick]);
 
   /* ---------- realtime sync for favorites (this user) ---------- */
   useEffect(() => {
@@ -282,7 +285,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Enhanced Autoplay with seen tracking ========== */
+  /* ========== Autoplay ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -302,10 +305,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
-          // Mark as seen
-          const splik = spliks[index];
-          if (splik) markVideoAsSeen(splik.id);
-
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
@@ -510,6 +509,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       ref={containerRef}
       className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
     >
+      {/* Sticky Shuffle toolbar */}
+      <div className="sticky top-0 z-20 flex justify-end p-2 bg-background/70 backdrop-blur border-b">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setShuffleTick((n) => n + 1)}
+          className="gap-2"
+        >
+          <Shuffle className="h-4 w-4" />
+          Shuffle
+        </Button>
+      </div>
+
       {spliks.map((s, i) => {
         const videoIsPlaying = isPlaying[i] ?? false;
         const shouldShowPauseButton = showPauseButton[i] ?? true;
@@ -624,7 +636,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               <div className="p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    {/* Like button removed */}
                     <Button
                       size="icon"
                       variant="ghost"
