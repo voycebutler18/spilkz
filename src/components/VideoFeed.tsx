@@ -1,3 +1,4 @@
+
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -6,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
+  Heart,
   MessageCircle,
   Share2,
   Bookmark,
@@ -16,7 +18,6 @@ import {
   Send,
   Play,
   Pause,
-  Shuffle as ShuffleIcon,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,10 +31,12 @@ interface Splik {
   video_url: string;
   thumbnail_url?: string | null;
   user_id: string;
+  likes_count?: number | null;
   comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
+  /** joined profile for the creator */
   profile?: {
     id?: string;
     username?: string | null;
@@ -71,72 +74,6 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
-/** Normalize rows so UI never crashes on missing values */
-const normalizeSpliks = (rows: Splik[]): Splik[] =>
-  (rows ?? [])
-    .filter(Boolean)
-    .map((r) => ({
-      ...r,
-      comments_count: Number.isFinite(r?.comments_count as any)
-        ? (r!.comments_count as number)
-        : 0,
-      profile:
-        r.profile ?? {
-          id: r.user_id,
-          username: null,
-          display_name: null,
-          first_name: null,
-          last_name: null,
-          avatar_url: null,
-        },
-    }));
-
-/* ---------- seeded RNG + shuffle (stable API-wide randomness) ---------- */
-// lightweight string hash -> 32-bit
-function xfnv1a(str: string) {
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return () => h >>> 0;
-}
-// 32-bit PRNG
-function mulberry32(a: number) {
-  return function () {
-    let t = (a += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-const getDeviceId = () => {
-  try {
-    let id = localStorage.getItem("feed:device-id");
-    if (!id) {
-      id =
-        (crypto as any)?.randomUUID?.() ||
-        Math.random().toString(36).slice(2);
-      localStorage.setItem("feed:device-id", id);
-    }
-    return id;
-  } catch {
-    return "anon-device";
-  }
-};
-const makeRng = (seedStr: string) => {
-  const h = xfnv1a(seedStr)();
-  return mulberry32(h);
-};
-const shuffleWithRng = <T,>(arr: T[], rng: () => number) => {
-  const list = [...arr];
-  for (let i = list.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [list[i], list[j]] = [list[j], list[i]];
-  }
-  return list;
-};
-
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
@@ -144,6 +81,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // social UI
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [likePendingIds, setLikePendingIds] = useState<Set<string>>(new Set());
 
   // favorites UI
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
@@ -163,15 +104,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  // session seed (new every refresh)
-  const deviceIdRef = useRef(getDeviceId());
-  const sessionSeedRef = useRef<string>(
-    `${Date.now()}|${(crypto as any)?.getRandomValues
-      ? (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0)
-      : Math.floor(Math.random() * 2 ** 32)}`
-  );
+  // remember which index to jump to on mount (randomized)
+  const initialScrollIndexRef = useRef<number | null>(null);
 
-  /* --------- load + SHUFFLE on every refresh --------- */
+  /* --------- Enhanced load effect with seen videos tracking + random start --------- */
   useEffect(() => {
     const load = async () => {
       try {
@@ -180,25 +116,49 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
             trim_start, trim_end,
-            created_at,
+            likes_count, comments_count, created_at,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
-          `); // order doesn't matter; we shuffle below
+          `); // no .order() — we shuffle
 
         if (error) throw error;
 
-        const allVideos = normalizeSpliks((data as Splik[]) || []);
+        const allVideos = [...((data as Splik[]) || [])];
 
-        // seed uses deviceId + userId + sessionSeed (new every reload)
-        const seed = `${deviceIdRef.current}|${user?.id ?? "anon"}|${sessionSeedRef.current}`;
-        const rng = makeRng(seed);
+        // session seen list
+        const SEEN_KEY = "feed:seen-videos";
+        const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
+        const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
 
-        const list = shuffleWithRng(allVideos, rng);
+        const unseen = allVideos.filter((v) => !seenVideoIds.has(v.id));
+        const pool = unseen.length > 0 ? unseen : allVideos;
+        if (unseen.length === 0) sessionStorage.removeItem(SEEN_KEY);
+
+        // Fisher–Yates (crypto-backed)
+        const list = [...pool];
+        const rand = () =>
+          typeof crypto !== "undefined" && (crypto as any).getRandomValues
+            ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
+            : Math.random();
+
+        for (let i = list.length - 1; i > 0; i--) {
+          const j = Math.floor(rand() * (i + 1));
+          [list[i], list[j]] = [list[j], list[i]];
+        }
+
+        // avoid repeating the same *first* card as last time
+        const LAST_FIRST_KEY = "feed:last-first-id";
+        const prevFirst = sessionStorage.getItem(LAST_FIRST_KEY);
+        if (list.length > 1 && prevFirst && list[0]?.id === prevFirst) {
+          const j = 1 + Math.floor(rand() * (list.length - 1));
+          [list[0], list[j]] = [list[j], list[0]];
+        }
+        if (list[0]) sessionStorage.setItem(LAST_FIRST_KEY, list[0].id);
 
         setSpliks(list);
 
-        // init mute/pause UI for the new list
+        // init mute/pause UI
         const mutedState: Record<number, boolean> = {};
         const pauseState: Record<number, boolean> = {};
         list.forEach((_, index) => {
@@ -208,12 +168,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setMuted(mutedState);
         setShowPauseButton(pauseState);
 
-        // favorites preload (for this user)
+        // choose a randomized starting index to scroll to (not the same as last time)
+        if (list.length > 0) {
+          const START_IDX_KEY = "feed:last-start-index";
+          const prevIdxStr = sessionStorage.getItem(START_IDX_KEY);
+          const prevIdx = prevIdxStr ? parseInt(prevIdxStr, 10) : -1;
+
+          let initIndex = Math.floor(rand() * list.length);
+          if (list.length > 1 && initIndex === prevIdx) {
+            initIndex = (initIndex + 1) % list.length;
+          }
+          sessionStorage.setItem(START_IDX_KEY, String(initIndex));
+          initialScrollIndexRef.current = initIndex;
+        }
+
+        // preload likes + favorites for this user
         if (user?.id) {
-          const { data: favs } = await supabase
-            .from("favorites")
-            .select("splik_id")
-            .eq("user_id", user.id);
+          const [{ data: likes }, { data: favs }] = await Promise.all([
+            supabase.from("likes").select("splik_id").eq("user_id", user.id),
+            supabase.from("favorites").select("splik_id").eq("user_id", user.id),
+          ]);
+          if (likes) setLikedIds(new Set(likes.map((l: any) => l.splik_id)));
           if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
       } catch (e) {
@@ -225,29 +200,31 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     load();
   }, [user?.id]);
 
-  /* ---------- Shuffle button handler ---------- */
-  const reshuffle = () => {
+  // After the list renders and the observer attaches, jump to the randomized start index
+  useEffect(() => {
     if (!spliks.length) return;
-    // new seed (changes every click) – still personalized by device/user
-    const clickSeed = `${deviceIdRef.current}|${user?.id ?? "anon"}|click|${Date.now()}`;
-    const rng = makeRng(clickSeed);
-    const list = shuffleWithRng(spliks, rng);
-    setSpliks(list);
+    const idx = initialScrollIndexRef.current;
+    if (idx == null) return;
 
-    // reset players + scroll to top
-    videoRefs.current.forEach((v) => v?.pause());
-    setIsPlaying({});
-    setShowPauseButton({});
-    setMuted({});
-    const mutedState: Record<number, boolean> = {};
-    const pauseState: Record<number, boolean> = {};
-    list.forEach((_, i) => {
-      mutedState[i] = false;
-      pauseState[i] = true;
-    });
-    setMuted(mutedState);
-    setShowPauseButton(pauseState);
-    containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    // allow one tick for DOM + observer to be ready
+    const t = setTimeout(() => {
+      const root = containerRef.current;
+      if (!root) return;
+      const child = root.querySelector<HTMLElement>(`[data-index="${idx}"]`);
+      if (child) child.scrollIntoView({ behavior: "instant", block: "start" as ScrollLogicalPosition });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [spliks.length]);
+
+  // Track when videos are viewed (mark as seen)
+  const markVideoAsSeen = (videoId: string) => {
+    const SEEN_KEY = "feed:seen-videos";
+    const seenVideosJson = sessionStorage.getItem(SEEN_KEY);
+    const seenVideoIds = seenVideosJson ? new Set<string>(JSON.parse(seenVideosJson)) : new Set<string>();
+    if (!seenVideoIds.has(videoId)) {
+      seenVideoIds.add(videoId);
+      sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seenVideoIds]));
+    }
   };
 
   /* ---------- realtime sync for favorites (this user) ---------- */
@@ -293,7 +270,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay (intersection) ========== */
+  /* ========== Enhanced Autoplay with seen tracking ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -303,16 +280,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
-        const idxAttr = (entry.target as HTMLElement).dataset.index;
-        if (idxAttr == null) continue;
-
-        const index = Number(idxAttr);
-        if (!Number.isFinite(index) || index < 0 || index >= spliks.length) continue;
-
+        const index = Number((entry.target as HTMLElement).dataset.index);
         const video = videoRefs.current[index];
         if (!video) continue;
 
         if (entry.intersectionRatio > 0.5) {
+          // Mark as seen
+          const splik = spliks[index];
+          if (splik) markVideoAsSeen(splik.id);
+
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
@@ -326,9 +302,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const startAt = Number(spliks[index]?.trim_start ?? 0);
           if (startAt > 0) video.currentTime = startAt;
 
+          // tight 3s loop at trim_start
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) video.currentTime = startAt;
           };
+          // ensure we do not stack listeners
+          video.onplaying = video.onplaying; // no-op to keep TS happy
           video.removeEventListener("timeupdate", onTimeUpdate);
           video.addEventListener("timeupdate", onTimeUpdate);
 
@@ -370,7 +349,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       Object.values(pauseTimeoutRefs.current).forEach((t) => t && clearTimeout(t));
     };
-  }, [spliks, muted]);
+  }, [spliks.length, muted, spliks]);
 
   const scrollTo = (index: number) => {
     const root = containerRef.current;
@@ -410,6 +389,97 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       video.play().catch(console.error);
       setIsPlaying((prev) => ({ ...prev, [index]: true }));
       setShowPauseButton((prev) => ({ ...prev, [index]: true }));
+    }
+  };
+
+  /* -------------------------- social actions -------------------------- */
+  const handleLike = async (splikId: string) => {
+    if (!user?.id) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to like videos",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (likePendingIds.has(splikId)) return;
+    setLikePendingIds((prev) => new Set(prev).add(splikId));
+
+    const wasLiked = likedIds.has(splikId);
+
+    // optimistic toggle of heart state
+    setLikedIds((prev) => {
+      const ns = new Set(prev);
+      wasLiked ? ns.delete(splikId) : ns.add(splikId);
+      return ns;
+    });
+
+    // optimistic counter change
+    setSpliks((prev) =>
+      prev.map((s) =>
+        s.id === splikId
+          ? {
+              ...s,
+              likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? -1 : 1)),
+            }
+          : s
+      )
+    );
+
+    try {
+      if (wasLiked) {
+        const { error } = await supabase
+          .from("likes")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("splik_id", splikId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("likes")
+          .upsert(
+            { user_id: user.id, splik_id: splikId },
+            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
+          );
+        if (error) throw error;
+      }
+
+      // snap to the real count from DB
+      const { count } = await supabase
+        .from("likes")
+        .select("*", { head: true, count: "exact" })
+        .eq("splik_id", splikId);
+
+      if (typeof count === "number") {
+        setSpliks((prev) =>
+          prev.map((s) => (s.id === splikId ? { ...s, likes_count: count } : s))
+        );
+      }
+    } catch {
+      // revert local optimistic changes on error
+      setLikedIds((prev) => {
+        const ns = new Set(prev);
+        wasLiked ? ns.add(splikId) : ns.delete(splikId);
+        return ns;
+      });
+      setSpliks((prev) =>
+        prev.map((s) =>
+          s.id === splikId
+            ? {
+                ...s,
+                likes_count: Math.max(0, (s.likes_count ?? 0) + (wasLiked ? 1 : -1)),
+              }
+            : s
+        )
+      );
+      toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
+    } finally {
+      setLikePendingIds((prev) => {
+        const ns = new Set(prev);
+        ns.delete(splikId);
+        return ns;
+      });
     }
   };
 
@@ -506,225 +576,225 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   /* ------------------------------ UI ------------------------------ */
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[40vh] gap-3">
+      <div className="flex justify-center items-center min-h-[40vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
-        <div className="text-xs text-muted-foreground">Loading feed…</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-[100svh] bg-background">
-      {/* top bar with Shuffle */}
-      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b px-3 py-2 flex items-center justify-between">
-        <div className="text-sm font-semibold">For You</div>
-        <Button size="sm" variant="secondary" onClick={reshuffle} className="gap-2">
-          <ShuffleIcon className="h-4 w-4" />
-          Shuffle
-        </Button>
-      </div>
+    <div
+      ref={containerRef}
+      className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
+    >
+      {spliks.map((s, i) => {
+        const videoIsPlaying = isPlaying[i] ?? false;
+        const shouldShowPauseButton = showPauseButton[i] ?? true;
+        const isSaved = savedIds.has(s.id);
+        const saving = savingIds.has(s.id);
 
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-y-auto snap-y snap-mandatory scroll-smooth"
-      >
-        {spliks.map((s, i) => {
-          const videoIsPlaying = isPlaying[i] ?? false;
-          const shouldShowPauseButton = showPauseButton[i] ?? true;
-          const isSaved = savedIds.has(s.id);
-          const saving = savingIds.has(s.id);
+        return (
+          <section
+            key={s.id}
+            data-index={i}
+            className="snap-start min-h-[100svh] w-full flex items-center justify-center"
+          >
+            <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
+              {/* header */}
+              <div className="flex items-center justify-between p-3 border-b">
+                <Link
+                  to={`/creator/${s.profile?.username || s.user_id}`}
+                  className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+                >
+                  <Avatar className="h-8 w-8">
+                    <AvatarFallback>{initialsFor(s)}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <p className="text-sm font-semibold">{nameFor(s)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
+                    </p>
+                  </div>
+                </Link>
+                <Button size="icon" variant="ghost">
+                  <MoreVertical className="h-5 w-5" />
+                </Button>
+              </div>
 
-          return (
-            <section
-              key={s.id}
-              data-index={i}
-              className="snap-start min-h-[100svh] w-full flex items-center justify-center"
-            >
-              <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
-                {/* header */}
-                <div className="flex items-center justify-between p-3 border-b">
-                  <Link
-                    to={`/creator/${s.profile?.username || s.user_id}`}
-                    className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-                  >
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>{initialsFor(s)}</AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="text-sm font-semibold">{nameFor(s)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
-                      </p>
-                    </div>
-                  </Link>
-                  <Button size="icon" variant="ghost">
-                    <MoreVertical className="h-5 w-5" />
-                  </Button>
-                </div>
+              {/* video */}
+              <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
+                <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
+                <video
+                  ref={(el) => (videoRefs.current[i] = el)}
+                  src={s.video_url}
+                  poster={s.thumbnail_url ?? undefined}
+                  className="w-full h-full object-cover"
+                  playsInline
+                  muted={muted[i] ?? false}
+                  preload="metadata"
+                  onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
+                  onLoadedData={() => {
+                    const video = videoRefs.current[i];
+                    if (video && video.currentTime === 0) video.currentTime = 0.1;
+                  }}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
 
-                {/* video */}
-                <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
-                  <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
-                  <video
-                    ref={(el) => (videoRefs.current[i] = el)}
-                    src={s.video_url}
-                    poster={s.thumbnail_url ?? undefined}
-                    className="w-full h-full object-cover"
-                    playsInline
-                    muted={muted[i] ?? false}
-                    preload="metadata"
-                    onEnded={() => scrollTo(Math.min(i + 1, spliks.length - 1))}
-                    onLoadedData={() => {
-                      const video = videoRefs.current[i];
-                      if (video && video.currentTime === 0) video.currentTime = 0.1;
-                    }}
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-
-                  {/* Center play/pause controls */}
-                  <div
-                    className="absolute inset-0 flex items-center justify-center"
-                    onClick={() => handlePlayPause(i)}
-                  >
-                    {videoIsPlaying ? (
-                      shouldShowPauseButton && (
-                        <button
-                          aria-label="Pause"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handlePlayPause(i);
-                          }}
-                        >
-                          <Pause className="h-10 w-10 text-white drop-shadow-lg" />
-                        </button>
-                      )
-                    ) : (
+                {/* Center play/pause controls */}
+                <div
+                  className="absolute inset-0 flex items-center justify-center"
+                  onClick={() => handlePlayPause(i)}
+                >
+                  {videoIsPlaying ? (
+                    shouldShowPauseButton && (
                       <button
-                        aria-label="Play"
-                        className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
+                        aria-label="Pause"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4"
                         onClick={(e) => {
                           e.stopPropagation();
                           handlePlayPause(i);
                         }}
                       >
-                        <Play className="h-8 w-8 text-white ml-1" />
+                        <Pause className="h-10 w-10 text-white drop-shadow-lg" />
                       </button>
-                    )}
-                  </div>
-
-                  {/* mute toggle */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMute(i);
-                    }}
-                    className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
-                  >
-                    {muted[i] ? (
-                      <VolumeX className="h-4 w-4 text-white" />
-                    ) : (
-                      <Volume2 className="h-4 w-4 text-white" />
-                    )}
-                  </button>
-
-                  {/* title overlay */}
-                  {s.title && (
-                    <div className="absolute bottom-3 left-3 z-20">
-                      <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
-                        <p className="text-white text-sm font-medium truncate">{s.title}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* actions */}
-                <div className="p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => openComments(s)}
-                        className="hover:text-blue-500"
-                      >
-                        <MessageCircle className="h-6 w-6" />
-                      </Button>
-
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => {
-                          const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
-                          navigator.clipboard.writeText(url);
-                          toast({ title: "Link copied!" });
-                        }}
-                        className="hover:text-green-500"
-                      >
-                        <Share2 className="h-6 w-6" />
-                      </Button>
-                    </div>
-
-                    {/* Save / Saved with indicator */}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => toggleFavorite(s.id)}
-                      disabled={saving}
-                      className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
-                      aria-pressed={isSaved}
-                      aria-label={isSaved ? "Saved" : "Save"}
-                      title={isSaved ? "Saved" : "Save"}
+                    )
+                  ) : (
+                    <button
+                      aria-label="Play"
+                      className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePlayPause(i);
+                      }}
                     >
-                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
-                    </Button>
-                  </div>
-
-                  {/* caption */}
-                  {s.description && (
-                    <p className="text-sm">
-                      <span className="font-semibold mr-2">{nameFor(s)}</span>
-                      {s.description}
-                    </p>
+                      <Play className="h-8 w-8 text-white ml-1" />
+                    </button>
                   )}
                 </div>
 
-                {/* comments inline */}
-                {showCommentsFor === s.id && (
-                  <div className="px-3 pb-4">
-                    <div className="border-t pt-3 space-y-3">
-                      {loadingComments ? (
-                        <div className="text-sm text-muted-foreground">Loading…</div>
-                      ) : comments.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No comments yet</div>
-                      ) : (
-                        comments.map((c) => (
-                          <div key={c.id} className="text-sm">
-                            <span className="font-semibold mr-2">{c.profiles?.first_name || "User"}</span>
-                            {c.content}
-                          </div>
-                        ))
-                      )}
+                {/* mute toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleMute(i);
+                  }}
+                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
+                >
+                  {muted[i] ? (
+                    <VolumeX className="h-4 w-4 text-white" />
+                  ) : (
+                    <Volume2 className="h-4 w-4 text-white" />
+                  )}
+                </button>
 
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="Add a comment…"
-                          value={newComment}
-                          onChange={(e) => setNewComment(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && submitComment()}
-                        />
-                        <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
-                          <Send className="h-4 w-4" />
-                        </Button>
-                      </div>
+                {/* title overlay */}
+                {s.title && (
+                  <div className="absolute bottom-3 left-3 z-20">
+                    <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
+                      <p className="text-white text-sm font-medium truncate">{s.title}</p>
                     </div>
                   </div>
                 )}
-              </Card>
-            </section>
-          );
-        })}
-      </div>
+              </div>
+
+              {/* actions */}
+              <div className="p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => handleLike(s.id)}
+                      disabled={likePendingIds.has(s.id)}
+                      className={likedIds.has(s.id) ? "text-red-500 hover:text-red-600" : "hover:text-red-500"}
+                      aria-pressed={likedIds.has(s.id)}
+                      title={likedIds.has(s.id) ? "Unlike" : "Like"}
+                    >
+                      <Heart className={`h-6 w-6 ${likedIds.has(s.id) ? "fill-current" : ""}`} />
+                    </Button>
+
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => openComments(s)}
+                      className="hover:text-blue-500"
+                    >
+                      <MessageCircle className="h-6 w-6" />
+                    </Button>
+
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => {
+                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
+                        navigator.clipboard.writeText(url);
+                        toast({ title: "Link copied!" });
+                      }}
+                      className="hover:text-green-500"
+                    >
+                      <Share2 className="h-6 w-6" />
+                    </Button>
+                  </div>
+
+                  {/* Save / Saved with indicator */}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => toggleFavorite(s.id)}
+                    disabled={saving}
+                    className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                    aria-pressed={isSaved}
+                    aria-label={isSaved ? "Saved" : "Save"}
+                    title={isSaved ? "Saved" : "Save"}
+                  >
+                    {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                  </Button>
+                </div>
+
+                {/* caption */}
+                {s.description && (
+                  <p className="text-sm">
+                    <span className="font-semibold mr-2">{nameFor(s)}</span>
+                    {s.description}
+                  </p>
+                )}
+              </div>
+
+              {/* comments inline */}
+              {showCommentsFor === s.id && (
+                <div className="px-3 pb-4">
+                  <div className="border-t pt-3 space-y-3">
+                    {loadingComments ? (
+                      <div className="text-sm text-muted-foreground">Loading…</div>
+                    ) : comments.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">No comments yet</div>
+                    ) : (
+                      comments.map((c) => (
+                        <div key={c.id} className="text-sm">
+                          <span className="font-semibold mr-2">{c.profiles?.first_name || "User"}</span>
+                          {c.content}
+                        </div>
+                      ))
+                    )}
+
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Add a comment…"
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && submitComment()}
+                      />
+                      <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
+          </section>
+        );
+      })}
     </div>
   );
 }
