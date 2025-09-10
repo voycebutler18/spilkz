@@ -73,6 +73,31 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
+/** Normalize rows so UI never crashes on missing values */
+const normalizeSpliks = (rows: Splik[]): Splik[] =>
+  (rows ?? [])
+    .filter(Boolean)
+    .map((r) => ({
+      ...r,
+      likes_count: Number.isFinite(r?.likes_count as any) ? (r!.likes_count as number) : 0,
+      comments_count: Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
+      profile:
+        r.profile ?? {
+          id: r.user_id,
+          username: null,
+          display_name: null,
+          first_name: null,
+          last_name: null,
+          avatar_url: null,
+        },
+    }));
+
+/** Crypto backed random when available */
+const rand = () =>
+  typeof crypto !== "undefined" && (crypto as any).getRandomValues
+    ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
+    : Math.random();
+
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
@@ -123,7 +148,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         if (error) throw error;
 
-        const allVideos = [...((data as Splik[]) || [])];
+        // normalize first so the rest of the pipeline is safe
+        const allVideos = normalizeSpliks((data as Splik[]) || []);
 
         // session seen list
         const SEEN_KEY = "feed:seen-videos";
@@ -134,19 +160,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const pool = unseen.length > 0 ? unseen : allVideos;
         if (unseen.length === 0) sessionStorage.removeItem(SEEN_KEY);
 
-        // Fisher–Yates (crypto-backed)
+        // Fisher–Yates
         const list = [...pool];
-        const rand = () =>
-          typeof crypto !== "undefined" && (crypto as any).getRandomValues
-            ? (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32)
-            : Math.random();
-
         for (let i = list.length - 1; i > 0; i--) {
           const j = Math.floor(rand() * (i + 1));
           [list[i], list[j]] = [list[j], list[i]];
         }
 
-        // avoid repeating the same *first* card as last time
+        // avoid repeating the same first card as last time
         const LAST_FIRST_KEY = "feed:last-first-id";
         const prevFirst = sessionStorage.getItem(LAST_FIRST_KEY);
         if (list.length > 1 && prevFirst && list[0]?.id === prevFirst) {
@@ -205,7 +226,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const idx = initialScrollIndexRef.current;
     if (idx == null) return;
 
-    // allow one tick for DOM + observer to be ready
     const t = setTimeout(() => {
       const root = containerRef.current;
       if (!root) return;
@@ -279,7 +299,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
-        const index = Number((entry.target as HTMLElement).dataset.index);
+        const idxAttr = (entry.target as HTMLElement).dataset.index;
+        if (idxAttr == null) continue;
+
+        const index = Number(idxAttr);
+        if (!Number.isFinite(index) || index < 0 || index >= spliks.length) continue;
+
         const video = videoRefs.current[index];
         if (!video) continue;
 
@@ -305,8 +330,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) video.currentTime = startAt;
           };
-          // ensure we do not stack listeners
-          video.onplaying = video.onplaying; // no-op to keep TS happy
+          // remove any existing handler with the same reference then add once
           video.removeEventListener("timeupdate", onTimeUpdate);
           video.addEventListener("timeupdate", onTimeUpdate);
 
@@ -414,7 +438,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return ns;
     });
 
-    // optimistic counter change
+    // optimistic counter change (safe due to normalization)
     setSpliks((prev) =>
       prev.map((s) =>
         s.id === splikId
@@ -725,7 +749,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
+                        const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
