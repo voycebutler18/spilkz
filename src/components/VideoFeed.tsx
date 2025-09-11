@@ -1,5 +1,5 @@
 // src/components/ui/VideoFeed.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,9 @@ import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
+// NEW: use the prewarmed feed Splash stored
+import { useFeedStore } from "@/store/feedStore";
+
 /* ---------------- types ---------------- */
 interface Splik {
   id: string;
@@ -33,7 +36,8 @@ interface Splik {
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  likes_count?: number | null; // optional; present in many schemas
+  // optional counts Splash may attach (prevents "0 → real value" flash)
+  hype_count?: number;
   profile?: {
     id?: string;
     username?: string | null;
@@ -54,10 +58,6 @@ interface Comment {
 
 interface VideoFeedProps {
   user: any;
-  /** Prefetched feed from Splash/Home. If present, we render immediately and skip fetch. */
-  initialItems?: Splik[];
-  /** Optional prefetched favorites for the current user (array of splik ids). */
-  initialSavedIds?: string[];
 }
 
 /* ---------- helpers ---------- */
@@ -83,9 +83,6 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
       comments_count: Number.isFinite(r?.comments_count as any)
         ? (r!.comments_count as number)
         : 0,
-      likes_count: Number.isFinite(r?.likes_count as any)
-        ? (r!.likes_count as number)
-        : (r as any)?.hype_count ?? 0,
       profile:
         r.profile ?? {
           id: r.user_id,
@@ -117,16 +114,15 @@ const shuffle = <T,>(arr: T[]) => {
 
 /* =================================================================== */
 
-export default function VideoFeed({ user, initialItems, initialSavedIds }: VideoFeedProps) {
+export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
 
-  const [spliks, setSpliks] = useState<Splik[]>(() => normalizeSpliks(initialItems || []));
-  const [loading, setLoading] = useState<boolean>(() => !(initialItems && initialItems.length));
+  const [spliks, setSpliks] = useState<Splik[]>([]);
+  // loading only covers the *first paint*. If we have cache, we skip it.
+  const [loading, setLoading] = useState(true);
 
   // favorites UI
-  const [savedIds, setSavedIds] = useState<Set<string>>(
-    () => new Set(initialSavedIds || [])
-  );
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
   const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
@@ -145,39 +141,69 @@ export default function VideoFeed({ user, initialItems, initialSavedIds }: Video
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  /* --------- hydrate immediately when initialItems exist; else fetch --------- */
+  // pull any prewarmed feed the Splash page left in the store/session
+  const { feed: storeFeed } = useFeedStore();
+
+  // Try store → sessionStorage → network (only if needed)
   useEffect(() => {
-    const initPlayers = (items: Splik[]) => {
+    let cancelled = false;
+
+    // helper to set UI state consistently
+    const primeUI = (rows: Splik[]) => {
+      const ordered = rows;
+      // init player UI
       const mutedState: Record<number, boolean> = {};
       const pauseState: Record<number, boolean> = {};
-      items.forEach((_, index) => {
+      ordered.forEach((_, index) => {
         mutedState[index] = false;
         pauseState[index] = true;
       });
       setMuted(mutedState);
       setShowPauseButton(pauseState);
+
+      // force DOM reorder + scroll top
       setOrderEpoch((e) => e + 1);
       containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
     };
 
-    // If Splash provided the feed, use it and skip fetch
-    if (initialItems && initialItems.length) {
-      const provided = normalizeSpliks(initialItems);
-      setSpliks(provided);
-      initPlayers(provided);
-      setLoading(false);
-      return;
-    }
+    const hydrateFromCacheIfPossible = (): Splik[] | null => {
+      // 1) Zustand store (set by Splash)
+      if (Array.isArray(storeFeed) && storeFeed.length > 0) {
+        return normalizeSpliks(storeFeed as Splik[]);
+      }
+      // 2) session cache (set by Splash)
+      try {
+        const raw = sessionStorage.getItem("feed:cached");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length) {
+            return normalizeSpliks(parsed as Splik[]);
+          }
+        }
+      } catch {}
+      return null;
+    };
 
-    // Fallback: legacy self-fetch
     const load = async () => {
+      // First try cache for instant paint
+      const cached = hydrateFromCacheIfPossible();
+      if (cached && !cancelled) {
+        setSpliks(cached);
+        setLoading(false);
+        primeUI(cached);
+        // We still refresh in the background for staleness, but UI is ready.
+        backgroundRefresh();
+        return;
+      }
+
+      // No cache? do the network fetch (original behavior)
       setLoading(true);
       try {
         const { data, error } = await supabase
           .from("spliks")
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end, created_at, likes_count, comments_count,
+            trim_start, trim_end, created_at,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
@@ -186,37 +212,36 @@ export default function VideoFeed({ user, initialItems, initialSavedIds }: Video
         if (error) throw error;
 
         const all = normalizeSpliks((data as Splik[]) || []);
-        let ordered = shuffle(all);
-
-        // Ensure the first video differs from the previous refresh
-        const LAST_FIRST_KEY = "feed:last-first-id";
-        const prevFirstId = sessionStorage.getItem(LAST_FIRST_KEY);
-        if (ordered.length > 1 && prevFirstId && ordered[0]?.id === prevFirstId) {
-          const j = 1 + Math.floor(cRandom() * (ordered.length - 1));
-          [ordered[0], ordered[j]] = [ordered[j], ordered[0]];
-        }
-        if (ordered[0]) sessionStorage.setItem(LAST_FIRST_KEY, ordered[0].id);
+        const ordered = shuffle(all);
 
         setSpliks(ordered);
-        initPlayers(ordered);
+        primeUI(ordered);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
 
-        // preload favorites for this user only if not prefetched
-        if (user?.id && !(initialSavedIds && initialSavedIds.length)) {
+    const backgroundRefresh = async () => {
+      // Keep your existing behavior (e.g., favorites preload) but avoid jank
+      try {
+        if (user?.id) {
           const { data: favs } = await supabase
             .from("favorites")
             .select("splik_id")
             .eq("user_id", user.id);
           if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
+      } catch {}
     };
 
     load();
-  }, [user?.id, initialItems, initialSavedIds]);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, storeFeed]);
 
   /* ---------- favorites realtime for this user ---------- */
   useEffect(() => {
@@ -245,7 +270,9 @@ export default function VideoFeed({ user, initialItems, initialSavedIds }: Video
         }
       )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [user?.id]);
 
   // Mute all other videos
@@ -456,12 +483,13 @@ export default function VideoFeed({ user, initialItems, initialSavedIds }: Video
     }
 
     setNewComment("");
-    const splik = spliks.find((s) => s.id === showCommentsFor);
+    const splik = spliks.find((sx) => sx.id === showCommentsFor);
     if (splik) openComments(splik);
   };
 
   /* ------------------------------ UI ------------------------------ */
-  if (loading) {
+  if (loading && spliks.length === 0) {
+    // Only show this if there was truly nothing cached
     return (
       <div className="flex justify-center items-center min-h-[40vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
