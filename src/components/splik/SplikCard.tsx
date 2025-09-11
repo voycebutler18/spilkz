@@ -1,4 +1,4 @@
-// src/components/SplikCard.tsx (or wherever this component lives)
+// src/components/SplikCard.tsx
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -44,7 +44,7 @@ type Splik = {
   video_url: string;
   thumbnail_url?: string | null;
 
-  // counters (seeded from "spliks" row if you selected them)
+  // counters (seeded from "spliks" row if selected)
   hype_score?: number | null;
   hype_givers?: number | null;
   comments_count?: number | null;
@@ -119,7 +119,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [hypeScore, setHypeScore] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
 
-  // comments counter (badge)
+  // comments badge
   const [commentsCount, setCommentsCount] = useState<number>(
     toNum(splik.comments_count, 0)
   );
@@ -287,7 +287,7 @@ export default function SplikCard(props: SplikCardProps) {
     }
   }, [load]);
 
-  /* ---------- user state + realtime ---------- */
+  /* ---------- user state + realtime (single source of truth) ---------- */
   useEffect(() => {
     let mounted = true;
 
@@ -321,8 +321,8 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // Realtime counters from spliks row (if you maintain them via triggers)
-      const chSpliks = supabase
+      // ✅ Only one realtime source: counters maintained on the `spliks` row.
+      const ch = supabase
         .channel(`spliks-${splik.id}-counters`)
         .on(
           "postgres_changes",
@@ -336,42 +336,20 @@ export default function SplikCard(props: SplikCardProps) {
         )
         .subscribe();
 
-      // Direct realtime deltas (works even without triggers)
-      const chLive = supabase
-        .channel(`splik-${splik.id}-live`)
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "hype_reactions", event: "INSERT", filter: `splik_id=eq.${splik.id}` },
-          () => { setHypeScore((x) => x + 1); setHypeGivers((x) => x + 1); }
-        )
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "hype_reactions", event: "DELETE", filter: `splik_id=eq.${splik.id}` },
-          () => { setHypeScore((x) => Math.max(0, x - 1)); setHypeGivers((x) => Math.max(0, x - 1)); }
-        )
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "comments", event: "INSERT", filter: `splik_id=eq.${splik.id}` },
-          () => { setCommentsCount((x) => x + 1); }
-        )
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "comments", event: "DELETE", filter: `splik_id=eq.${splik.id}` },
-          () => { setCommentsCount((x) => Math.max(0, x - 1)); }
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(chSpliks);
-        supabase.removeChannel(chLive);
-      };
+      return () => { supabase.removeChannel(ch); };
     })();
 
     return () => { mounted = false; };
   }, [splik.id]);
 
-  /* ---------- Safety net recount on close ---------- */
+  /* ---------- Comments helpers ---------- */
+  const handleCommentDelta = (delta: number) => {
+    // optimistic bump from modal; spliks UPDATE will later set the exact value
+    setCommentsCount((c) => Math.max(0, c + delta));
+  };
+
   const recountComments = async () => {
+    // safety net on close
     const { count, error } = await supabase
       .from("comments")
       .select("*", { count: "exact", head: true })
@@ -393,6 +371,7 @@ export default function SplikCard(props: SplikCardProps) {
     }
 
     if (!isHyped) {
+      // optimistic +
       setIsHyped(true);
       setHypeScore((x) => x + 1);
       setHypeGivers((x) => x + 1);
@@ -405,12 +384,14 @@ export default function SplikCard(props: SplikCardProps) {
           );
         onSplik?.();
       } catch {
+        // revert
         setIsHyped(false);
         setHypeScore((x) => Math.max(0, x - 1));
         setHypeGivers((x) => Math.max(0, x - 1));
         toast({ title: "Error", description: "Failed to hype", variant: "destructive" });
       }
     } else {
+      // optimistic -
       setIsHyped(false);
       setHypeScore((x) => Math.max(0, x - 1));
       setHypeGivers((x) => Math.max(0, x - 1));
@@ -422,6 +403,7 @@ export default function SplikCard(props: SplikCardProps) {
           .eq("splik_id", splik.id);
         onSplik?.();
       } catch {
+        // revert
         setIsHyped(true);
         setHypeScore((x) => x + 1);
         setHypeGivers((x) => x + 1);
@@ -674,7 +656,7 @@ export default function SplikCard(props: SplikCardProps) {
 
         {/* ACTIONS */}
         <div className="flex items-center justify-between gap-1">
-          {/* Hype (one per user) */}
+          {/* Hype */}
           <Button
             variant="ghost"
             size="sm"
@@ -779,15 +761,12 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showCommentsModal}
         onClose={() => {
           setShowCommentsModal(false);
-          // safety net recount if realtime is off
-          recountComments();
+          recountComments(); // safety net
         }}
         splikId={splik.id}
         splikTitle={splik.title}
-        // ✅ This is the correct prop to keep the badge in sync
-        onCountDelta={(delta) =>
-          setCommentsCount((c) => Math.max(0, c + delta))
-        }
+        // ✅ single place to bump without double counting
+        onCountDelta={handleCommentDelta}
       />
 
       <ReportModal
