@@ -118,7 +118,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [hypeScore, setHypeScore] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
 
-  // comments counter
+  // comments counter (this is the badge you see)
   const [commentsCount, setCommentsCount] = useState<number>(
     toNum(splik.comments_count, 0)
   );
@@ -136,6 +136,9 @@ export default function SplikCard(props: SplikCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
   const countersHydratedRef = useRef(false);
+
+  // live comments channel (to close when modal closes / card unmounts)
+  const commentsChRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -320,7 +323,7 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // 1) Realtime counters from spliks row (if you have triggers)
+      // Realtime counters from spliks row (if you have triggers that maintain them)
       const chSpliks = supabase
         .channel(`spliks-${splik.id}-counters`)
         .on(
@@ -335,7 +338,7 @@ export default function SplikCard(props: SplikCardProps) {
         )
         .subscribe();
 
-      // 2) Realtime direct deltas (works even without triggers)
+      // Direct realtime deltas on comments/hype (works even without triggers)
       const chLive = supabase
         .channel(`splik-${splik.id}-live`)
         .on(
@@ -369,6 +372,27 @@ export default function SplikCard(props: SplikCardProps) {
     return () => { mounted = false; };
   }, [splik.id]);
 
+  /* ---------- Comments modal helpers ---------- */
+
+  // called when user posts inside CommentsModal (optimistic + live)
+  const handleCommentPosted = () => {
+    setCommentsCount((c) => c + 1);
+  };
+
+  // called when a comment is removed inside CommentsModal
+  const handleCommentDeleted = () => {
+    setCommentsCount((c) => Math.max(0, c - 1));
+  };
+
+  // recount on close as a safety net (if realtime is off on your table)
+  const recountComments = async () => {
+    const { count, error } = await supabase
+      .from("comments")
+      .select("*", { count: "exact", head: true })
+      .eq("splik_id", splik.id);
+    if (!error) setCommentsCount(count ?? 0);
+  };
+
   /* ---------- Hype toggle (one per user) ---------- */
   const toggleHype = async (e?: any) => {
     e?.stopPropagation?.();
@@ -383,7 +407,6 @@ export default function SplikCard(props: SplikCardProps) {
     }
 
     if (!isHyped) {
-      // optimistic +
       setIsHyped(true);
       setHypeScore((x) => x + 1);
       setHypeGivers((x) => x + 1);
@@ -396,14 +419,12 @@ export default function SplikCard(props: SplikCardProps) {
           );
         onSplik?.();
       } catch {
-        // revert
         setIsHyped(false);
         setHypeScore((x) => Math.max(0, x - 1));
         setHypeGivers((x) => Math.max(0, x - 1));
         toast({ title: "Error", description: "Failed to hype", variant: "destructive" });
       }
     } else {
-      // optimistic -
       setIsHyped(false);
       setHypeScore((x) => Math.max(0, x - 1));
       setHypeGivers((x) => Math.max(0, x - 1));
@@ -415,7 +436,6 @@ export default function SplikCard(props: SplikCardProps) {
           .eq("splik_id", splik.id);
         onSplik?.();
       } catch {
-        // revert
         setIsHyped(true);
         setHypeScore((x) => x + 1);
         setHypeGivers((x) => x + 1);
@@ -694,6 +714,14 @@ export default function SplikCard(props: SplikCardProps) {
             onClick={() => {
               setShowCommentsModal(true);
               onReact?.();
+
+              // set up a realtime channel per open to keep list fresh if you like;
+              // here we only rely on card-level subscriptions + optimistic bump.
+              if (commentsChRef.current) {
+                try { supabase.removeChannel(commentsChRef.current); } catch {}
+                commentsChRef.current = null;
+              }
+              commentsChRef.current = supabase.channel(`comments-open-${splik.id}`);
             }}
             className="flex items-center gap-2 hover:text-blue-500"
           >
@@ -771,9 +799,15 @@ export default function SplikCard(props: SplikCardProps) {
 
       <CommentsModal
         isOpen={showCommentsModal}
-        onClose={() => setShowCommentsModal(false)}
+        onClose={() => {
+          setShowCommentsModal(false);
+          recountComments(); // safety net
+        }}
         splikId={splik.id}
         splikTitle={splik.title}
+        /* NEW: tell the card that a comment was added/removed */
+        onPosted={handleCommentPosted}
+        onDeleted={handleCommentDeleted}
       />
 
       <ReportModal
