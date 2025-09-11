@@ -1,0 +1,14 @@
+src/
+  components/
+    prayers/
+      PrayerCard.tsx
+      AmenButton.tsx
+      ReplyList.tsx
+      PrayerComposer.tsx
+  pages/
+    Prayers.tsx
+    PrayerDetail.tsx
+    PrayersTag.tsx
+    PrayersSearch.tsx
+  lib/
+    prayers.ts
