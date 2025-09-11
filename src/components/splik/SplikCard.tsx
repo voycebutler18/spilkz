@@ -1,3 +1,4 @@
+// src/components/SplikCard.tsx (or wherever this component lives)
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -118,7 +119,7 @@ export default function SplikCard(props: SplikCardProps) {
   const [hypeScore, setHypeScore] = useState<number>(toNum(splik.hype_score, 0));
   const [hypeGivers, setHypeGivers] = useState<number>(toNum(splik.hype_givers, 0));
 
-  // comments counter (this is the badge you see)
+  // comments counter (badge)
   const [commentsCount, setCommentsCount] = useState<number>(
     toNum(splik.comments_count, 0)
   );
@@ -136,9 +137,6 @@ export default function SplikCard(props: SplikCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const primedRef = useRef(false);
   const countersHydratedRef = useRef(false);
-
-  // live comments channel (to close when modal closes / card unmounts)
-  const commentsChRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const { isMobile } = useDeviceType();
   const { toast } = useToast();
@@ -323,7 +321,7 @@ export default function SplikCard(props: SplikCardProps) {
         setIsSaved(false);
       }
 
-      // Realtime counters from spliks row (if you have triggers that maintain them)
+      // Realtime counters from spliks row (if you maintain them via triggers)
       const chSpliks = supabase
         .channel(`spliks-${splik.id}-counters`)
         .on(
@@ -338,7 +336,7 @@ export default function SplikCard(props: SplikCardProps) {
         )
         .subscribe();
 
-      // Direct realtime deltas on comments/hype (works even without triggers)
+      // Direct realtime deltas (works even without triggers)
       const chLive = supabase
         .channel(`splik-${splik.id}-live`)
         .on(
@@ -372,19 +370,7 @@ export default function SplikCard(props: SplikCardProps) {
     return () => { mounted = false; };
   }, [splik.id]);
 
-  /* ---------- Comments modal helpers ---------- */
-
-  // called when user posts inside CommentsModal (optimistic + live)
-  const handleCommentPosted = () => {
-    setCommentsCount((c) => c + 1);
-  };
-
-  // called when a comment is removed inside CommentsModal
-  const handleCommentDeleted = () => {
-    setCommentsCount((c) => Math.max(0, c - 1));
-  };
-
-  // recount on close as a safety net (if realtime is off on your table)
+  /* ---------- Safety net recount on close ---------- */
   const recountComments = async () => {
     const { count, error } = await supabase
       .from("comments")
@@ -714,14 +700,6 @@ export default function SplikCard(props: SplikCardProps) {
             onClick={() => {
               setShowCommentsModal(true);
               onReact?.();
-
-              // set up a realtime channel per open to keep list fresh if you like;
-              // here we only rely on card-level subscriptions + optimistic bump.
-              if (commentsChRef.current) {
-                try { supabase.removeChannel(commentsChRef.current); } catch {}
-                commentsChRef.current = null;
-              }
-              commentsChRef.current = supabase.channel(`comments-open-${splik.id}`);
             }}
             className="flex items-center gap-2 hover:text-blue-500"
           >
@@ -801,13 +779,15 @@ export default function SplikCard(props: SplikCardProps) {
         isOpen={showCommentsModal}
         onClose={() => {
           setShowCommentsModal(false);
-          recountComments(); // safety net
+          // safety net recount if realtime is off
+          recountComments();
         }}
         splikId={splik.id}
         splikTitle={splik.title}
-        /* NEW: tell the card that a comment was added/removed */
-        onPosted={handleCommentPosted}
-        onDeleted={handleCommentDeleted}
+        // ✅ This is the correct prop to keep the badge in sync
+        onCountDelta={(delta) =>
+          setCommentsCount((c) => Math.max(0, c + delta))
+        }
       />
 
       <ReportModal
