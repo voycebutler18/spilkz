@@ -103,6 +103,68 @@ export default function PrayerCard({
   );
 }
 
+/** Amen button – simplified version */
+function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
+  const navigate = useNavigate();
+  const [count, setCount] = useState(initialCount);
+  const [busy, setBusy] = useState(false);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setAuthed(!!s)
+    );
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+
+  const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!authed) {
+      navigate("/login");
+      return;
+    }
+    
+    if (busy) return;
+
+    setBusy(true);
+    try {
+      console.log("Attempting to amen prayer:", id);
+      const result = await amenPrayer(id);
+      console.log("Amen result:", result);
+      
+      if (result.inserted) {
+        setCount(prev => prev + 1);
+        console.log("Amen successful, count incremented");
+      } else {
+        console.log("Already amened or duplicate");
+      }
+    } catch (err) {
+      console.error("Error amening prayer:", err);
+      alert("Error adding amen. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onTap}
+      disabled={busy}
+      aria-label="Amen"
+      title={!authed ? "Log in to Amen" : busy ? "Processing..." : "Amen"}
+      type="button"
+      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]"
+    >
+      🙏 <span className="ml-2">{count}</span>
+    </Button>
+  );
+}
+
 /** Inline Reply list */
 function ReplyListInline({
   prayerId,
