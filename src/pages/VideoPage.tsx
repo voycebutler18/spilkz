@@ -91,7 +91,7 @@ export default function VideoPage() {
         <div>
           <h1 className="text-5xl font-bold mb-2">404</h1>
           <p className="mb-4">Oops! This video doesn’t exist or isn’t public.</p>
-          <Link to="/" className="underline">
+          <Link to="/home" className="underline">
             Back to Home
           </Link>
         </div>
@@ -103,7 +103,7 @@ export default function VideoPage() {
     <>
       <Header />
       <main className="container py-6">
-        {/* SplikCard: comments removed version (hype / share / save) */}
+        {/* SplikCard: comments-removed variant */}
         <SplikCard splik={splik} />
       </main>
       <Footer />
