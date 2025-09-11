@@ -33,6 +33,7 @@ interface Splik {
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
+  likes_count?: number | null; // optional; present in many schemas
   profile?: {
     id?: string;
     username?: string | null;
@@ -53,6 +54,10 @@ interface Comment {
 
 interface VideoFeedProps {
   user: any;
+  /** Prefetched feed from Splash/Home. If present, we render immediately and skip fetch. */
+  initialItems?: Splik[];
+  /** Optional prefetched favorites for the current user (array of splik ids). */
+  initialSavedIds?: string[];
 }
 
 /* ---------- helpers ---------- */
@@ -78,6 +83,9 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
       comments_count: Number.isFinite(r?.comments_count as any)
         ? (r!.comments_count as number)
         : 0,
+      likes_count: Number.isFinite(r?.likes_count as any)
+        ? (r!.likes_count as number)
+        : (r as any)?.hype_count ?? 0,
       profile:
         r.profile ?? {
           id: r.user_id,
@@ -109,14 +117,16 @@ const shuffle = <T,>(arr: T[]) => {
 
 /* =================================================================== */
 
-export default function VideoFeed({ user }: VideoFeedProps) {
+export default function VideoFeed({ user, initialItems, initialSavedIds }: VideoFeedProps) {
   const { toast } = useToast();
 
-  const [spliks, setSpliks] = useState<Splik[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [spliks, setSpliks] = useState<Splik[]>(() => normalizeSpliks(initialItems || []));
+  const [loading, setLoading] = useState<boolean>(() => !(initialItems && initialItems.length));
 
   // favorites UI
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedIds, setSavedIds] = useState<Set<string>>(
+    () => new Set(initialSavedIds || [])
+  );
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
   const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
@@ -135,8 +145,31 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  /* --------- load + pure shuffle every time (no pinning) --------- */
+  /* --------- hydrate immediately when initialItems exist; else fetch --------- */
   useEffect(() => {
+    const initPlayers = (items: Splik[]) => {
+      const mutedState: Record<number, boolean> = {};
+      const pauseState: Record<number, boolean> = {};
+      items.forEach((_, index) => {
+        mutedState[index] = false;
+        pauseState[index] = true;
+      });
+      setMuted(mutedState);
+      setShowPauseButton(pauseState);
+      setOrderEpoch((e) => e + 1);
+      containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
+    };
+
+    // If Splash provided the feed, use it and skip fetch
+    if (initialItems && initialItems.length) {
+      const provided = normalizeSpliks(initialItems);
+      setSpliks(provided);
+      initPlayers(provided);
+      setLoading(false);
+      return;
+    }
+
+    // Fallback: legacy self-fetch
     const load = async () => {
       setLoading(true);
       try {
@@ -144,7 +177,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           .from("spliks")
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end, created_at,
+            trim_start, trim_end, created_at, likes_count, comments_count,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
@@ -165,29 +198,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (ordered[0]) sessionStorage.setItem(LAST_FIRST_KEY, ordered[0].id);
 
         setSpliks(ordered);
+        initPlayers(ordered);
 
-        // init player UI
-        const mutedState: Record<number, boolean> = {};
-        const pauseState: Record<number, boolean> = {};
-        ordered.forEach((_, index) => {
-          mutedState[index] = false;
-          pauseState[index] = true;
-        });
-        setMuted(mutedState);
-        setShowPauseButton(pauseState);
-
-        // preload favorites for this user
-        if (user?.id) {
+        // preload favorites for this user only if not prefetched
+        if (user?.id && !(initialSavedIds && initialSavedIds.length)) {
           const { data: favs } = await supabase
             .from("favorites")
             .select("splik_id")
             .eq("user_id", user.id);
           if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
-
-        // force DOM reorder + scroll top
-        setOrderEpoch((e) => e + 1);
-        containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
       } catch (e) {
         console.error(e);
       } finally {
@@ -196,7 +216,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
 
     load();
-  }, [user?.id]);
+  }, [user?.id, initialItems, initialSavedIds]);
 
   /* ---------- favorites realtime for this user ---------- */
   useEffect(() => {
