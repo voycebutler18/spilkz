@@ -80,8 +80,8 @@ export default function PrayersPage() {
   type FaithOption = {
     key: string;
     label: string;
-    religionRegex: string; // OSM “religion”
-    denomRegex?: string;   // OSM “denomination” or appears in name/brand
+    religionRegex: string; // OSM "religion"
+    denomRegex?: string;   // OSM "denomination" or appears in name/brand
   };
 
   const FAITH_OPTIONS: FaithOption[] = [
@@ -106,7 +106,7 @@ export default function PrayersPage() {
     { key: "christian_christian_science", label: "Christian – Christian Science", religionRegex: "christian", denomRegex: "christian[_ ]science" },
     { key: "christian_unitarian", label: "Christian – Unitarian Universalist", religionRegex: "christian|unitarian", denomRegex: "unitarian|uu" },
     { key: "christian_lds", label: "Christian – Latter-day Saints (Mormon)", religionRegex: "christian|mormon", denomRegex: "lds|latter[_ ]day|mormon" },
-    { key: "christian_jehovah", label: "Christian – Jehovah’s Witnesses", religionRegex: "christian", denomRegex: "jehovah" },
+    { key: "christian_jehovah", label: "Christian – Jehovah's Witnesses", religionRegex: "christian", denomRegex: "jehovah" },
 
     // Islam
     { key: "muslim_any", label: "Muslim (Any)", religionRegex: "muslim|islam" },
@@ -132,7 +132,7 @@ export default function PrayersPage() {
     { key: "jain", label: "Jain", religionRegex: "jain" },
     { key: "taoist", label: "Taoist", religionRegex: "taoist|daoist" },
     { key: "shinto", label: "Shinto", religionRegex: "shinto" },
-    { key: "bahai", label: "Bahá’í", religionRegex: "bahai|bahá" },
+    { key: "bahai", label: "Bahá'í", religionRegex: "bahai|bahá" },
     { key: "zoroastrian", label: "Zoroastrian", religionRegex: "zoroastrian|parsi" },
     { key: "spiritualist", label: "Spiritualist", religionRegex: "spiritualist" },
     { key: "animist", label: "Traditional / Animist", religionRegex: "animist|traditional|ethnic" },
@@ -147,7 +147,7 @@ export default function PrayersPage() {
   const [locationQuery, setLocationQuery] = useState("");
   const [distanceKey, setDistanceKey] = useState<DistanceKey>("5mi");
 
-  // start broad to avoid “no results”
+  // start broad to avoid "no results"
   const [faithFilter, setFaithFilter] = useState<string>("christian_any");
   const [faithSearch, setFaithSearch] = useState("");
 
@@ -465,7 +465,7 @@ export default function PrayersPage() {
 
       // 3) if still empty & denominational → broaden to religion-only
       if (!elements.length && faith.denomRegex) {
-        setBroadenNote(`No exact matches for “${faith.label}”. Broadened to ${faith.religionRegex === "christian" ? "Christian (Any)" : "religion only"}.`);
+        setBroadenNote(`No exact matches for "${faith.label}". Broadened to ${faith.religionRegex === "christian" ? "Christian (Any)" : "religion only"}.`);
         json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, undefined, true));
         elements = json.elements || [];
         if (!elements.length) {
@@ -569,7 +569,7 @@ export default function PrayersPage() {
 
       {!error && !loading && items.length === 0 && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
-          No posts yet. If you’ve added some and don’t see them, check env vars and RLS.
+          No posts yet. If you've added some and don't see them, check env vars and RLS.
         </div>
       )}
 
@@ -602,20 +602,20 @@ export default function PrayersPage() {
           if (!open) resetFinder();
         }}
       >
-        {/* Full-screen on phones, normal dialog on desktop; include safe-area paddings */}
+        {/* Fixed full-screen dialog with proper mobile scrolling */}
         <DialogContent
           className="
             sm:max-w-3xl sm:max-h-[90vh] sm:rounded-3xl
-            w-screen h-screen max-w-none rounded-none m-0 p-0
-            pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]
-            pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]
-            bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl
+            fixed inset-0 w-full h-full max-w-none rounded-none m-0 p-0
+            bg-slate-900/95 backdrop-blur-2xl border-0 sm:border sm:border-white/20 shadow-2xl
+            overflow-hidden
           "
         >
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
           <div className="relative z-10 flex flex-col h-full">
-            <DialogHeader className="space-y-2 sm:space-y-4 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10">
+            {/* Fixed Header */}
+            <DialogHeader className="flex-shrink-0 space-y-2 sm:space-y-4 px-4 sm:px-6 pt-6 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10 bg-slate-900/90 backdrop-blur-xl">
               <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl">
                 <div className="relative">
                   <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
@@ -632,8 +632,9 @@ export default function PrayersPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <div className="relative z-10 flex-1 overflow-y-auto">
-              <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6">
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto overscroll-behavior-y-contain">
+              <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-20">
                 {/* Location */}
                 <div className="space-y-3">
                   <label className="text-white font-semibold text-base sm:text-lg flex items-center gap-2">
@@ -677,7 +678,7 @@ export default function PrayersPage() {
                 </div>
 
                 {/* Distance + Faith */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
                   <div className="space-y-2">
                     <label className="text-white font-semibold text-base">Search radius</label>
                     <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
@@ -694,7 +695,7 @@ export default function PrayersPage() {
                     </Select>
                   </div>
 
-                  <div className="md:col-span-2 space-y-2">
+                  <div className="lg:col-span-2 space-y-2">
                     <label className="text-white font-semibold text-base">Faith / Denomination</label>
                     <div className="rounded-xl border border-white/20 bg-white/10 backdrop-blur-xl p-3">
                       <Input
@@ -703,14 +704,14 @@ export default function PrayersPage() {
                         onChange={(e) => setFaithSearch(e.target.value)}
                         className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
                       />
-                      <div className="max-h-52 overflow-y-auto pr-1">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain pr-1">
+                        <div className="grid grid-cols-1 gap-2">
                           {filteredFaithOptions.map((opt) => (
                             <button
                               key={opt.key}
                               type="button"
                               onClick={() => setFaithFilter(opt.key)}
-                              className={`text-left px-3 py-2 rounded-lg border text-sm sm:text-base ${
+                              className={`text-left px-3 py-3 rounded-lg border text-sm sm:text-base transition-all duration-200 ${
                                 faithFilter === opt.key
                                   ? "border-purple-400 bg-purple-400/20 text-white"
                                   : "border-white/10 hover:bg-white/10 text-gray-200"
@@ -725,13 +726,13 @@ export default function PrayersPage() {
                   </div>
                 </div>
 
-                {/* CTA */}
-                <div className="flex justify-center pt-1">
+                {/* Search Button */}
+                <div className="flex justify-center pt-2">
                   <Button
                     onClick={runNearbySearch}
                     disabled={fetchingNearby || (!coords && !locationQuery.trim())}
                     className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
-                               w-full sm:w-auto px-6 py-3 text-base rounded-2xl shadow-2xl"
+                               w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
                   >
                     <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                     <div className="relative flex items-center gap-3 justify-center">
@@ -741,6 +742,7 @@ export default function PrayersPage() {
                   </Button>
                 </div>
 
+                {/* Status Messages */}
                 {broadenNote && !nearbyError && (
                   <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-500/30 text-amber-200 text-sm">
                     {broadenNote}
@@ -754,7 +756,7 @@ export default function PrayersPage() {
                 )}
 
                 {(fetchingNearby || enriching) && (
-                  <div className="flex items-center gap-3 text-purple-200 text-sm sm:text-base">
+                  <div className="flex items-center gap-3 text-purple-200 text-sm sm:text-base justify-center">
                     <Loader2 className="h-5 w-5 animate-spin" />
                     {fetchingNearby ? "Searching for places of worship…" : "Adding street addresses…"}
                   </div>
@@ -762,43 +764,49 @@ export default function PrayersPage() {
 
                 {/* Results */}
                 {!fetchingNearby && nearby.length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="text-white text-base sm:text-lg font-semibold">Found {nearby.length} nearby</h3>
-                    <div className="max-h-[50vh] sm:max-h-80 overflow-y-auto rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl">
-                      {nearby.map((place) => (
-                        <div
-                          key={place.id}
-                          className="flex items-center justify-between gap-3 p-4 border-b border-white/10 last:border-b-0 hover:bg-white/5 transition-all duration-300"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-white font-semibold text-[15px] sm:text-base truncate">{place.name}</div>
-                            <div className="text-gray-300 text-sm leading-snug line-clamp-2">
-                              {place.address}
-                            </div>
-                            <div className="text-yellow-300 text-xs sm:text-sm font-medium mt-1">
-                              {prettyDistance(place.distanceKm)} away
-                            </div>
-                          </div>
-                          <a
-                            href={`https://www.google.com/maps?q=${encodeURIComponent(
-                              place.name + " " + (place.address || "")
-                            )}&ll=${place.lat},${place.lon}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg"
-                            title="Open in Google Maps"
+                  <div className="space-y-4">
+                    <h3 className="text-white text-lg sm:text-xl font-semibold">Found {nearby.length} nearby</h3>
+                    <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
+                      <div className="max-h-[60vh] overflow-y-auto overscroll-behavior-y-contain">
+                        {nearby.map((place, index) => (
+                          <div
+                            key={place.id}
+                            className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
+                              index !== nearby.length - 1 ? 'border-b border-white/10' : ''
+                            }`}
                           >
-                            <span>View</span>
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
-                        </div>
-                      ))}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
+                                {place.name}
+                              </div>
+                              <div className="text-gray-300 text-sm leading-relaxed line-clamp-2 mb-2">
+                                {place.address}
+                              </div>
+                              <div className="text-yellow-300 text-sm font-medium">
+                                {prettyDistance(place.distanceKm)} away
+                              </div>
+                            </div>
+                            <a
+                              href={`https://www.google.com/maps?q=${encodeURIComponent(
+                                place.name + " " + (place.address || "")
+                              )}&ll=${place.lat},${place.lon}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
+                              title="Open in Google Maps"
+                            >
+                              <span className="hidden sm:inline">View</span>
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
-                  <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-sm sm:text-base">
+                  <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-base">
                     No results found. Try a larger radius or a different denomination.
                   </div>
                 )}
