@@ -1,10 +1,11 @@
+// src/lib/prayers.ts
 import { supabase } from "@/integrations/supabase/client";
 
 export type PrayerType = "request" | "testimony" | "quote";
 
 export type Prayer = {
   id: string;
-  author: string;
+  author: string;                 // <— REQUIRED for ownership checks
   type: PrayerType;
   body: string;
   tags: string[] | null;
@@ -14,85 +15,75 @@ export type Prayer = {
   created_at: string;
 };
 
-export async function createPrayer(type: PrayerType, body: string, tags: string[] = []) {
-  if (body.length < 1 || body.length > 5000) throw new Error("Body must be 1–5000 chars");
+// Create
+export async function createPrayer(type: PrayerType, body: string): Promise<Prayer> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
-  const { data, error } = await supabase.from("prayers")
-    .insert({ author: user.id, type, body, tags })
-    .select()
+
+  const { data, error } = await supabase
+    .from("prayers")
+    .insert({
+      author: user.id,            // <— make sure author is set
+      type,
+      body: body.trim(),
+    })
+    .select("id, author, type, body, tags, amen_count, reply_count, answered, created_at")
     .single();
+
   if (error) throw error;
   return data as Prayer;
 }
 
-export async function fetchPrayers(opts: { cursor?: string; tag?: string; q?: string } = {}) {
-  let query = supabase
+// List (paged by created_at desc)
+export async function fetchPrayers({ cursor }: { cursor?: string }): Promise<Prayer[]> {
+  let q = supabase
     .from("prayers")
     .select("id, author, type, body, tags, amen_count, reply_count, answered, created_at")
     .order("created_at", { ascending: false })
     .limit(20);
 
-  if (opts.cursor) query = query.lt("created_at", opts.cursor);
-  if (opts.tag) query = query.contains("tags", [opts.tag]);
+  if (cursor) q = q.lt("created_at", cursor);
 
-  if (opts.q && opts.q.trim()) {
-    // simple search: prefer full text if you want; fallback to ilike
-    query = supabase
-      .from("prayers")
-      .select("id, author, type, body, tags, amen_count, reply_count, answered, created_at")
-      .textSearch("tsv", opts.q, { type: "websearch" })
-      .order("created_at", { ascending: false })
-      .limit(20);
-  }
-
-  const { data, error } = await query;
+  const { data, error } = await q;
   if (error) throw error;
   return (data || []) as Prayer[];
 }
 
-export async function fetchPrayer(id: string) {
-  const { data, error } = await supabase.from("prayers")
-    .select("id, author, type, body, tags, amen_count, reply_count, answered, created_at")
-    .eq("id", id)
-    .maybeSingle();
-  if (error) throw error;
-  return data as Prayer | null;
-}
-
-export async function amenPrayer(prayerId: string) {
+// Amen (optional, you already have this)
+export async function amenPrayer(id: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
-  const { error } = await supabase.from("prayer_amens").insert({ prayer_id: prayerId, user_id: user.id });
-  if (error && !`${error.message}`.toLowerCase().includes("duplicate")) throw error;
-}
-
-export async function createReply(prayerId: string, body: string) {
-  if (body.length < 1 || body.length > 1000) throw new Error("Reply must be 1–1000 chars");
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Sign in first");
-  const { data, error } = await supabase.from("prayer_replies")
-    .insert({ prayer_id: prayerId, author: user.id, body })
-    .select()
-    .single();
+  const { error } = await supabase.from("prayer_amens").insert({ prayer_id: id, user_id: user.id });
   if (error) throw error;
-  return data;
 }
 
+// Replies (optional, you already have these)
 export async function fetchReplies(prayerId: string) {
-  const { data, error } = await supabase.from("prayer_replies")
-    .select("id, body, author, created_at")
+  const { data, error } = await supabase
+    .from("prayer_replies")
+    .select("id, body, created_at")
     .eq("prayer_id", prayerId)
     .order("created_at", { ascending: true });
   if (error) throw error;
   return data || [];
 }
 
-export async function toggleAnswered(prayerId: string, answered: boolean) {
+export async function createReply(prayerId: string, body: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
-  const { error } = await supabase.from("prayers")
-    .update({ answered })
-    .eq("id", prayerId);
+  const { data, error } = await supabase
+    .from("prayer_replies")
+    .insert({ prayer_id: prayerId, author: user.id, body: body.trim() })
+    .select("id, body, created_at")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// DELETE (owner only – enforced by RLS)
+export async function deletePrayer(id: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Sign in first");
+  const { error } = await supabase.from("prayers").delete().eq("id", id);
   if (error) throw error;
 }
