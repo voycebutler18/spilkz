@@ -16,12 +16,8 @@ export default function PrayersPage() {
     try {
       setError(null);
       setLoading(true);
-
-      // compute cursor from *current* list
       const currentCursor = append ? items[items.length - 1]?.created_at : undefined;
       const list = (await fetchPrayers({ cursor: currentCursor })) || [];
-
-      // functional update avoids stale closures when multiple loads overlap
       setItems(prev => {
         const newList = append ? [...prev, ...list] : list;
         setCursor(newList.length ? newList[newList.length - 1].created_at : undefined);
@@ -35,10 +31,7 @@ export default function PrayersPage() {
     }
   };
 
-  useEffect(() => {
-    load(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { load(false); /* eslint-disable-next-line */ }, []);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Prayer[]>();
@@ -54,12 +47,12 @@ export default function PrayersPage() {
     <div className="mx-auto max-w-3xl p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Daily Prayers and Testimonies</h1>
 
-      {/* TEMP debug: remove after verifying this matches your Supabase project URL */}
+      {/* TEMP debug – remove later */}
       <div className="rounded-md border border-muted/30 bg-muted/10 p-2 text-xs text-muted-foreground">
         Supabase URL: {import.meta.env.VITE_SUPABASE_URL}
       </div>
 
-      {/* Prepend the created post instantly */}
+      {/* Prepend new post instantly */}
       <PrayerComposer onPosted={(p) => setItems((cur) => [p as Prayer, ...cur])} />
 
       {error && (
@@ -70,9 +63,7 @@ export default function PrayersPage() {
 
       {!error && !loading && items.length === 0 && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
-          No posts yet. If you’ve added some and don’t see them, double-check Render env vars
-          (<code>VITE_SUPABASE_URL</code> / <code>VITE_SUPABASE_ANON_KEY</code>) and the
-          “prayers read public” RLS policy in the same project.
+          No posts yet. If you’ve added some and don’t see them, check env vars and RLS.
         </div>
       )}
 
