@@ -1,3 +1,4 @@
+// src/pages/Prayers.tsx
 import { useEffect, useMemo, useState } from "react";
 import { fetchPrayers, Prayer } from "@/lib/prayers";
 import PrayerComposer from "@/components/prayers/PrayerComposer";
@@ -9,24 +10,36 @@ export default function PrayersPage() {
   const [items, setItems] = useState<Prayer[]>([]);
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
+  const [error, setError] = useState<string | null>(null);
 
   const load = async (append = false) => {
     try {
+      setError(null);
       setLoading(true);
-      const data = await fetchPrayers({
-        cursor: append ? items[items.length - 1]?.created_at : undefined,
-      });
-      const next = append ? [...items, ...(data || [])] : (data || []);
-      setItems(next);
-      setCursor(next.length ? next[next.length - 1].created_at : undefined);
-    } catch (err) {
-      console.error("fetchPrayers failed", err);
+
+      // compute the cursor from CURRENT state at call-time
+      const currentCursor = append ? items[items.length - 1]?.created_at : undefined;
+      const data = await fetchPrayers({ cursor: currentCursor });
+      const list = (data || []);
+
+      // use functional update to avoid stale closures if multiple loads overlap
+      setItems(prev => (append ? [...prev, ...list] : list));
+
+      // compute next cursor from what will be the new list
+      const nextList = append ? [...items, ...list] : list;
+      setCursor(nextList.length ? nextList[nextList.length - 1].created_at : undefined);
+    } catch (e: any) {
+      console.error("fetchPrayers failed", e);
+      setError(e?.message || "Failed to load prayers.");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(false); }, []);
+  useEffect(() => {
+    load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Prayer[]>();
@@ -42,15 +55,36 @@ export default function PrayersPage() {
     <div className="mx-auto max-w-3xl p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Daily Prayers and Testimonies</h1>
 
+      {/* Temporary debug: verify this matches your Supabase project URL */}
+      <div className="rounded-md border border-muted/30 bg-muted/10 p-2 text-xs text-muted-foreground">
+        Supabase URL: {import.meta.env.VITE_SUPABASE_URL}
+      </div>
+
       {/* Prepend the created post instantly */}
       <PrayerComposer onPosted={(p) => setItems((cur) => [p as Prayer, ...cur])} />
+
+      {error && (
+        <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+      {!error && !loading && items.length === 0 && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-300">
+          No posts yet. If you’ve added some and don’t see them, double-check Render env vars
+          (<code>VITE_SUPABASE_URL</code> / <code>VITE_SUPABASE_ANON_KEY</code>) and the
+          “prayers read public” RLS policy in the same project.
+        </div>
+      )}
 
       {grouped.map(([day, list]) => (
         <div key={day} className="space-y-3">
           <div className="sticky top-14 z-10 bg-background/80 backdrop-blur py-2">
             <h2 className="text-sm font-medium text-muted-foreground">{day}</h2>
           </div>
-          {list.map((p) => <PrayerCard key={p.id} item={p} />)}
+          {list.map((p) => (
+            <PrayerCard key={p.id} item={p} />
+          ))}
         </div>
       ))}
 
