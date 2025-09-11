@@ -17,17 +17,16 @@ export default function PrayersPage() {
       setError(null);
       setLoading(true);
 
-      // compute the cursor from CURRENT state at call-time
+      // compute cursor from *current* list
       const currentCursor = append ? items[items.length - 1]?.created_at : undefined;
-      const data = await fetchPrayers({ cursor: currentCursor });
-      const list = (data || []);
+      const list = (await fetchPrayers({ cursor: currentCursor })) || [];
 
-      // use functional update to avoid stale closures if multiple loads overlap
-      setItems(prev => (append ? [...prev, ...list] : list));
-
-      // compute next cursor from what will be the new list
-      const nextList = append ? [...items, ...list] : list;
-      setCursor(nextList.length ? nextList[nextList.length - 1].created_at : undefined);
+      // functional update avoids stale closures when multiple loads overlap
+      setItems(prev => {
+        const newList = append ? [...prev, ...list] : list;
+        setCursor(newList.length ? newList[newList.length - 1].created_at : undefined);
+        return newList;
+      });
     } catch (e: any) {
       console.error("fetchPrayers failed", e);
       setError(e?.message || "Failed to load prayers.");
@@ -55,7 +54,7 @@ export default function PrayersPage() {
     <div className="mx-auto max-w-3xl p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Daily Prayers and Testimonies</h1>
 
-      {/* Temporary debug: verify this matches your Supabase project URL */}
+      {/* TEMP debug: remove after verifying this matches your Supabase project URL */}
       <div className="rounded-md border border-muted/30 bg-muted/10 p-2 text-xs text-muted-foreground">
         Supabase URL: {import.meta.env.VITE_SUPABASE_URL}
       </div>
@@ -83,7 +82,11 @@ export default function PrayersPage() {
             <h2 className="text-sm font-medium text-muted-foreground">{day}</h2>
           </div>
           {list.map((p) => (
-            <PrayerCard key={p.id} item={p} />
+            <PrayerCard
+              key={p.id}
+              item={p}
+              onDeleted={(id) => setItems((cur) => cur.filter((x) => x.id !== id))}
+            />
           ))}
         </div>
       ))}
