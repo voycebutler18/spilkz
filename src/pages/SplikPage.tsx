@@ -1,32 +1,42 @@
 // src/pages/SplikPage.tsx
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Volume2, VolumeX, Heart, MessageCircle, Share2 } from "lucide-react";
+import { Volume2, VolumeX, Heart, MessageCircle, Share2, ChevronLeft } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { fetchClipById } from "@/lib/feed";
 import type { FeedItem } from "@/lib/feed";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
+/**
+ * Video detail page with:
+ * - Optimistic like toggle + realtime count
+ * - Neon/glass UI tuned for mobile
+ * - Top loading bar that fills as the video buffers
+ * - Better skeleton state
+ */
 export default function SplikPage() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
 
   const [row, setRow] = useState<FeedItem | null>(null);
   const [loading, setLoading] = useState(true);
-  const [muted, setMuted] = useState(true);
 
   // like state
   const [likesCount, setLikesCount] = useState<number>(0);
   const [isLiked, setIsLiked] = useState<boolean>(false);
   const [liking, setLiking] = useState<boolean>(false);
 
+  // video state
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [muted, setMuted] = useState(true);
+  const [bufferPct, setBufferPct] = useState(0);     // top progress bar
+  const [isBuffering, setIsBuffering] = useState(true);
 
-  // Fetch video row
+  // ---------- load row ----------
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -37,6 +47,7 @@ export default function SplikPage() {
         if (!id) throw new Error("missing id");
         const r = await fetchClipById(id);
         if (!alive) return;
+
         if (!r) {
           toast({
             title: "Not found",
@@ -44,10 +55,13 @@ export default function SplikPage() {
             variant: "destructive",
           });
         }
+
         setRow(r ?? null);
-        // seed count for UI; realtime will keep it fresh
+
+        // seed visible count (supports likes_count or hype_count)
         // @ts-ignore tolerate optional fields
-        setLikesCount((r?.likes_count as number) ?? 0);
+        const seedLikes = (r?.likes_count as number) ?? (r?.hype_count as number) ?? 0;
+        setLikesCount(seedLikes);
       } catch {
         if (!alive) return;
         toast({
@@ -60,21 +74,17 @@ export default function SplikPage() {
       }
     })();
 
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [id, toast]);
 
-  // Page <title> & description (client-side only; crawlers use server OG)
+  // ---------- page metadata ----------
   useEffect(() => {
     if (!row) return;
 
     const title = row.title ? `${row.title} — Splikz` : "Splik — Splikz";
     const desc = row.description || "Watch this moment on Splikz";
-
     document.title = title;
 
-    // description
     let metaDesc = document.querySelector('meta[name="description"]') as HTMLMetaElement | null;
     if (!metaDesc) {
       metaDesc = document.createElement("meta");
@@ -83,7 +93,6 @@ export default function SplikPage() {
     }
     metaDesc.setAttribute("content", desc);
 
-    // canonical
     const base = window.location.origin;
     const canonicalHref = `${base}/video/${row.id}`;
     let linkCanon = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
@@ -95,16 +104,16 @@ export default function SplikPage() {
     linkCanon.setAttribute("href", canonicalHref);
   }, [row]);
 
-  // Determine if the current user has liked this splik + subscribe to count updates
+  // ---------- liked-by-me + realtime like count ----------
   useEffect(() => {
-    let unsubbed = false;
+    let cleanup: (() => void) | undefined;
 
     (async () => {
       if (!row?.id) return;
 
-      // fetch whether I liked it
       const { data: auth } = await supabase.auth.getUser();
       const uid = auth.user?.id;
+
       if (uid) {
         const { data: likeRow } = await supabase
           .from("likes")
@@ -112,35 +121,36 @@ export default function SplikPage() {
           .eq("user_id", uid)
           .eq("splik_id", row.id)
           .maybeSingle();
-        if (!unsubbed) setIsLiked(Boolean(likeRow));
+        setIsLiked(Boolean(likeRow));
       } else {
         setIsLiked(false);
       }
 
-      // realtime for likes_count
+      // live updates for likes_count/hype_count
       const ch = supabase
         .channel(`splik-${row.id}`)
         .on(
           "postgres_changes",
           { event: "UPDATE", schema: "public", table: "spliks", filter: `id=eq.${row.id}` },
           (p) => {
-            // @ts-ignore
-            const next = (p.new?.likes_count as number) ?? 0;
+            const next =
+              // @ts-ignore
+              (typeof p.new?.likes_count === "number" && p.new.likes_count) ||
+              // @ts-ignore
+              (typeof p.new?.hype_count === "number" && p.new.hype_count) ||
+              0;
             setLikesCount(next);
           }
         )
         .subscribe();
 
-      return () => {
-        supabase.removeChannel(ch);
-      };
+      cleanup = () => supabase.removeChannel(ch);
     })();
 
-    return () => {
-      unsubbed = true;
-    };
+    return () => { cleanup?.(); };
   }, [row?.id]);
 
+  // ---------- handlers ----------
   const onToggleMute = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -149,10 +159,14 @@ export default function SplikPage() {
     setMuted(next);
   };
 
+  const shareUrl = useMemo(() => {
+    if (!row?.id) return window.location.href;
+    const origin = window.location.origin.replace(/\/$/, "");
+    return `${origin}/v/${row.id}`;
+  }, [row?.id]);
+
   const onShare = async () => {
     if (!row) return;
-    const origin = window.location.origin;
-    const shareUrl = `${origin}/v/${row.id}`; // short OG route
     try {
       if (navigator.share) {
         await navigator.share({ title: row.title || "Splik", url: shareUrl });
@@ -165,7 +179,7 @@ export default function SplikPage() {
     }
   };
 
-  // Like handler: flip only the heart; let realtime update the count
+  // Optimistic heart; realtime refreshes the count
   const onLike = async () => {
     if (liking || !row?.id) return;
     const { data: auth } = await supabase.auth.getUser();
@@ -181,7 +195,7 @@ export default function SplikPage() {
 
     setLiking(true);
     const next = !isLiked;
-    setIsLiked(next); // optimistic heart only
+    setIsLiked(next);
 
     try {
       if (next) {
@@ -190,24 +204,25 @@ export default function SplikPage() {
         await supabase.from("likes").delete().eq("user_id", uid).eq("splik_id", row.id);
       }
 
-      // Fallback refresh in case realtime is delayed
+      // fallback refresh
       setTimeout(async () => {
         const { data } = await supabase
           .from("spliks")
-          .select("likes_count")
+          .select("likes_count, hype_count")
           .eq("id", row.id)
           .maybeSingle();
-        if (data?.likes_count != null) setLikesCount(data.likes_count);
-      }, 400);
+        const n = (data?.likes_count ?? data?.hype_count ?? 0) as number;
+        if (Number.isFinite(n)) setLikesCount(n);
+      }, 450);
     } catch {
-      setIsLiked(!next); // revert on error
+      setIsLiked(!next);
       toast({ title: "Error", description: "Failed to update like", variant: "destructive" });
     } finally {
       setLiking(false);
     }
   };
 
-  // Autoplay and start at trim_start when metadata is ready
+  // video events: trim start + progress bar
   const handleLoadedMetadata = () => {
     const v = videoRef.current;
     if (!v || !row) return;
@@ -215,56 +230,90 @@ export default function SplikPage() {
       const start = Math.max(0.1, Number((row as any).trim_start ?? 0));
       if (Number.isFinite(start)) v.currentTime = start;
     } catch {}
-    v.play().catch(() => {
-      // some browsers require user gesture
-    });
+    v.play().catch(() => {});
   };
 
+  const handleProgress = () => {
+    const v = videoRef.current;
+    if (!v || !v.duration || !v.buffered?.length) return;
+    const end = v.buffered.end(v.buffered.length - 1);
+    const pct = Math.max(0, Math.min(1, end / v.duration));
+    setBufferPct(pct * 100);
+  };
+
+  const handleWaiting = () => setIsBuffering(true);
+  const handlePlaying = () => { setIsBuffering(false); setBufferPct(100); };
+
+  // ---------- UI ----------
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-[40vh]">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+      <div className="min-h-[100svh] flex items-center justify-center bg-gradient-to-b from-background to-black/60">
+        <div className="w-full max-w-lg mx-auto px-3">
+          <div className="h-2 w-40 bg-primary/20 rounded-full mb-4 animate-pulse" />
+          <div className="rounded-2xl overflow-hidden border border-white/10 bg-black/40 backdrop-blur-xl">
+            <div className="h-12 border-b border-white/10 flex items-center px-4">
+              <div className="h-6 w-6 rounded-full bg-white/10 mr-3 animate-pulse" />
+              <div className="h-4 w-40 bg-white/10 rounded animate-pulse" />
+            </div>
+            <div className="aspect-[9/16] bg-white/5 animate-pulse" />
+            <div className="h-16 px-4 py-3 border-t border-white/10">
+              <div className="h-4 w-2/3 bg-white/10 rounded animate-pulse" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
+
   if (!row) return null;
 
-  // Robust poster choice (what we generated at upload time)
   const poster =
-    // @ts-ignore tolerate optional fields
+    // @ts-ignore optional
     row.thumbnail_url || (row as any).poster_url || undefined;
-
   const createdAt = row.created_at ? new Date(row.created_at) : new Date();
 
   return (
-    <div className="min-h-[100svh] flex items-center justify-center bg-background p-3">
-      <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
-        {/* header */}
-        <div className="flex items-center justify-between p-3 border-b">
+    <div className="min-h-[100svh] flex items-center justify-center bg-gradient-to-b from-background via-background/80 to-black/70 p-3">
+      <Card className="relative overflow-hidden border border-white/10 bg-slate-900/50 backdrop-blur-xl shadow-[0_0_60px_-20px_rgba(124,58,237,0.6)] w-full max-w-lg mx-auto rounded-2xl">
+        {/* Top neon loading bar (buffers) */}
+        <div
+          className="absolute top-0 left-0 h-1 bg-gradient-to-r from-fuchsia-500 via-purple-500 to-cyan-400 transition-[width] duration-300"
+          style={{ width: `${isBuffering ? Math.max(bufferPct, 12) : bufferPct}%` }}
+        />
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+          <Link
+            to="/home"
+            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ChevronLeft className="h-4 w-4" /> Back
+          </Link>
+
           <Link
             to={`/creator/${(row as any).username || row.user_id}`}
-            className="flex items-center gap-3 hover:opacity-80"
+            className="flex items-center gap-3 hover:opacity-90"
           >
-            <Avatar className="h-8 w-8">
+            <Avatar className="h-8 w-8 ring-2 ring-purple-500/40">
               <AvatarFallback>
                 {((row as any).username || "A").toUpperCase().slice(0, 2)}
               </AvatarFallback>
             </Avatar>
-            <div>
+            <div className="text-right">
               <p className="text-sm font-semibold">
                 {(row as any).username ? `@${(row as any).username}` : "Anonymous"}
               </p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground">
                 {formatDistanceToNow(createdAt, { addSuffix: true })}
               </p>
             </div>
           </Link>
         </div>
 
-        {/* video */}
-        <div className="relative bg-black aspect-[9/16] max-h-[700px]">
+        {/* Video */}
+        <div className="relative bg-black aspect-[9/16] max-h-[84vh]">
           <video
-            key={String(row.id)} // force refresh when navigating between videos
+            key={String(row.id)}
             ref={videoRef}
             src={row.video_url}
             poster={poster}
@@ -276,22 +325,29 @@ export default function SplikPage() {
             preload="metadata"
             autoPlay
             onLoadedMetadata={handleLoadedMetadata}
+            onProgress={handleProgress}
+            onWaiting={handleWaiting}
+            onPlaying={handlePlaying}
           />
+          {/* mute */}
           <button
             onClick={onToggleMute}
-            className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20"
+            className="absolute bottom-3 right-3 bg-black/60 rounded-full p-2 z-20 hover:bg-black/80 transition-colors"
             aria-label={muted ? "Unmute" : "Mute"}
           >
-            {muted ? (
-              <VolumeX className="h-4 w-4 text-white" />
-            ) : (
-              <Volume2 className="h-4 w-4 text-white" />
-            )}
+            {muted ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
           </button>
+
+          {/* floating gradient badge when buffering */}
+          {isBuffering && (
+            <div className="absolute top-3 right-3 px-2 py-1 text-[11px] rounded-full bg-gradient-to-r from-fuchsia-600/80 to-cyan-500/80 text-white shadow">
+              Loading…
+            </div>
+          )}
         </div>
 
-        {/* actions + caption */}
-        <div className="p-3 space-y-2">
+        {/* Actions */}
+        <div className="px-3 py-3 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Button
@@ -300,28 +356,28 @@ export default function SplikPage() {
                 aria-label="Like"
                 onClick={onLike}
                 disabled={liking}
-                className={isLiked ? "text-red-500 hover:text-red-600" : ""}
+                className={`hover:text-red-500 ${isLiked ? "text-red-500" : ""}`}
               >
                 <Heart className={`h-6 w-6 ${isLiked ? "fill-current" : ""}`} />
               </Button>
-
-              <div className="text-sm">{likesCount.toLocaleString()}</div>
+              <div className="text-sm font-medium tabular-nums">{likesCount.toLocaleString()}</div>
 
               <Button size="icon" variant="ghost" aria-label="Comments">
                 <MessageCircle className="h-6 w-6" />
               </Button>
+
               <Button size="icon" variant="ghost" onClick={onShare} aria-label="Share">
                 <Share2 className="h-6 w-6" />
               </Button>
             </div>
-            <div className="text-xs text-muted-foreground">
-              {/* tolerate optional field */}
+
+            <div className="text-[11px] text-muted-foreground">
               {((row as any).views_count ?? 0).toLocaleString()} views
             </div>
           </div>
 
           {row.description && (
-            <p className="text-sm">
+            <p className="text-sm leading-snug">
               <span className="font-semibold mr-2">
                 {(row as any).username ? `@${(row as any).username}` : "Anonymous"}
               </span>
