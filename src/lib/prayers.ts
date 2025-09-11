@@ -6,7 +6,7 @@ export type PrayerType = "request" | "testimony" | "quote";
 
 export type Prayer = {
   id: string;
-  author: string;           // required for ownership checks
+  author: string; // required for ownership checks
   type: PrayerType;
   body: string;
   tags: string[] | null;
@@ -73,38 +73,41 @@ export async function fetchPrayer(id: string): Promise<Prayer | null> {
   return (data as Prayer) ?? null;
 }
 
-/* ---------- Amen (duplicate-safe) ---------- */
+/* ---------- Amen (duplicate-safe; returns server count) ---------- */
+/** Returns:
+ *  - inserted: was a new amen created for (prayer_id, user_id)?
+ *  - count: authoritative amen count from DB after upsert
+ */
 export async function amenPrayer(
   prayerId: string
-): Promise<{ inserted: boolean }> {
+): Promise<{ inserted: boolean; count: number }> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("not_authed");
 
-  console.log("amenPrayer called for prayer:", prayerId, "user:", user.id);
+  // Upsert with composite PK (prayer_id, user_id). No "id" column involved.
+  const { data: upsertData, error: upsertErr } = await supabase
+    .from("prayer_amens")
+    .upsert(
+      { prayer_id: prayerId, user_id: user.id },
+      { onConflict: "prayer_id,user_id", ignoreDuplicates: true }
+    )
+    // don't select a column that doesn't exist
+    .select("prayer_id, user_id");
 
-  try {
-    // Try to insert - will fail if duplicate due to unique constraint
-    const { data, error } = await supabase
-      .from("prayer_amens")
-      .insert({ prayer_id: prayerId, user_id: user.id })
-      .select("id");
+  if (upsertErr) throw upsertErr;
 
-    if (error) {
-      console.log("Insert error:", error);
-      // If it's a duplicate key error, return false but don't throw
-      if (error.code === '23505' || error.message.includes('duplicate')) {
-        console.log("Duplicate amen detected");
-        return { inserted: false };
-      }
-      throw error;
-    }
+  // If the row already existed, upsert returns [] (ignored); if new, returns 1 row
+  const inserted = Array.isArray(upsertData) && upsertData.length > 0;
 
-    console.log("Amen inserted successfully:", data);
-    return { inserted: true };
-  } catch (err) {
-    console.error("amenPrayer error:", err);
-    throw err;
-  }
+  // Read back the server-side count so UI can’t drift
+  const { count, error: countErr } = await supabase
+    .from("prayer_amens")
+    .select("prayer_id", { count: "exact", head: true })
+    .eq("prayer_id", prayerId);
+
+  if (countErr) throw countErr;
+
+  return { inserted, count: count ?? 0 };
 }
 
 /* ---------- Check if user has amened a prayer ---------- */
