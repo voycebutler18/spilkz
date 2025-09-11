@@ -130,22 +130,8 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
       
       setCheckingAmenStatus(true);
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        const { data, error } = await supabase
-          .from("prayer_amens")
-          .select("id")
-          .eq("prayer_id", id)
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        if (error) {
-          console.error("Error checking amen status:", error);
-          return;
-        }
-
-        setHasAmened(!!data);
+        const amened = await hasUserAmened(id);
+        setHasAmened(amened);
       } catch (err) {
         console.error("Error checking amen status:", err);
       } finally {
