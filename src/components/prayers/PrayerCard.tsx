@@ -103,13 +103,13 @@ export default function PrayerCard({
   );
 }
 
-/** Amen button – mobile-safe */
+/** Amen button – duplicate-safe + mobile-safe (increments only after success) */
 function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
   const navigate = useNavigate();
   const [local, setLocal] = useState(initialCount);
   const [busy, setBusy] = useState(false);
-  const [clicked, setClicked] = useState(false);
   const [authed, setAuthed] = useState(false);
+  const [locked, setLocked] = useState(false); // stop second tap after success
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
@@ -120,26 +120,28 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
   }, []);
 
   const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
-    // prevent tap from triggering parent link or scroll
     e.preventDefault();
     e.stopPropagation();
 
     if (!authed) {
-      // send user to login on mobile if they're not signed in
       navigate("/login");
       return;
     }
+    if (busy || locked) return;
 
-    if (busy || clicked) return;
     setBusy(true);
-    setClicked(true);
-    setLocal((v) => v + 1); // optimistic
     try {
-      await amenPrayer(id);
-    } catch {
-      // revert if backend rejects (e.g., duplicate)
-      setClicked(false);
-      setLocal((v) => v - 1);
+      const { inserted } = await amenPrayer(id);
+      if (inserted) {
+        setLocal((v) => v + 1); // only increment when DB confirms insert
+        setLocked(true);
+      } else {
+        // duplicate (already amen'ed earlier) — just lock it, no number change
+        setLocked(true);
+      }
+    } catch (err) {
+      console.error(err);
+      // leave number alone on hard failure
     } finally {
       setBusy(false);
     }
@@ -150,11 +152,11 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
       variant="ghost"
       size="sm"
       onClick={onTap}
-      disabled={busy || clicked}
+      disabled={busy || locked}
       aria-label="Amen"
-      title={!authed ? "Log in to Amen" : clicked ? "You already clicked Amen" : "Amen"}
+      title={!authed ? "Log in to Amen" : locked ? "Amened" : "Amen"}
       type="button"
-      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]" // bigger hit target for mobile
+      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]"
     >
       🙏 <span className="ml-2">{local}</span>
     </Button>
