@@ -1,24 +1,16 @@
 // src/components/splik/SplikCard.tsx
 import * as React from "react";
 import { Link } from "react-router-dom";
+import { Flame, MessageCircle, Bookmark, BookmarkCheck, Share2, VolumeX, Volume2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Flame,
-  Share2,
-  Bookmark,
-  BookmarkCheck,
-  Volume2,
-  VolumeX,
-} from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useToast } from "@/components/ui/use-toast";
 
 type Profile = {
   id: string;
   username?: string | null;
   display_name?: string | null;
-  first_name?: string | null;
   avatar_url?: string | null;
 };
 
@@ -29,348 +21,396 @@ type Splik = {
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
-  trim_start?: number | null;
-  trim_end?: number | null;
   created_at?: string;
-  hype_count?: number; // optional incoming
+  hype_count?: number | null;
+  comments_count?: number | null;
   profile?: Profile | null;
 };
 
 type Props = {
   splik: Splik;
-  /** Optional — used by Index.tsx for primary visible item tracking */
   index?: number;
-  /** Optional — Index.tsx passes this to lazy-attach src */
+  /** Parent can gate which ones attach a real src */
   shouldLoad?: boolean;
-  /** Optional — Index.tsx passes this so it can track active window */
+  /** Parent can track which is "active" in viewport */
   onPrimaryVisible?: (index: number) => void;
-  /** Optional — Explore/Index may pass these callbacks */
-  onSlik?: () => void;
+  onSplik?: () => void;
   onReact?: () => void;
   onShare?: () => void;
 };
 
-const HYPE_TABLE = "hype_reactions";
+const VISIBILITY_THRESHOLD = 0.6;
 
-const SplikCard: React.FC<Props> = ({
+export default function SplikCard({
   splik,
-  index,
+  index = 0,
   shouldLoad = true,
   onPrimaryVisible,
   onShare,
-}) => {
+}: Props) {
+  const { toast } = useToast();
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
-  const hostRef = React.useRef<HTMLDivElement | null>(null);
+  const cardRef = React.useRef<HTMLDivElement | null>(null);
 
-  const [userId, setUserId] = React.useState<string | null>(null);
-  const [muted, setMuted] = React.useState(true);
+  const [user, setUser] = React.useState<any>(null);
 
-  const [saved, setSaved] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
+  const [isMuted, setIsMuted] = React.useState(true);
+  const [isPlaying, setIsPlaying] = React.useState(false);
 
-  const [hyped, setHyped] = React.useState(false);
-  const [hypeBusy, setHypeBusy] = React.useState(false);
-  const [hypeCount, setHypeCount] = React.useState<number>(
-    typeof splik.hype_count === "number" ? splik.hype_count : 0
-  );
+  const [hypeCount, setHypeCount] = React.useState<number>(splik.hype_count ?? 0);
+  const [commentCount, setCommentCount] = React.useState<number>(splik.comments_count ?? 0);
+  const [hasHyped, setHasHyped] = React.useState<boolean>(false);
 
-  // auth
+  const [isSaved, setIsSaved] = React.useState<boolean>(false);
+  const [loadingCounts, setLoadingCounts] = React.useState(false);
+
+  // keep user in sync
   React.useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
-    const { data } = supabase.auth.onAuthStateChange((_e, session) =>
-      setUserId(session?.user?.id ?? null)
+    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
+      setUser(session?.user ?? null)
     );
-    return () => data.subscription?.unsubscribe();
+    return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // Observe visibility for parent (Index.tsx's rolling window)
+  // ——————————— Autoplay / visibility control (very defensive) ———————————
   React.useEffect(() => {
-    if (!hostRef.current || typeof onPrimaryVisible !== "function" || index == null)
-      return;
+    const el = cardRef.current;
+    const vid = videoRef.current;
+    if (!el || !vid) return;
 
-    const el = hostRef.current;
+    // ensure mobile-friendly defaults
+    vid.playsInline = true;
+    (vid as any).webkitPlaysInline = true;
+    vid.muted = true;
+    vid.preload = "auto";
+
+    let lastVisible = 0;
+
+    const tryPlay = async () => {
+      if (!vid.src) return;
+      try {
+        if (vid.readyState < 2) vid.load();
+        await vid.play();
+        setIsPlaying(true);
+      } catch (err) {
+        // Second attempt muted (some browsers need a second promise chain)
+        try {
+          vid.muted = true;
+          await vid.play();
+          setIsPlaying(true);
+        } catch {
+          // As a last resort, show controls so user can start playback manually
+          vid.controls = true;
+          setIsPlaying(false);
+        }
+      }
+    };
+
+    const pause = () => {
+      try {
+        vid.pause();
+      } catch {}
+      setIsPlaying(false);
+    };
+
     const io = new IntersectionObserver(
       (entries) => {
-        const entry = entries[0];
-        if (entry.intersectionRatio >= 0.6) {
-          onPrimaryVisible(index);
+        for (const ent of entries) {
+          lastVisible = ent.intersectionRatio;
+          if (ent.isIntersecting && ent.intersectionRatio >= VISIBILITY_THRESHOLD) {
+            onPrimaryVisible?.(index);
+            // start quickly without flashing black: poster is visible until first frame
+            tryPlay();
+          } else if (ent.intersectionRatio < 0.35) {
+            pause();
+          }
         }
       },
-      { root: null, threshold: [0.25, 0.6, 0.9] }
+      { threshold: [0, 0.35, VISIBILITY_THRESHOLD, 0.9, 1] }
     );
     io.observe(el);
-    return () => io.disconnect();
-  }, [onPrimaryVisible, index]);
 
-  // Prepare video for mobile (prevent black frame)
-  React.useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.playsInline = true;
-    (v as any).webkitPlaysInline = true;
-    v.preload = "metadata";
-    v.muted = muted;
+    // Touch/click always tries to play (covers rare cases)
+    const onTap = () => tryPlay();
+    el.addEventListener("click", onTap, { passive: true });
+    el.addEventListener("touchstart", onTap, { passive: true });
 
+    // iOS can stall at t=0; nudge a hair after loadeddata
     const onLoaded = () => {
-      try {
-        if (v.currentTime === 0) v.currentTime = 0.1;
-      } catch {}
+      if (vid.currentTime === 0) {
+        try { vid.currentTime = 0.05; } catch {}
+      }
     };
-    v.addEventListener("loadeddata", onLoaded, { once: true });
-    return () => v.removeEventListener("loadeddata", onLoaded);
-  }, [muted, shouldLoad, splik.video_url]);
+    vid.addEventListener("loadeddata", onLoaded);
 
-  // Load saved/hyped state (+ backfill hype count if not provided)
+    return () => {
+      io.disconnect();
+      el.removeEventListener("click", onTap);
+      el.removeEventListener("touchstart", onTap);
+      vid.removeEventListener("loadeddata", onLoaded);
+      pause();
+    };
+  }, [index, onPrimaryVisible]);
+
+  // ——————————— Lazy load counts (only once per card) ———————————
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
-      if (!userId) return;
 
-      // Favorites
+    const go = async () => {
+      if (!splik?.id) return;
+      setLoadingCounts(true);
       try {
-        const { data } = await supabase
-          .from("favorites")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("splik_id", splik.id)
-          .maybeSingle();
-        if (!cancelled) setSaved(!!data);
+        // hype count
+        const { data: hc } = await supabase
+          .from("hype_reactions")
+          .select("id", { count: "exact", head: true })
+          .eq("splik_id", splik.id);
+        if (!cancelled) setHypeCount(hc?.length ?? (hc as any) ?? 0); // head:true returns null rows; count is in response.count (not exposed via client types), so fallback below
+      } catch {}
+      try {
+        const { count } = await supabase
+          .from("hype_reactions")
+          .select("*", { head: true, count: "exact" })
+          .eq("splik_id", splik.id);
+        if (!cancelled && typeof count === "number") setHypeCount(count);
       } catch {}
 
-      // Hyped?
       try {
-        const { data } = await supabase
-          .from(HYPE_TABLE)
-          .select("id")
-          .eq("user_id", userId)
-          .eq("splik_id", splik.id)
-          .maybeSingle();
-        if (!cancelled) setHyped(!!data);
+        const { count } = await supabase
+          .from("comments")
+          .select("*", { head: true, count: "exact" })
+          .eq("video_id", splik.id);
+        if (!cancelled && typeof count === "number") setCommentCount(count);
       } catch {}
 
-      // Backfill hype count if missing
-      if (typeof splik.hype_count !== "number") {
+      if (user?.id) {
         try {
-          const { count } = await supabase
-            .from(HYPE_TABLE)
-            .select("id", { count: "exact", head: true })
-            .eq("splik_id", splik.id);
-          if (!cancelled && typeof count === "number") {
-            setHypeCount(count);
-          }
+          const { data } = await supabase
+            .from("hype_reactions")
+            .select("id")
+            .eq("splik_id", splik.id)
+            .eq("user_id", user.id)
+            .maybeSingle();
+          if (!cancelled) setHasHyped(!!data);
+        } catch {}
+
+        try {
+          const { data } = await supabase
+            .from("favorites")
+            .select("id")
+            .eq("video_id", splik.id)
+            .eq("user_id", user.id)
+            .maybeSingle();
+          if (!cancelled) setIsSaved(!!data);
         } catch {}
       }
-    })();
-    return () => {
-      cancelled = true;
+
+      if (!cancelled) setLoadingCounts(false);
     };
-  }, [userId, splik.id, splik.hype_count]);
 
-  const toggleMute = () => {
-    const v = videoRef.current;
-    if (!v) return;
-    const next = !muted;
-    v.muted = next;
-    setMuted(next);
-  };
+    go();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splik?.id, user?.id]);
 
-  const toggleFavorite = async () => {
-    if (!userId || saving) return;
-    setSaving(true);
-
-    const wasSaved = saved;
-    setSaved(!wasSaved);
-
-    try {
-      if (wasSaved) {
-        const { error } = await supabase
-          .from("favorites")
-          .delete()
-          .eq("user_id", userId)
-          .eq("splik_id", splik.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("favorites")
-          .insert({ user_id: userId, splik_id: splik.id });
-        if (error) throw error;
-      }
-    } catch {
-      // revert
-      setSaved(wasSaved);
-    } finally {
-      setSaving(false);
+  const ensureAuth = async () => {
+    if (user) return user;
+    const { data } = await supabase.auth.getUser();
+    if (data.user) {
+      setUser(data.user);
+      return data.user;
     }
+    toast({
+      title: "Sign in required",
+      description: "Please log in to react or save.",
+      variant: "default",
+    });
+    throw new Error("auth_required");
   };
 
   const toggleHype = async () => {
-    if (!userId || hypeBusy) return;
-    setHypeBusy(true);
-
-    const wasHyped = hyped;
-    // optimistic
-    setHyped(!wasHyped);
-    setHypeCount((c) => (wasHyped ? Math.max(0, c - 1) : c + 1));
-
     try {
-      if (wasHyped) {
-        const { error } = await supabase
-          .from(HYPE_TABLE)
-          .delete()
-          .eq("user_id", userId)
-          .eq("splik_id", splik.id);
-        if (error) throw error;
+      const u = await ensureAuth();
+      const { data: row } = await supabase
+        .from("hype_reactions")
+        .select("id")
+        .eq("splik_id", splik.id)
+        .eq("user_id", u.id)
+        .maybeSingle();
+
+      if (row?.id) {
+        // remove
+        await supabase.from("hype_reactions").delete().eq("id", row.id);
+        setHasHyped(false);
+        setHypeCount((c) => Math.max(0, c - 1));
       } else {
-        // idempotent add
-        const { error } = await supabase
-          .from(HYPE_TABLE)
-          .upsert([{ user_id: userId, splik_id: splik.id, amount: 1 }], {
-            onConflict: "splik_id,user_id",
-            ignoreDuplicates: true,
-          });
-        if (error) throw error;
+        await supabase
+          .from("hype_reactions")
+          .insert({ splik_id: splik.id, user_id: u.id, amount: 1 });
+        setHasHyped(true);
+        setHypeCount((c) => c + 1);
       }
-    } catch {
-      // revert on error
-      setHyped(wasHyped);
-      setHypeCount((c) => (wasHyped ? c + 1 : Math.max(0, c - 1)));
-    } finally {
-      setHypeBusy(false);
+    } catch (e: any) {
+      if (e?.message !== "auth_required") {
+        toast({ title: "Couldn’t update hype", variant: "destructive" });
+      }
     }
   };
 
-  const doShare = async () => {
-    if (onShare) return onShare();
-    const url = `${window.location.origin.replace(/\/$/, "")}/video/${splik.id}`;
+  const toggleSave = async () => {
     try {
-      if (navigator.share) {
-        await navigator.share({ title: splik.title || "Splik", url });
+      const u = await ensureAuth();
+      const { data: row } = await supabase
+        .from("favorites")
+        .select("id")
+        .eq("video_id", splik.id)
+        .eq("user_id", u.id)
+        .maybeSingle();
+
+      if (row?.id) {
+        await supabase.from("favorites").delete().eq("id", row.id);
+        setIsSaved(false);
+        toast({ title: "Removed from favorites" });
       } else {
-        await navigator.clipboard.writeText(url);
+        await supabase.from("favorites").insert({ video_id: splik.id, user_id: u.id });
+        setIsSaved(true);
+        toast({ title: "Saved to favorites" });
       }
-    } catch {}
+    } catch (e: any) {
+      if (e?.message !== "auth_required") {
+        toast({ title: "Couldn’t save", variant: "destructive" });
+      }
+    }
   };
 
-  const creator = splik.profile;
-  const creatorName =
-    creator?.display_name ||
-    creator?.first_name ||
-    creator?.username ||
-    "Creator";
+  const onToggleMute = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    const next = !isMuted;
+    v.muted = next;
+    setIsMuted(next);
+    if (!next && !isPlaying) {
+      // unmute implies intent—try to play
+      v.play().catch(() => {});
+    }
+  };
+
+  // Build creator link
+  const creatorHref = splik?.profile?.username
+    ? `/profile/${splik.profile.id}`
+    : `/profile/${splik.user_id}`;
 
   return (
-    <Card ref={hostRef} className="overflow-hidden border-0 bg-transparent shadow-none">
-      <div className="relative mx-auto w-full max-w-[520px]">
-        {/* Video box */}
-        <div className="relative bg-black rounded-xl overflow-hidden aspect-[9/16]">
-          <video
-            ref={videoRef}
-            src={shouldLoad ? splik.video_url : undefined}
-            poster={splik.thumbnail_url || undefined}
-            className="w-full h-full object-contain" /* keep full video visible; change to object-cover if you prefer crop */
-            playsInline
-            muted={muted}
-            preload="metadata"
-            loop
-          />
-          {/* Gradient bottom overlay */}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/70 to-transparent" />
-
-          {/* Mute toggle */}
-          <button
-            onClick={toggleMute}
-            className="absolute bottom-3 right-3 z-10 rounded-full bg-black/60 p-2 hover:bg-black/80"
-            aria-label={muted ? "Unmute" : "Mute"}
-          >
-            {muted ? (
-              <VolumeX className="h-5 w-5 text-white" />
-            ) : (
-              <Volume2 className="h-5 w-5 text-white" />
-            )}
-          </button>
-
-          {/* Creator chip — clickable */}
-          <Link
-            to={`/creator/${creator?.username || splik.user_id}`}
-            className="absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-full bg-black/60 px-2.5 py-1.5 hover:bg-black/75"
-            aria-label={`Open ${creatorName}'s profile`}
-            title={creatorName}
-          >
-            <Avatar className="h-7 w-7 ring-1 ring-white/20">
-              <AvatarImage src={creator?.avatar_url || undefined} />
-              <AvatarFallback className="text-[10px]">
-                {(creatorName || "C").slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-            <span className="text-white text-xs font-medium max-w-[120px] truncate">
-              {creatorName}
-            </span>
-          </Link>
-        </div>
-
-        {/* Action row */}
-        <div className="mt-3 flex items-center gap-2">
-          {/* Hype */}
-          <Button
-            size="sm"
-            variant={hyped ? "default" : "outline"}
-            onClick={toggleHype}
-            disabled={!userId || hypeBusy}
-            className={`flex-1 ${hyped ? "bg-gradient-to-r from-orange-500 to-pink-500 text-white" : ""}`}
-            aria-pressed={hyped}
-            aria-label="Hype"
-            title="Hype"
-          >
-            <Flame className={`h-4 w-4 mr-2 ${hyped ? "fill-current" : ""}`} />
-            <span className="font-semibold">{hypeCount}</span>
-          </Button>
-
-          {/* Save / Favorite */}
-          <Button
-            size="sm"
-            variant={saved ? "default" : "outline"}
-            onClick={toggleFavorite}
-            disabled={!userId || saving}
-            className={`flex-1 ${saved ? "bg-yellow-400 text-black hover:bg-yellow-500" : ""}`}
-            aria-pressed={saved}
-            aria-label={saved ? "Saved" : "Save"}
-            title={saved ? "Saved" : "Save"}
-          >
-            {saved ? (
-              <BookmarkCheck className="h-4 w-4 mr-2" />
-            ) : (
-              <Bookmark className="h-4 w-4 mr-2" />
-            )}
-            <span className="font-semibold">{saved ? "Saved" : "Save"}</span>
-          </Button>
-
-          {/* Share */}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={doShare}
-            aria-label="Share"
-            title="Share"
-            className="px-3"
-          >
-            <Share2 className="h-4 w-4" />
-          </Button>
-        </div>
-
-        {/* Title / Caption (optional) */}
-        {(splik.title || splik.description) && (
-          <div className="mt-2 text-sm">
-            {splik.title && (
-              <p className="font-semibold mb-0.5">{splik.title}</p>
-            )}
-            {splik.description && (
-              <p className="text-muted-foreground">{splik.description}</p>
-            )}
-          </div>
-        )}
+    <div ref={cardRef} className="rounded-xl bg-card/60 ring-1 ring-border/60 overflow-hidden">
+      {/* Video */}
+      <div className="relative">
+        <video
+          ref={videoRef}
+          // poster reduces initial black flash while buffering
+          poster={splik.thumbnail_url || undefined}
+          className="block w-full h-[560px] sm:h-[640px] object-contain bg-black"
+          src={shouldLoad ? splik.video_url : ""}
+          playsInline
+          muted
+          loop
+          preload="auto"
+          controls={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            const v = videoRef.current;
+            if (!v) return;
+            if (isPlaying) { v.pause(); setIsPlaying(false); }
+            else { v.play().then(() => setIsPlaying(true)).catch(() => {}); }
+          }}
+          onError={() => {
+            // Fallback: enable controls so user can still play
+            const v = videoRef.current;
+            if (v) v.controls = true;
+          }}
+        />
+        {/* mute button */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleMute(); }}
+          className="absolute right-3 bottom-3 rounded-full bg-black/60 p-2 ring-1 ring-white/30"
+          aria-label={isMuted ? "Unmute" : "Mute"}
+        >
+          {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+        </button>
       </div>
-    </Card>
-  );
-};
 
-export default SplikCard;
+      {/* Creator row */}
+      <div className="flex items-center gap-3 px-4 pt-3">
+        <Link to={creatorHref} className="shrink-0">
+          <img
+            src={
+              splik.profile?.avatar_url ||
+              `https://api.dicebear.com/7.x/avataaars/svg?seed=${splik.user_id}`
+            }
+            alt={splik.profile?.display_name || splik.profile?.username || "creator"}
+            className="h-9 w-9 rounded-full ring-2 ring-primary/20"
+          />
+        </Link>
+        <div className="min-w-0">
+          <Link to={creatorHref} className="block font-medium hover:text-primary truncate">
+            {splik.profile?.display_name || splik.profile?.username || "Creator"}
+          </Link>
+          {splik.title ? (
+            <p className="text-sm text-muted-foreground truncate">{splik.title}</p>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="px-4 pb-4 pt-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant={hasHyped ? "default" : "outline"}
+            size="sm"
+            className={cn("gap-2", hasHyped && "bg-orange-500 text-white")}
+            onClick={toggleHype}
+            disabled={loadingCounts}
+          >
+            <Flame className="h-4 w-4" />
+            {hypeCount}
+          </Button>
+
+          <Button variant="outline" size="sm" className="gap-2" asChild>
+            <Link to={`/video/${splik.id}#comments`}>
+              <MessageCircle className="h-4 w-4" />
+              {commentCount}
+            </Link>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={toggleSave}
+          >
+            {isSaved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+            {isSaved ? "Saved" : "Save"}
+          </Button>
+
+          <div className="ml-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={onShare}
+            >
+              <Share2 className="h-4 w-4" />
+              Share
+            </Button>
+          </div>
+        </div>
+
+        {/* Caption / description (optional) */}
+        {splik.description ? (
+          <p className="mt-3 text-sm">
+            {splik.description}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
