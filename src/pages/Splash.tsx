@@ -1,11 +1,11 @@
 // src/pages/Splash.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useFeedStore } from "@/store/feedStore";
 import { createHomeFeed } from "@/lib/feed";
 
-/* --------- helpers: seeded shuffle + anon id ---------- */
+/* ---------- helpers: seeded shuffle + anon id ---------- */
 const strToSeed = (s: string) => {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -47,9 +47,8 @@ const getAnonId = () => {
     return "anon";
   }
 };
-/* ----------------------------------------------------- */
+/* ------------------------------------------------------- */
 
-/** warm a few poster images in the HTTP cache */
 function warmPosters(urls: (string | null | undefined)[], limit = 6) {
   urls.filter(Boolean).slice(0, limit).forEach((u) => {
     const img = new Image();
@@ -58,8 +57,6 @@ function warmPosters(urls: (string | null | undefined)[], limit = 6) {
     img.src = u as string;
   });
 }
-
-/** warm metadata for the FIRST video (no heavy download) */
 function warmFirstVideoMeta(url?: string | null) {
   if (!url) return;
   try {
@@ -68,14 +65,10 @@ function warmFirstVideoMeta(url?: string | null) {
     v.src = url;
     v.muted = true;
     v.playsInline = true;
-    // kick the network request
     v.load();
-    // cleanup in a few seconds
     setTimeout(() => v.remove(), 5000);
   } catch {}
 }
-
-/** optional: preconnect to CDN/origin of media */
 function preconnect(url?: string | null) {
   if (!url) return;
   try {
@@ -93,17 +86,27 @@ export default function Splash() {
   const { setFeed, setLastFetchedAt } = useFeedStore();
   const [progress, setProgress] = useState(8);
 
+  // ensure we only navigate once
+  const navigatedRef = useRef(false);
+  const safeNavigateHome = () => {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
+    navigate("/home", { replace: true });
+  };
+
   // treat a hard reload differently (new session seed)
   const isReload = useMemo(() => {
     try {
-      const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+      const nav = performance.getEntriesByType("navigation")[0] as
+        | PerformanceNavigationTiming
+        | undefined;
       return nav?.type === "reload";
     } catch {
       return false;
     }
   }, []);
 
-  // session seed makes order change each full reload for this viewer
+  // per-session seed for deterministic shuffle
   const sessionSeed = useMemo(() => {
     const seed =
       typeof crypto !== "undefined" && (crypto as any).getRandomValues
@@ -118,159 +121,203 @@ export default function Splash() {
   useEffect(() => {
     let cancelled = false;
 
+    // ⏱ hard cap: never sit on Splash > 3.5s
+    const failSafe = setTimeout(() => {
+      if (!navigatedRef.current) safeNavigateHome();
+    }, 3500);
+
+    const primeFromCacheIfAny = () => {
+      try {
+        const raw = sessionStorage.getItem("feed:cached");
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setFeed(parsed);
+          setLastFetchedAt(Date.now());
+          // tiny beat to let the UI mount
+          setTimeout(() => {
+            if (!cancelled) safeNavigateHome();
+          }, 60);
+          return true;
+        }
+      } catch {}
+      return false;
+    };
+
     const go = async () => {
       try {
-        setProgress(12);
+        setProgress(15);
 
-        // Signed in user?
-        const { data: auth } = await supabase.auth.getUser();
+        // if we already have cache, jump now and refresh in background
+        const fastPathed = primeFromCacheIfAny();
+
+        // fetch everything in parallel (no blocking)
+        const nowIso = new Date().toISOString();
+        const [{ data: auth }] = await Promise.all([supabase.auth.getUser()]);
         const viewerId = auth?.user?.id || getAnonId();
 
-        setProgress(22);
+        setProgress((p) => Math.max(p, 25));
 
-        // 1) Fetch base spliks (limit generously to let feed pick top N)
-        const nowIso = new Date().toISOString();
-
-        const allResp = await supabase
+        const allReq = supabase
           .from("spliks")
-          .select(`
+          .select(
+            `
             id, user_id, title, description, video_url, thumbnail_url,
             trim_start, trim_end, created_at, hype_count
-          `)
+          `
+          )
           .order("created_at", { ascending: false })
           .limit(150);
 
-        // Boosted (optional)
-        let boostedData: any[] = [];
-        try {
-          const boostedResp = await supabase
-            .from("spliks")
-            .select(`
-              *,
-              boosted_videos!inner(
-                boost_level,
-                end_date,
-                status
-              )
-            `)
-            .gt("boost_score", 0)
-            .eq("boosted_videos.status", "active")
-            .gt("boosted_videos.end_date", nowIso)
-            .order("boost_score", { ascending: false })
-            .limit(15);
-          if (boostedResp.data) boostedData = boostedResp.data;
-        } catch {
-          boostedData = [];
-        }
+        const boostedReq = supabase
+          .from("spliks")
+          .select(
+            `
+            *,
+            boosted_videos!inner(
+              boost_level,
+              end_date,
+              status
+            )
+          `
+          )
+          .gt("boost_score", 0)
+          .eq("boosted_videos.status", "active")
+          .gt("boosted_videos.end_date", nowIso)
+          .order("boost_score", { ascending: false })
+          .limit(15);
+
+        const [allResp, boostedResp] = await Promise.allSettled([allReq, boostedReq]);
 
         if (cancelled) return;
-        if (allResp.error) throw allResp.error;
+        setProgress((p) => Math.max(p, 45));
 
-        setProgress(40);
+        const allData =
+          allResp.status === "fulfilled" && !allResp.value.error
+            ? allResp.value.data || []
+            : [];
 
-        // 2) Build personalized feed
-        const feedBase = createHomeFeed(allResp.data || [], boostedData, {
+        const boostedData =
+          boostedResp.status === "fulfilled" && !boostedResp.value.error
+            ? boostedResp.value.data || []
+            : [];
+
+        // build feed
+        const feedBase = createHomeFeed(allData, boostedData, {
           userId: auth?.user?.id,
           feedType: "home",
           maxResults: 60,
         }) as any[];
 
-        // 3) Deterministic shuffle (per user/device, per reload)
+        // deterministic shuffle
         const seed = (strToSeed(viewerId) ^ sessionSeed) >>> 0;
         let shuffled = shuffleWithSeed(feedBase, seed);
 
-        // Keep newest pinned unless this is a hard reload
-        if (!isReload) {
-          const newest = (allResp.data || [])[0];
-          if (newest) {
-            const idx = shuffled.findIndex((x) => x.id === newest.id);
-            if (idx > 0) {
-              const [item] = shuffled.splice(idx, 1);
-              shuffled = [item, ...shuffled];
-            }
+        // keep newest on top unless hard reload
+        if (!isReload && allData[0]) {
+          const newest = allData[0];
+          const idx = shuffled.findIndex((x: any) => x.id === newest.id);
+          if (idx > 0) {
+            const [item] = shuffled.splice(idx, 1);
+            shuffled = [item, ...shuffled];
           }
         }
 
-        setProgress(55);
+        setProgress((p) => Math.max(p, 60));
 
-        // 4) Attach profiles in ONE query
-        const uniqueUserIds = Array.from(new Set(shuffled.map((s) => s.user_id).filter(Boolean)));
+        // attach profiles in one query
+        const uniqueUserIds = Array.from(
+          new Set(shuffled.map((s: any) => s.user_id).filter(Boolean))
+        );
         let profilesData: any[] = [];
         if (uniqueUserIds.length > 0) {
           const { data, error: profileErr } = await supabase
             .from("profiles")
             .select("id, username, display_name, first_name, avatar_url")
             .in("id", uniqueUserIds);
-          if (profileErr) throw profileErr;
-          profilesData = data || [];
+          if (!profileErr && data) profilesData = data;
         }
         const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
-        let withProfiles = shuffled.map((s) => ({ ...s, profile: pmap.get(s.user_id) }));
+        let withProfiles = shuffled.map((s: any) => ({
+          ...s,
+          profile: pmap.get(s.user_id),
+        }));
 
-        setProgress(68);
+        setProgress((p) => Math.max(p, 72));
 
-        // 5) Attach hype_count if the column isn't populated
-        const missingCounts = withProfiles.some((s: any) => typeof s.hype_count !== "number");
+        // backfill hype_count if missing (best-effort)
+        const missingCounts = withProfiles.some(
+          (s: any) => typeof s.hype_count !== "number"
+        );
         if (missingCounts) {
           const ids = withProfiles.map((s: any) => s.id);
           const map = new Map<string, number>();
 
-          // try "likes"
           try {
-            const { data } = await supabase.from("likes").select("video_id").in("video_id", ids);
-            (data || []).forEach((r: any) => {
-              map.set(r.video_id, (map.get(r.video_id) || 0) + 1);
-            });
+            const { data } = await supabase
+              .from("likes")
+              .select("video_id")
+              .in("video_id", ids);
+            (data || []).forEach((r: any) =>
+              map.set(r.video_id, (map.get(r.video_id) || 0) + 1)
+            );
           } catch {}
 
-          // fallback "hypes"
           if (map.size === 0) {
             try {
-              const { data } = await supabase.from("hypes").select("video_id").in("video_id", ids);
-              (data || []).forEach((r: any) => {
-                map.set(r.video_id, (map.get(r.video_id) || 0) + 1);
-              });
+              const { data } = await supabase
+                .from("hypes")
+                .select("video_id")
+                .in("video_id", ids);
+              (data || []).forEach((r: any) =>
+                map.set(r.video_id, (map.get(r.video_id) || 0) + 1)
+              );
             } catch {}
           }
 
           if (map.size) {
             withProfiles = withProfiles.map((s: any) =>
-              typeof s.hype_count === "number" ? s : { ...s, hype_count: map.get(s.id) ?? 0 }
+              typeof s.hype_count === "number"
+                ? s
+                : { ...s, hype_count: map.get(s.id) ?? 0 }
             );
           }
         }
 
-        setProgress(80);
+        setProgress((p) => Math.max(p, 84));
 
-        // 6) Warm the cache for a smoother first frame
+        // warm cache for first item
         preconnect(withProfiles[0]?.video_url);
         warmPosters(withProfiles.map((s: any) => s.thumbnail_url));
         warmFirstVideoMeta(withProfiles[0]?.video_url);
 
-        // 7) Store for Index page + persist for instant paint
+        // store → feed store + session cache
         if (!cancelled) {
           setFeed(withProfiles);
           setLastFetchedAt(Date.now());
           try {
             sessionStorage.setItem("feed:cached", JSON.stringify(withProfiles));
+            sessionStorage.setItem("feed:last", String(Date.now()));
           } catch {}
         }
 
-        setProgress(96);
+        setProgress(100);
 
-        // 8) Navigate after a tiny beat (no flash)
-        setTimeout(() => {
-          if (!cancelled) navigate("/home", { replace: true });
-        }, 250);
+        // if we didn't fast-path earlier, navigate now
+        if (!fastPathed && !cancelled) {
+          setTimeout(() => safeNavigateHome(), 120);
+        }
       } catch {
-        // If anything fails, still move on—Index will fallback fetch.
-        navigate("/home", { replace: true });
+        // on any error, still proceed to home
+        safeNavigateHome();
       }
     };
 
     go();
+
     return () => {
       cancelled = true;
+      clearTimeout(failSafe);
     };
   }, [navigate, isReload, sessionSeed, setFeed, setLastFetchedAt]);
 
