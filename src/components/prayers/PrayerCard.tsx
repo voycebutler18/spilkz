@@ -1,7 +1,7 @@
 // src/components/prayers/PrayerCard.tsx
 import { Link } from "react-router-dom";
 import { format } from "date-fns";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createReply, fetchReplies, deletePrayer } from "@/lib/prayers";
@@ -16,7 +16,7 @@ export default function PrayerCard({
     author: string;
     type: "request" | "testimony" | "quote";
     body: string;
-    reply_count: number;
+    reply_count: number;   // keep this in your list SELECT; it’s the seed value
     answered: boolean;
     created_at: string;
   };
@@ -94,7 +94,7 @@ export default function PrayerCard({
         {item.body}
       </Link>
 
-      {/* Comments only */}
+      {/* Comments only, with realtime count */}
       <div className="mt-3 text-sm">
         <ReplyListInline
           prayerId={item.id}
@@ -105,7 +105,7 @@ export default function PrayerCard({
   );
 }
 
-/** Inline Reply list (mobile-safe, with count) */
+/** Inline Reply list with realtime count */
 function ReplyListInline({
   prayerId,
   initialCount,
@@ -119,17 +119,70 @@ function ReplyListInline({
   >([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+
+  // This is the number you display next to "Replies"
   const [replyCount, setReplyCount] = useState(initialCount);
 
+  // 1) On mount, fetch an authoritative count so it’s correct even after a hard refresh.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // We do a HEAD count to avoid pulling rows
+      const { count, error } = await supabase
+        .from("prayer_replies")
+        .select("id", { count: "exact", head: true })
+        .eq("prayer_id", prayerId);
+
+      if (!cancelled && !error && typeof count === "number") {
+        setReplyCount(count);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [prayerId]);
+
+  // 2) Realtime: update the count (and the open list) as replies are inserted/deleted.
+  useEffect(() => {
+    const channel = supabase
+      .channel(`replies-${prayerId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "prayer_replies", filter: `prayer_id=eq.${prayerId}` },
+        (payload) => {
+          setReplyCount((c) => c + 1);
+          if (open) {
+            // only append to visible list if user has the thread open
+            const row = payload.new as { id: string; body: string; created_at: string };
+            setList((l) => [...l, { id: row.id, body: (row as any).body, created_at: row.created_at }]);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "prayer_replies", filter: `prayer_id=eq.${prayerId}` },
+        (payload) => {
+          setReplyCount((c) => Math.max(0, c - 1));
+          if (open) {
+            const id = (payload.old as any).id;
+            setList((l) => l.filter((r) => r.id !== id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [prayerId, open]);
+
+  // 3) When opened, fetch the messages so the user sees them
   useEffect(() => {
     if (!open) return;
     fetchReplies(prayerId)
-      .then((d: any) => {
-        setList(d || []);
-        setReplyCount(Math.max(initialCount, (d || []).length));
-      })
+      .then((d: any) => setList(d || []))
       .catch(() => {});
-  }, [open, prayerId, initialCount]);
+  }, [open, prayerId]);
 
   const post = async () => {
     const t = text.trim();
@@ -137,8 +190,8 @@ function ReplyListInline({
     setSending(true);
     try {
       const r: any = await createReply(prayerId, t);
+      // The realtime handler will bump the count. Still append locally for snappy UX:
       setList((l) => [...l, r]);
-      setReplyCount((prev) => prev + 1);
       setText("");
     } finally {
       setSending(false);
