@@ -4,8 +4,13 @@ import { format } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { amenPrayer, createReply, fetchReplies, deletePrayer } from "@/lib/prayers";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  amenPrayer,
+  createReply,
+  fetchReplies,
+  deletePrayer,   // <-- add
+} from "@/lib/prayers";
+import { supabase } from "@/integrations/supabase/client"; // <-- add
 
 export default function PrayerCard({
   item,
@@ -13,7 +18,7 @@ export default function PrayerCard({
 }: {
   item: {
     id: string;
-    author: string; // MUST be present from fetchPrayers
+    author: string;  // <-- REQUIRED for ownership check
     type: "request" | "testimony" | "quote";
     body: string;
     amen_count: number;
@@ -26,6 +31,7 @@ export default function PrayerCard({
   const day = format(new Date(item.created_at), "MMM d, yyyy");
   const time = format(new Date(item.created_at), "h:mm a");
 
+  // who is logged in?
   const [me, setMe] = useState<string | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
@@ -58,13 +64,19 @@ export default function PrayerCard({
           {item.type}
         </span>
         {item.answered && (
-          <span className="inline-flex rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5">
+          <span
+            className="inline-flex rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5"
+            aria-label="Marked as answered"
+            title="Marked as answered"
+          >
             Answered
           </span>
         )}
         <span className="text-muted-foreground ml-auto">
           {day} at {time}
         </span>
+
+        {/* Delete for owner only */}
         {isOwner && (
           <Button
             variant="ghost"
@@ -73,6 +85,7 @@ export default function PrayerCard({
             onClick={handleDelete}
             disabled={deleting}
             aria-label="Delete post"
+            title="Delete post"
           >
             {deleting ? "Deleting…" : "Delete"}
           </Button>
@@ -101,21 +114,39 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
     if (busy || clicked) return;
     setBusy(true);
     setClicked(true);
-    setLocal(v => v + 1);
-    try { await amenPrayer(id); }
-    catch { setClicked(false); setLocal(v => v - 1); }
-    finally { setBusy(false); }
+    setLocal((v) => v + 1);
+    try {
+      await amenPrayer(id);
+    } catch {
+      setClicked(false);
+      setLocal((v) => v - 1);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <Button variant="ghost" size="sm" onClick={click} disabled={busy || clicked}>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={click}
+      disabled={busy || clicked}
+      aria-label="Amen"
+      title={clicked ? "You already clicked Amen" : "Amen"}
+    >
       🙏 <span className="ml-2">{local}</span>
     </Button>
   );
 }
 
-/** Inline Replies */
-function ReplyListInline({ prayerId, initialCount }: { prayerId: string; initialCount: number }) {
+/** Inline Reply list */
+function ReplyListInline({
+  prayerId,
+  initialCount
+}: {
+  prayerId: string;
+  initialCount: number;
+}) {
   const [open, setOpen] = useState(false);
   const [list, setList] = useState<Array<{ id: string; body: string; created_at: string }>>([]);
   const [text, setText] = useState("");
@@ -134,7 +165,7 @@ function ReplyListInline({ prayerId, initialCount }: { prayerId: string; initial
     setSending(true);
     try {
       const r: any = await createReply(prayerId, t);
-      setList(l => [...l, r]);
+      setList((l) => [...l, r]);
       setText("");
     } finally {
       setSending(false);
@@ -150,19 +181,31 @@ function ReplyListInline({ prayerId, initialCount }: { prayerId: string; initial
 
   return (
     <div>
-      <button className="text-muted-foreground" onClick={() => setOpen(v => !v)}>
+      <button
+        className="text-muted-foreground"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={`replies-${prayerId}`}
+      >
         💬 {open ? "Hide" : "Replies"} ({total})
       </button>
+
       {open && (
-        <div className="mt-2 space-y-2">
-          {list.map(r => (
+        <div id={`replies-${prayerId}`} className="mt-2 space-y-2">
+          {list.map((r) => (
             <div key={r.id} className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap">
               {r.body}
             </div>
           ))}
           <div className="flex gap-2">
-            <Input value={text} onChange={(e)=>setText(e.target.value)} onKeyDown={onKeyDown}
-                   placeholder="Write a reply…" aria-label="Write a reply" disabled={sending}/>
+            <Input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Write a reply…"
+              aria-label="Write a reply"
+              disabled={sending}
+            />
             <Button onClick={post} disabled={!text.trim() || text.length > 1000 || sending}>
               {sending ? "Sending…" : "Send"}
             </Button>
