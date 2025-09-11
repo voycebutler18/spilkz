@@ -12,7 +12,7 @@ import Footer from "@/components/layout/Footer";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, Eye, MessageSquare } from "lucide-react";
+import { MapPin, Calendar, Film, Users, MessageSquare, Heart } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -56,16 +56,13 @@ export default function CreatorProfile() {
     });
   }, []);
 
-  // 🔧 Robustly resolve slug:
-  // - If slug is empty and the user is logged in, redirect to their canonical profile
-  // - Try username (case-insensitive), then id (uuid)
+  // Resolve profile slug (username or uuid); redirect /creator -> own profile when logged in
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       const s = (slug || "").trim();
 
-      // If the route is /creator/ (no slug), send the logged-in user to their profile
       if (!s) {
         const { data: session } = await supabase.auth.getSession();
         const uid = session?.session?.user?.id;
@@ -78,8 +75,6 @@ export default function CreatorProfile() {
           if (me?.username) {
             navigate(`/creator/${me.username}`, { replace: true });
           } else {
-            // Instead of redirecting to /profile/:id, redirect to /creator/:id
-            // This ensures the current component handles the route
             navigate(`/creator/${uid}`, { replace: true });
           }
           return;
@@ -97,29 +92,24 @@ export default function CreatorProfile() {
       try {
         let profileData: Profile | null = null;
 
-        // 1) Try username case-insensitively first
         if (!isUuid(s)) {
-          let { data, error } = await supabase
+          let { data } = await supabase
             .from("profiles")
             .select("*")
-            .ilike("username", s) // case-insensitive exact (no % wildcards used)
+            .ilike("username", s)
             .maybeSingle<Profile>();
 
-          // If ilike somehow didn't find it, try strict lower
           if (!data) {
-            const sLower = s.toLowerCase();
             const byLower = await supabase
               .from("profiles")
               .select("*")
-              .eq("username", sLower)
+              .eq("username", s.toLowerCase())
               .maybeSingle<Profile>();
             data = byLower.data || null;
           }
-
           profileData = data;
         }
 
-        // 2) If not found and slug looks like a UUID, try by id
         if (!profileData && isUuid(s)) {
           const byId = await supabase
             .from("profiles")
@@ -128,14 +118,12 @@ export default function CreatorProfile() {
             .maybeSingle<Profile>();
           profileData = byId.data || null;
 
-          // Redirect to canonical /creator/:username when we can
           if (profileData?.username && s !== profileData.username) {
             navigate(`/creator/${profileData.username}`, { replace: true });
             return;
           }
         }
 
-        // 3) If still not found, try one more time with exact username match
         if (!profileData && !isUuid(s)) {
           const { data } = await supabase
             .from("profiles")
@@ -176,12 +164,10 @@ export default function CreatorProfile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, navigate]);
 
-  // Realtime subscriptions scoped to this profile id
+  // Realtime subscriptions for this profile
   useEffect(() => {
     if (unsubRef.current) {
-      try {
-        unsubRef.current();
-      } catch {}
+      try { unsubRef.current(); } catch {}
       unsubRef.current = null;
     }
     if (!profile?.id) return;
@@ -203,9 +189,10 @@ export default function CreatorProfile() {
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
+      // 🔁 listen to hype_reactions (NOT likes) to refresh the "Liked" tab
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "likes", filter: `user_id=eq.${profile.id}` },
+        { event: "*", schema: "public", table: "hype_reactions", filter: `user_id=eq.${profile.id}` },
         () => fetchLikedSpliks(profile.id)
       )
       .subscribe();
@@ -213,11 +200,7 @@ export default function CreatorProfile() {
     unsubRef.current = () => supabase.removeChannel(channel);
     return () => {
       if (unsubRef.current) {
-        try {
-          unsubRef.current();
-        } finally {
-          unsubRef.current = null;
-        }
+        try { unsubRef.current(); } finally { unsubRef.current = null; }
       }
     };
   }, [profile?.id]);
@@ -262,12 +245,13 @@ export default function CreatorProfile() {
     }
   };
 
+  // ✅ Liked tab now uses hype_reactions
   const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
     try {
       setLikedLoading(true);
 
       const { data: likesRows, error: likesErr } = await supabase
-        .from("likes")
+        .from("hype_reactions")
         .select("splik_id, created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
@@ -574,7 +558,7 @@ export default function CreatorProfile() {
               />
             ) : (
               <Card className="p-12 text-center">
-                <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <Heart className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
                 <p className="text-muted-foreground">No liked videos yet</p>
               </Card>
             )}
