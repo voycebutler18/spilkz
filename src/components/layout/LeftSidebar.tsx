@@ -53,14 +53,15 @@ const LeftSidebar: React.FC = () => {
         </div>
 
         <nav className="mt-3 space-y-1">
+          {/* RENAMED: Discover -> Home */}
           <Link
-            to="/explore"
+            to="/home"
             className={cn(
               "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/explore") && "bg-white/10 font-medium"
+              isActive("/home") && "bg-white/10 font-medium"
             )}
           >
-            Discover
+            Home
           </Link>
 
           <Link
