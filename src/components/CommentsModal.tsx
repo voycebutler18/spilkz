@@ -1,5 +1,5 @@
 // src/components/CommentsModal.tsx
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
+import { useToast } from "@/components/ui/use-toast";
 import { formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
 
@@ -43,35 +43,44 @@ interface CommentsModalProps {
   onCountDelta?: (delta: number) => void;
 }
 
-const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModalProps) => {
+const CommentsModal = ({
+  isOpen,
+  onClose,
+  splikId,
+  onCountDelta,
+}: CommentsModalProps) => {
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Accurate count independent of what's rendered
+  // Accurate count (not derived from rendered list)
   const [count, setCount] = useState(0);
 
-  // Auth state (avoid “Please log in” flicker)
+  // Auth
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id: string; profile?: Profile } | null>(null);
 
   const { toast } = useToast();
 
-  // De-dup set for realtime/optimistic updates
+  // De-duplication for realtime/optimistic updates
   const seenIds = useRef<Set<string>>(new Set());
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const buildProfilePath = (p?: Profile | null, fallbackUserId?: string) =>
     p?.username ? `/creator/${p.username}` : `/profile/${p?.id || fallbackUserId}`;
 
-  const displayName = (p?: Profile | null) =>
-    p?.display_name || p?.first_name || p?.username || "Unknown User";
+  const displayName = (p?: Profile | null) => {
+    if (!p) return "Unknown User";
+    if (p.display_name) return p.display_name;
+    if (p.first_name || p.last_name) return `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim();
+    return p.username ?? "Unknown User";
+  };
 
   const initials = (p?: Profile | null) =>
     (displayName(p).substring(0, 2) || "UU").toUpperCase();
 
-  // ---- Auth (session) -----------------------------------------------------
+  /* ----------------------- Auth session ----------------------- */
   useEffect(() => {
     if (!isOpen) return;
 
@@ -114,7 +123,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
     };
   }, [isOpen]);
 
-  // ---- Initial load: comments + accurate count ----------------------------
+  /* -------------------- Initial load + count ------------------- */
   useEffect(() => {
     if (!isOpen) return;
 
@@ -123,7 +132,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
 
     (async () => {
       try {
-        // Comments (newest first for UX)
+        // Load latest first for UX
         const { data: rows, error } = await supabase
           .from("comments")
           .select("id, content, created_at, user_id")
@@ -133,9 +142,9 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
         if (error) throw error;
 
         const list = rows || [];
-        list.forEach((r: any) => seenIds.current.add(r.id)); // mark as seen
+        list.forEach((r: any) => seenIds.current.add(r.id));
 
-        // Count via head request (never over-counts)
+        // Accurate count (constant-time HEAD)
         const { count: exact } = await supabase
           .from("comments")
           .select("id", { count: "exact", head: true })
@@ -144,9 +153,9 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
         if (!cancelled) {
           setCount(exact ?? list.length);
 
-          // Fetch profiles in batch and hydrate
+          // Batch load profiles
           const ids = Array.from(new Set(list.map((r: any) => r.user_id).filter(Boolean)));
-          let profilesById = new Map<string, Profile>();
+          const profilesById = new Map<string, Profile>();
           if (ids.length > 0) {
             const { data: profs } = await supabase
               .from("profiles")
@@ -182,7 +191,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
     };
   }, [isOpen, splikId, toast]);
 
-  // ---- Realtime (INSERT/DELETE), de-duplicated ----------------------------
+  /* ---------------------- Realtime stream ---------------------- */
   useEffect(() => {
     if (!isOpen) return;
 
@@ -201,7 +210,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
           if (!row?.id || seenIds.current.has(row.id)) return;
           seenIds.current.add(row.id);
 
-          // Fetch profile for the new commenter (small one-off)
+          // One-off fetch for the newcomer's profile
           let prof: Profile | null = null;
           const { data: p } = await supabase
             .from("profiles")
@@ -215,7 +224,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
             ...prev,
           ]);
           setCount((c) => c + 1);
-          onCountDelta?.(1); // notify parent exactly once
+          onCountDelta?.(1);
         }
       )
       .on(
@@ -227,14 +236,13 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
           seenIds.current.add(`del:${row.id}`);
           setComments((prev) => prev.filter((c) => c.id !== row.id));
           setCount((c) => Math.max(0, c - 1));
-          onCountDelta?.(-1); // notify parent exactly once
+          onCountDelta?.(-1);
         }
       )
       .subscribe();
 
     channelRef.current = ch;
 
-    // Cleanup on close/unmount
     return () => {
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
@@ -243,7 +251,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
     };
   }, [isOpen, splikId, onCountDelta]);
 
-  // ---- Submit --------------------------------------------------------------
+  /* ------------------------- Submit --------------------------- */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newComment.trim() || !currentUser) return;
@@ -262,7 +270,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
 
       if (error) throw error;
 
-      // Optimistic add (guard against double-add when realtime arrives)
+      // Optimistic add (deduped when realtime arrives)
       if (data && !seenIds.current.has(data.id)) {
         seenIds.current.add(data.id);
         setComments((prev) => [
@@ -270,7 +278,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
           ...prev,
         ]);
         setCount((c) => c + 1);
-        onCountDelta?.(1); // instant bump on the card
+        onCountDelta?.(1);
       }
 
       setNewComment("");
@@ -284,7 +292,7 @@ const CommentsModal = ({ isOpen, onClose, splikId, onCountDelta }: CommentsModal
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-md max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Comments</DialogTitle>
