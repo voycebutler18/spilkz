@@ -1,3 +1,4 @@
+// src/components/layout/MobileMenu.tsx
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -129,6 +130,20 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             Food
           </Link>
 
+          {/* NEW: Daily Prayers */}
+          <Link
+            to="/prayers"
+            onClick={(e) => {
+              e.preventDefault();
+              go("/prayers");
+            }}
+            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+            aria-label="Daily Prayers"
+            title="Daily Prayers"
+          >
+            🙏 Daily Prayers
+          </Link>
+
           <div
             className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 bg-white/5 cursor-not-allowed select-none"
             aria-disabled="true"
@@ -200,7 +215,6 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
                 Messages
               </Link>
 
-              {/* 👉 make sign out visible inside the list, not just at the very bottom */}
               <button
                 onClick={handleSignOut}
                 className="text-left rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors flex items-center gap-2"
