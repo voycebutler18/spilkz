@@ -28,6 +28,11 @@ const Header: React.FC = () => {
   const [user, setUser] = React.useState<any>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // simple active helper
+  const isActive = (path: string) =>
+    location.pathname === path || location.pathname.startsWith(path + "/");
 
   // Load current user + listen for auth changes
   React.useEffect(() => {
@@ -103,18 +108,30 @@ const Header: React.FC = () => {
           <Button
             variant="ghost"
             size="sm"
-            className="gap-2"
+            className={cn("gap-2", isActive("/") && "font-semibold")}
             onClick={() => navigate("/")}
             aria-label="Home"
           >
             <Home className="h-4 w-4" /> Home
           </Button>
 
+          {/* NEW: Daily Prayers link */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("gap-2", isActive("/prayers") && "font-semibold")}
+            onClick={() => navigate("/prayers")}
+            aria-label="Daily Prayers and Testimonies"
+            title="Daily Prayers & Testimonies"
+          >
+            🙏 Daily Prayers
+          </Button>
+
           {user && (
             <Button
               variant="ghost"
               size="sm"
-              className="gap-2"
+              className={cn("gap-2", isActive("/dashboard") && "font-semibold")}
               onClick={() => navigate("/dashboard")}
               aria-label="Creator Dashboard"
             >
@@ -127,7 +144,7 @@ const Header: React.FC = () => {
             <Button
               variant="ghost"
               size="sm"
-              className="gap-2"
+              className={cn("gap-2", isActive("/messages") && "font-semibold")}
               onClick={() => navigate("/messages")}
               aria-label="Messages"
             >
