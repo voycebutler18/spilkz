@@ -3,7 +3,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+  useLocation,
+} from "react-router-dom";
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
@@ -53,6 +60,12 @@ import CombinedMessages from "./pages/CombinedMessages";
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
 
+// NEW: Daily Prayers & Testimonies
+import PrayersPage from "./pages/Prayers";
+import PrayerDetailPage from "./pages/PrayerDetail";
+import PrayersTagPage from "./pages/PrayersTag";
+import PrayersSearchPage from "./pages/PrayersSearch";
+
 // 404
 import NotFound from "./pages/NotFound";
 
@@ -97,7 +110,9 @@ function ScrollToTop() {
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
-    typeof window !== "undefined" ? window.matchMedia("(min-width: 1024px)").matches : true
+    typeof window !== "undefined"
+      ? window.matchMedia("(min-width: 1024px)").matches
+      : true
   );
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -155,6 +170,14 @@ const App = () => (
               <Route path="/help" element={<HelpCenter />} />
               <Route path="/contact" element={<Contact />} />
 
+              {/* Legal / Community */}
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/dmca" element={<DMCA />} />
+              <Route path="/guidelines" element={<Guidelines />} />
+              <Route path="/safety" element={<Safety />} />
+              <Route path="/accessibility" element={<Accessibility />} />
+
               {/* Redirects */}
               <Route path="/prompts" element={<Navigate to="/food" replace />} />
 
@@ -172,6 +195,12 @@ const App = () => (
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
               <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
+
+              {/* Daily Prayers and Testimonies */}
+              <Route path="/prayers" element={<PrayersPage />} />
+              <Route path="/prayers/search" element={<PrayersSearchPage />} />
+              <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
+              <Route path="/prayers/:id" element={<PrayerDetailPage />} />
 
               {/* 404 */}
               <Route path="*" element={<NotFound />} />
