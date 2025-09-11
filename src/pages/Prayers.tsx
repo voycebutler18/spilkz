@@ -88,8 +88,6 @@ export default function PrayersPage() {
   };
 
   // Includes Christian (Non-Denominational) explicitly, plus many common families.
-  // This is broad on purpose to “have every single religion possible” in spirit,
-  // mapped to common OpenStreetMap tags so searches work globally.
   const FAITH_OPTIONS: FaithOption[] = [
     // Christianity – umbrella
     { key: "christian_any", label: "Christian (Any)", religionRegex: "christian" },
@@ -242,25 +240,62 @@ export default function PrayersPage() {
     }
   };
 
-  const overpassFetch = async (query: string) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-    try {
-      const res = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=UTF-8" },
-        body: query,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!res.ok) throw new Error(`Overpass API error ${res.status}: ${res.statusText}`);
-      return await res.json();
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === "AbortError") throw new Error("Search timed out. Please try again.");
-      throw error;
+  /* ---------------- Overpass mirrors + resilient fetch ---------------- */
+  const OVERPASS_ENDPOINTS = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter",
+  ];
+
+  async function overpassFetch(query: string) {
+    const tryOnce = async (endpoint: string, attempt: number) => {
+      const controller = new AbortController();
+      const timeoutMs = 12000 + attempt * 2000; // 12s → 18s
+      const t = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/plain;charset=UTF-8",
+            "User-Agent": "SplikzApp/1.0 (church-finder)",
+            "Accept": "application/json",
+          },
+          body: query,
+          signal: controller.signal,
+        });
+        clearTimeout(t);
+        if (!res.ok) {
+          if ([429, 502, 503, 504].includes(res.status)) {
+            throw new Error(`Transient ${res.status}`);
+          }
+          const text = await res.text().catch(() => "");
+          throw new Error(`Overpass error ${res.status}: ${text || res.statusText}`);
+        }
+        return await res.json();
+      } catch (err) {
+        clearTimeout(t);
+        throw err;
+      }
+    };
+
+    const endpoints = [...OVERPASS_ENDPOINTS].sort(() => Math.random() - 0.5);
+    let lastError: any = null;
+    for (let i = 0; i < endpoints.length; i++) {
+      const ep = endpoints[i];
+      try {
+        if (i > 0) await new Promise(r => setTimeout(r, 300 + Math.random() * 500));
+        return await tryOnce(ep, i);
+      } catch (e: any) {
+        lastError = e;
+      }
     }
-  };
+    throw new Error(
+      lastError?.message?.includes("abort")
+        ? "Search timed out. Please try again."
+        : `All Overpass mirrors failed. Please try again in a moment. (${lastError?.message || "Unknown error"})`
+    );
+  }
 
   const haversineKm = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
     const R = 6371;
@@ -274,6 +309,31 @@ export default function PrayersPage() {
     return 2 * R * Math.asin(Math.sqrt(h));
   };
 
+  // Light (nodes only) and Full (nodes + ways + relations) query builders
+  const buildOverpassAroundQueryLight = (
+    center: { lat: number; lon: number },
+    radiusMeters: number,
+    religionRegex: string,
+    denomRegex?: string
+  ) => {
+    const around = `(around:${Math.round(radiusMeters)},${center.lat},${center.lon})`;
+    const base = `["amenity"="place_of_worship"]`;
+    const rel = religionRegex ? `["religion"~"${religionRegex}",i]` : "";
+    const denom = denomRegex ? `["denomination"~"${denomRegex}",i]` : "";
+    const nameFallback = denomRegex ? `["name"~"${denomRegex}",i]` : "";
+    const brandFallback = denomRegex ? `["brand"~"${denomRegex}",i]` : "";
+
+    return `
+      [out:json][timeout:25];
+      (
+        node${base}${rel}${denom}${around};
+        node${base}${rel}${nameFallback}${around};
+        node${base}${rel}${brandFallback}${around};
+      );
+      out center tags;
+    `;
+  };
+
   const buildOverpassAroundQuery = (
     center: { lat: number; lon: number },
     radiusMeters: number,
@@ -284,7 +344,6 @@ export default function PrayersPage() {
     const base = `["amenity"="place_of_worship"]`;
     const rel = religionRegex ? `["religion"~"${religionRegex}",i]` : "";
     const denom = denomRegex ? `["denomination"~"${denomRegex}",i]` : "";
-    // Also try name/brand fallbacks (some places encode denom in name)
     const nameFallback = denomRegex ? `["name"~"${denomRegex}",i]` : "";
     const brandFallback = denomRegex ? `["brand"~"${denomRegex}",i]` : "";
 
@@ -366,9 +425,18 @@ export default function PrayersPage() {
       }
 
       const faith = FAITH_OPTIONS.find(f => f.key === faithFilter) || FAITH_OPTIONS[0];
-      const query = buildOverpassAroundQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex);
-      const json = await overpassFetch(query);
-      const elements: any[] = json.elements || [];
+
+      // 1) FAST: nodes-only
+      const lightQ = buildOverpassAroundQueryLight(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex);
+      let json = await overpassFetch(lightQ);
+      let elements: any[] = json.elements || [];
+
+      // 2) If empty, try full query (ways + relations too)
+      if (!elements.length) {
+        const fullQ = buildOverpassAroundQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex);
+        json = await overpassFetch(fullQ);
+        elements = json.elements || [];
+      }
 
       const mapped: NearbyChurch[] = elements
         .map((el) => {
