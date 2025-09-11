@@ -11,12 +11,19 @@ export default function PrayersPage() {
   const [cursor, setCursor] = useState<string | undefined>();
 
   const load = async (append = false) => {
-    setLoading(true);
-    const data = await fetchPrayers({ cursor: append ? items[items.length - 1]?.created_at : undefined });
-    const next = append ? [...items, ...(data || [])] : (data || []);
-    setItems(next);
-    setCursor(next.length ? next[next.length - 1].created_at : undefined);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const data = await fetchPrayers({
+        cursor: append ? items[items.length - 1]?.created_at : undefined,
+      });
+      const next = append ? [...items, ...(data || [])] : (data || []);
+      setItems(next);
+      setCursor(next.length ? next[next.length - 1].created_at : undefined);
+    } catch (err) {
+      console.error("fetchPrayers failed", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(false); }, []);
@@ -34,7 +41,9 @@ export default function PrayersPage() {
   return (
     <div className="mx-auto max-w-3xl p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Daily Prayers and Testimonies</h1>
-      <PrayerComposer onPosted={() => load(false)} />
+
+      {/* Prepend the created post instantly */}
+      <PrayerComposer onPosted={(p) => setItems((cur) => [p as Prayer, ...cur])} />
 
       {grouped.map(([day, list]) => (
         <div key={day} className="space-y-3">
