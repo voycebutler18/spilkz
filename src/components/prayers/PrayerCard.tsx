@@ -4,13 +4,21 @@ import { format } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { amenPrayer, createReply, fetchReplies } from "@/lib/prayers";
+import {
+  amenPrayer,
+  createReply,
+  fetchReplies,
+  deletePrayer,   // <-- add
+} from "@/lib/prayers";
+import { supabase } from "@/integrations/supabase/client"; // <-- add
 
 export default function PrayerCard({
-  item
+  item,
+  onDeleted,
 }: {
   item: {
     id: string;
+    author: string;  // <-- REQUIRED for ownership check
     type: "request" | "testimony" | "quote";
     body: string;
     amen_count: number;
@@ -18,9 +26,36 @@ export default function PrayerCard({
     answered: boolean;
     created_at: string;
   };
+  onDeleted?: (id: string) => void;
 }) {
   const day = format(new Date(item.created_at), "MMM d, yyyy");
   const time = format(new Date(item.created_at), "h:mm a");
+
+  // who is logged in?
+  const [me, setMe] = useState<string | null>(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setMe(s?.user?.id ?? null)
+    );
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+  const isOwner = me === item.author;
+
+  const [deleting, setDeleting] = useState(false);
+  const handleDelete = async () => {
+    if (!isOwner || deleting) return;
+    if (!window.confirm("Delete this post? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      await deletePrayer(item.id);
+      onDeleted?.(item.id);
+    } catch (e) {
+      console.error(e);
+      alert("Could not delete.");
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -40,6 +75,21 @@ export default function PrayerCard({
         <span className="text-muted-foreground ml-auto">
           {day} at {time}
         </span>
+
+        {/* Delete for owner only */}
+        {isOwner && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-2 text-red-400 hover:text-red-500"
+            onClick={handleDelete}
+            disabled={deleting}
+            aria-label="Delete post"
+            title="Delete post"
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </Button>
+        )}
       </div>
 
       <Link to={`/prayers/${item.id}`} className="whitespace-pre-wrap leading-7">
@@ -54,17 +104,17 @@ export default function PrayerCard({
   );
 }
 
-/** Inline Amen button (keeps build from failing on missing file) */
+/** Inline Amen button */
 function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
   const [local, setLocal] = useState(initialCount);
   const [busy, setBusy] = useState(false);
-  const [clicked, setClicked] = useState(false); // prevent double-amen on this session
+  const [clicked, setClicked] = useState(false);
 
   const click = async () => {
     if (busy || clicked) return;
     setBusy(true);
     setClicked(true);
-    setLocal((v) => v + 1); // optimistic
+    setLocal((v) => v + 1);
     try {
       await amenPrayer(id);
     } catch {
@@ -89,7 +139,7 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
   );
 }
 
-/** Inline Reply list (avoids missing import) */
+/** Inline Reply list */
 function ReplyListInline({
   prayerId,
   initialCount
@@ -123,7 +173,6 @@ function ReplyListInline({
   };
 
   const onKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
-    // Enter or Cmd/Ctrl+Enter to send
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
       e.preventDefault();
       post();
@@ -161,9 +210,6 @@ function ReplyListInline({
               {sending ? "Sending…" : "Send"}
             </Button>
           </div>
-          {text.length > 1000 && (
-            <div className="text-xs text-red-500">Replies must be 1–1000 characters.</div>
-          )}
         </div>
       )}
     </div>
