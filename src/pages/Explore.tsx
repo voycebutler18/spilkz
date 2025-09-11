@@ -1,3 +1,7 @@
+// src/pages/Explore.tsx
+// Used as the new Home page.
+// NOTE: Header/Footer are intentionally NOT imported — AppLayout renders the global chrome.
+
 import { useState, useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,9 +24,12 @@ import { FollowButton } from "@/components/FollowButton";
 import { supabase, type Splik, type Profile } from "@/lib/supabase";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
-import { createDiscoveryFeed, applySessionRotation, forceNewRotation, type SplikWithScore } from "@/lib/feed";
+import {
+  createDiscoveryFeed,
+  applySessionRotation,
+  forceNewRotation,
+  type SplikWithScore,
+} from "@/lib/feed";
 
 const categories = [
   { id: "funny", label: "Funny", icon: Smile, color: "text-yellow-500" },
@@ -54,7 +61,9 @@ const Explore = () => {
       setUser(user);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
 
@@ -62,39 +71,35 @@ const Explore = () => {
   }, []);
 
   /** Fetch Trending with Session-Based Dynamic Rotation */
-  const fetchTrendingData = async (showRefreshToast: boolean = false, forceNewShuffle: boolean = false) => {
+  const fetchTrendingData = async (
+    showRefreshToast: boolean = false,
+    forceNewShuffle: boolean = false
+  ) => {
     try {
       if (showRefreshToast) {
         setRefreshing(true);
       } else {
         setLoading(true);
       }
-      
-      // Force new rotation if requested
+
       if (forceNewShuffle) {
         forceNewRotation();
       }
-      
-      // Get all spliks for discovery rotation
+
       const { data: allSpliks, error: spliksError } = await supabase
         .from("spliks")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(200); // Get more for better rotation
+        .limit(200);
 
       if (!spliksError && allSpliks) {
-        // Apply session-based discovery rotation
-        const rotatedSpliks = createDiscoveryFeed(
-          allSpliks as SplikWithScore[],
-          { 
-            userId: user?.id, 
-            category: selectedCategory,
-            feedType: 'discovery',
-            maxResults: 40 
-          }
-        );
-        
-        // Get profiles for rotated content
+        const rotatedSpliks = createDiscoveryFeed(allSpliks as SplikWithScore[], {
+          userId: user?.id,
+          category: selectedCategory,
+          feedType: "discovery",
+          maxResults: 40,
+        });
+
         const withProfiles = await Promise.all(
           rotatedSpliks.slice(0, 30).map(async (s) => {
             const { data: p } = await supabase
@@ -102,17 +107,16 @@ const Explore = () => {
               .select("*")
               .eq("id", s.user_id)
               .maybeSingle();
-            
+
             return {
               ...s,
-              profile: p || undefined
+              profile: p || undefined,
             };
           })
         );
         setTrendingSpliks(withProfiles || []);
       }
 
-      // Fetch rising creators with session rotation
       const { data: allCreators, error: creatorsError } = await supabase
         .from("profiles")
         .select("*")
@@ -120,30 +124,31 @@ const Explore = () => {
         .limit(60);
 
       if (!creatorsError && allCreators) {
-        // Apply session rotation to creators
         const rotatedCreators = applySessionRotation(
-          allCreators.map(c => ({ 
-            ...c, 
+          allCreators.map((c) => ({
+            ...c,
             likes_count: c.followers_count || 0,
             comments_count: 0,
             boost_score: 0,
-            tag: '',
-            user_id: c.id
-          })) as SplikWithScore[], 
-          { 
+            tag: "",
+            user_id: c.id,
+          })) as SplikWithScore[],
+          {
             userId: user?.id,
-            feedType: 'discovery',
-            maxResults: 15 
+            feedType: "discovery",
+            maxResults: 15,
           }
         );
-        
+
         setRisingCreators(rotatedCreators.slice(0, 12));
       }
 
       if (showRefreshToast) {
         toast({
           title: forceNewShuffle ? "Discovery reshuffled!" : "Discovery refreshed!",
-          description: forceNewShuffle ? "Showing you a completely new mix" : "Updated with latest trending content",
+          description: forceNewShuffle
+            ? "Showing you a completely new mix"
+            : "Updated with latest trending content",
         });
       }
     } catch (e) {
@@ -166,7 +171,6 @@ const Explore = () => {
   /** Fetch Nearby with session rotation */
   const fetchNearbySpliks = async (forceNewShuffle: boolean = false) => {
     try {
-      // Force new rotation if requested
       if (forceNewShuffle) {
         forceNewRotation();
       }
@@ -178,16 +182,12 @@ const Explore = () => {
         .limit(100);
 
       if (!error && spliksData) {
-        // Apply session-based location rotation
-        const rotatedSpliks = applySessionRotation(
-          spliksData as SplikWithScore[], 
-          { 
-            userId: user?.id, 
-            feedType: 'nearby',
-            maxResults: 30 
-          }
-        );
-        
+        const rotatedSpliks = applySessionRotation(spliksData as SplikWithScore[], {
+          userId: user?.id,
+          feedType: "nearby",
+          maxResults: 30,
+        });
+
         const withProfiles = await Promise.all(
           rotatedSpliks.map(async (s) => {
             const { data: p } = await supabase
@@ -235,23 +235,22 @@ const Explore = () => {
     );
   };
 
-  // Updated refresh functions
   const handleRefresh = () => {
-    fetchTrendingData(true, true); // Force new shuffle
+    fetchTrendingData(true, true);
     if (locationPermission === "granted") {
-      fetchNearbySpliks(true); // Force new shuffle
+      fetchNearbySpliks(true);
     }
   };
 
   const handleUpdate = () => {
-    fetchTrendingData(true, false); // Just refresh content
+    fetchTrendingData(true, false);
     if (locationPermission === "granted") {
-      fetchNearbySpliks(false); // Just refresh content
+      fetchNearbySpliks(false);
     }
   };
 
   /**
-   * ======= ENHANCED AUTOPLAY MANAGER =======
+   * ======= AUTOPLAY MANAGER (unchanged) =======
    */
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
@@ -265,15 +264,19 @@ const Explore = () => {
       const setupVideoForMobile = (video: HTMLVideoElement) => {
         video.muted = true;
         video.playsInline = true;
-        video.setAttribute('webkit-playsinline', 'true');
-        video.preload = 'metadata';
+        video.setAttribute("webkit-playsinline", "true");
+        video.preload = "metadata";
         video.load();
-        
-        video.addEventListener('loadeddata', () => {
-          if (video.currentTime === 0) {
-            video.currentTime = 0.1;
-          }
-        }, { once: true });
+
+        video.addEventListener(
+          "loadeddata",
+          () => {
+            if (video.currentTime === 0) {
+              video.currentTime = 0.1;
+            }
+          },
+          { once: true }
+        );
       };
 
       const getAllVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
@@ -292,7 +295,7 @@ const Explore = () => {
 
         const sortedVideos = visibilityEntries.sort((a, b) => b[1] - a[1]);
         const mostVisible = sortedVideos[0];
-        
+
         return mostVisible && mostVisible[1] >= 0.6 ? mostVisible[0] : null;
       };
 
@@ -302,7 +305,7 @@ const Explore = () => {
 
         try {
           const targetVideo = findMostVisibleVideo();
-          
+
           if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
@@ -314,41 +317,35 @@ const Explore = () => {
 
             if (targetVideo.readyState < 2) {
               targetVideo.load();
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise((resolve) => setTimeout(resolve, 100));
             }
 
             if (targetVideo.currentTime === 0 && targetVideo.duration > 0) {
               targetVideo.currentTime = 0.1;
             }
-            
+
             try {
               await targetVideo.play();
               currentPlayingVideo = targetVideo;
             } catch (playError) {
-              console.log("Autoplay prevented, trying muted:", playError);
               if (!targetVideo.muted) {
                 targetVideo.muted = true;
                 try {
                   await targetVideo.play();
                   currentPlayingVideo = targetVideo;
-                } catch (mutedError) {
-                  console.log("Video autoplay blocked even when muted:", mutedError);
+                } catch {
                   if (targetVideo.currentTime === 0) {
                     targetVideo.currentTime = 0.1;
                   }
                 }
-              } else {
-                if (targetVideo.currentTime === 0) {
-                  targetVideo.currentTime = 0.1;
-                }
+              } else if (targetVideo.currentTime === 0) {
+                targetVideo.currentTime = 0.1;
               }
             }
           } else if (!targetVideo && currentPlayingVideo) {
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
           }
-        } catch (error) {
-          console.error("Error handling video playback:", error);
         } finally {
           isProcessing = false;
         }
@@ -360,23 +357,23 @@ const Explore = () => {
             const video = entry.target as HTMLVideoElement;
             videoVisibility.set(video, entry.intersectionRatio);
           }
-          
+
           handleVideoPlayback();
         },
-        { 
-          root: null, 
+        {
+          root: null,
           threshold: [0, 0.25, 0.45, 0.6, 0.75, 1.0],
-          rootMargin: "10px"
+          rootMargin: "10px",
         }
       );
 
       const initializeVideos = () => {
         getAllVideos().forEach((video) => {
-          if (!video.hasAttribute('data-mobile-initialized')) {
+          if (!video.hasAttribute("data-mobile-initialized")) {
             setupVideoForMobile(video);
-            video.setAttribute('data-mobile-initialized', 'true');
+            video.setAttribute("data-mobile-initialized", "true");
           }
-          
+
           if (!videoVisibility.has(video)) {
             videoVisibility.set(video, 0);
             intersectionObserver.observe(video);
@@ -386,7 +383,7 @@ const Explore = () => {
 
       const mutationObserver = new MutationObserver((mutations) => {
         let hasNewVideos = false;
-        
+
         mutations.forEach((mutation) => {
           mutation.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
@@ -405,9 +402,9 @@ const Explore = () => {
       });
 
       setTimeout(initializeVideos, 100);
-      mutationObserver.observe(host, { 
-        childList: true, 
-        subtree: true 
+      mutationObserver.observe(host, {
+        childList: true,
+        subtree: true,
       });
 
       return () => {
@@ -415,7 +412,6 @@ const Explore = () => {
         mutationObserver.disconnect();
         pauseAllVideos();
         videoVisibility.clear();
-        currentPlayingVideo = null;
       };
     }, deps);
   };
@@ -425,7 +421,7 @@ const Explore = () => {
   useAutoplayIn(nearbyFeedRef, [nearbySpliks, locationPermission]);
 
   const handleSplik = (splikId: string) => {
-    console.log('Splik:', splikId);
+    console.log("Splik:", splikId);
   };
 
   const handleReact = async (splikId: string) => {
@@ -437,56 +433,40 @@ const Explore = () => {
       });
       return;
     }
-    
-    // Update local state optimistically
-    setTrendingSpliks(prev => prev.map(splik => {
-      if (splik.id === splikId) {
-        return {
-          ...splik,
-          likes_count: (splik.likes_count || 0) + 1,
-          user_has_liked: true
-        };
-      }
-      return splik;
-    }));
 
-    setNearbySpliks(prev => prev.map(splik => {
-      if (splik.id === splikId) {
-        return {
-          ...splik,
-          likes_count: (splik.likes_count || 0) + 1,
-          user_has_liked: true
-        };
-      }
-      return splik;
-    }));
+    setTrendingSpliks((prev) =>
+      prev.map((splik) =>
+        splik.id === splikId
+          ? { ...splik, likes_count: (splik.likes_count || 0) + 1, user_has_liked: true }
+          : splik
+      )
+    );
+    setNearbySpliks((prev) =>
+      prev.map((splik) =>
+        splik.id === splikId
+          ? { ...splik, likes_count: (splik.likes_count || 0) + 1, user_has_liked: true }
+          : splik
+      )
+    );
 
-    // Send to backend
     try {
-      await supabase.rpc('handle_like', { splik_id: splikId });
+      await supabase.rpc("handle_like", { splik_id: splikId });
     } catch (error) {
-      console.error('Error liking splik:', error);
-      // Revert optimistic update on error
-      setTrendingSpliks(prev => prev.map(splik => {
-        if (splik.id === splikId) {
-          return {
-            ...splik,
-            likes_count: Math.max(0, (splik.likes_count || 0) - 1),
-            user_has_liked: false
-          };
-        }
-        return splik;
-      }));
-      setNearbySpliks(prev => prev.map(splik => {
-        if (splik.id === splikId) {
-          return {
-            ...splik,
-            likes_count: Math.max(0, (splik.likes_count || 0) - 1),
-            user_has_liked: false
-          };
-        }
-        return splik;
-      }));
+      console.error("Error liking splik:", error);
+      setTrendingSpliks((prev) =>
+        prev.map((splik) =>
+          splik.id === splikId
+            ? { ...splik, likes_count: Math.max(0, (splik.likes_count || 0) - 1), user_has_liked: false }
+            : splik
+        )
+      );
+      setNearbySpliks((prev) =>
+        prev.map((splik) =>
+          splik.id === splikId
+            ? { ...splik, likes_count: Math.max(0, (splik.likes_count || 0) - 1), user_has_liked: false }
+            : splik
+        )
+      );
     }
   };
 
@@ -494,57 +474,47 @@ const Explore = () => {
     const url = `${window.location.origin}/video/${splikId}`;
     try {
       if (navigator.share) {
-        await navigator.share({
-          title: 'Check out this trending Splik!',
-          url: url
-        });
+        await navigator.share({ title: "Check out this trending Splik!", url });
       } else {
         await navigator.clipboard.writeText(url);
-        toast({
-          title: "Link copied!",
-          description: "The video link has been copied to your clipboard",
-        });
+        toast({ title: "Link copied!", description: "The video link has been copied to your clipboard" });
       }
-    } catch (error) {
-      toast({
-        title: "Failed to share",
-        description: "Please try again",
-        variant: "destructive",
-      });
+    } catch {
+      toast({ title: "Failed to share", description: "Please try again", variant: "destructive" });
     }
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-
+    <>
       {/* Top header with updated controls */}
       <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl md:text-4xl font-bold mb-2">Discover</h1>
-              <p className="text-muted-foreground">Find trending splikz and rising creators • New shuffle each refresh</p>
+              <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
+              <p className="text-muted-foreground">
+                Find trending splikz and rising creators • New shuffle each refresh
+              </p>
             </div>
             <div className="flex gap-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleUpdate}
                 disabled={refreshing}
                 className="flex items-center gap-2"
               >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Update
               </Button>
-              <Button 
-                variant="default" 
-                size="sm" 
+              <Button
+                variant="default"
+                size="sm"
                 onClick={handleRefresh}
                 disabled={refreshing}
                 className="flex items-center gap-2"
               >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Shuffle
               </Button>
             </div>
@@ -587,7 +557,7 @@ const Explore = () => {
             })}
           </div>
 
-          {/* TRENDING — single page scroll, one card per row, autoplay managed by IntersectionObserver */}
+          {/* TRENDING */}
           <TabsContent value="trending" className="space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -600,17 +570,16 @@ const Explore = () => {
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No Trending Splikz</h3>
                   <p className="text-muted-foreground mb-4">
-                    {selectedCategory 
+                    {selectedCategory
                       ? `No ${selectedCategory} videos found. Try a different category!`
-                      : "Be the first to post a trending splik!"
-                    }
+                      : "Be the first to post a trending splik!"}
                   </p>
                   <div className="flex flex-col sm:flex-row gap-2 justify-center">
                     <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
-                      {refreshing ? 'Updating...' : 'Get Latest'}
+                      {refreshing ? "Updating..." : "Get Latest"}
                     </Button>
                     <Button onClick={handleRefresh} disabled={refreshing}>
-                      {refreshing ? 'Shuffling...' : 'Shuffle Discovery'}
+                      {refreshing ? "Shuffling..." : "Shuffle Discovery"}
                     </Button>
                   </div>
                 </CardContent>
@@ -620,15 +589,15 @@ const Explore = () => {
                 <div className="text-center text-sm text-muted-foreground mb-4">
                   Showing {trendingSpliks.length} trending videos • New shuffle each refresh
                   {selectedCategory && (
-                    <span className="ml-1">in {categories.find(c => c.id === selectedCategory)?.label}</span>
+                    <span className="ml-1">
+                      in {categories.find((c) => c.id === selectedCategory)?.label}
+                    </span>
                   )}
                 </div>
                 <div ref={trendingFeedRef} className="space-y-8">
                   {trendingSpliks
                     .filter((s) =>
-                      !selectedCategory
-                        ? true
-                        : (s as any).tag?.toLowerCase().includes(selectedCategory)
+                      !selectedCategory ? true : (s as any).tag?.toLowerCase().includes(selectedCategory)
                     )
                     .map((s) => (
                       <SplikCard
@@ -642,22 +611,22 @@ const Explore = () => {
                 </div>
                 <div className="text-center py-6 border-t border-border/40">
                   <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                    <Button 
+                    <Button
                       onClick={handleUpdate}
                       variant="outline"
                       disabled={refreshing}
                       className="flex items-center gap-2"
                     >
-                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                      {refreshing ? 'Updating...' : 'Get Latest'}
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                      {refreshing ? "Updating..." : "Get Latest"}
                     </Button>
-                    <Button 
+                    <Button
                       onClick={handleRefresh}
                       disabled={refreshing}
                       className="flex items-center gap-2"
                     >
-                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                      {refreshing ? 'Shuffling...' : 'Shuffle Discovery'}
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                      {refreshing ? "Shuffling..." : "Shuffle Discovery"}
                     </Button>
                   </div>
                 </div>
@@ -665,7 +634,7 @@ const Explore = () => {
             )}
           </TabsContent>
 
-          {/* RISING creators (grid, no autoplay needed) */}
+          {/* RISING */}
           <TabsContent value="rising" className="space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -680,10 +649,10 @@ const Explore = () => {
                   <p className="text-muted-foreground mb-4">Join now to become a rising star!</p>
                   <div className="flex flex-col sm:flex-row gap-2 justify-center">
                     <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
-                      {refreshing ? 'Updating...' : 'Get Latest'}
+                      {refreshing ? "Updating..." : "Get Latest"}
                     </Button>
                     <Button onClick={handleRefresh} disabled={refreshing}>
-                      {refreshing ? 'Shuffling...' : 'Shuffle Creators'}
+                      {refreshing ? "Shuffling..." : "Shuffle Creators"}
                     </Button>
                   </div>
                 </CardContent>
@@ -741,17 +710,10 @@ const Explore = () => {
                 </div>
                 <div className="text-center py-4">
                   <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                    <Button 
-                      onClick={handleUpdate}
-                      variant="outline"
-                      disabled={refreshing}
-                    >
+                    <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
                       Get Latest Creators
                     </Button>
-                    <Button 
-                      onClick={handleRefresh}
-                      disabled={refreshing}
-                    >
+                    <Button onClick={handleRefresh} disabled={refreshing}>
                       Shuffle Creators
                     </Button>
                   </div>
@@ -760,7 +722,7 @@ const Explore = () => {
             )}
           </TabsContent>
 
-          {/* NEARBY — single page scroll, autoplay same as Trending */}
+          {/* NEARBY */}
           <TabsContent value="nearby" className="space-y-6">
             {locationPermission !== "granted" ? (
               <Card>
@@ -786,10 +748,10 @@ const Explore = () => {
                   <p className="text-muted-foreground mb-4">No videos from creators near you yet</p>
                   <div className="flex flex-col sm:flex-row gap-2 justify-center">
                     <Button onClick={handleUpdate} variant="outline" disabled={refreshing}>
-                      {refreshing ? 'Updating...' : 'Get Latest'}
+                      {refreshing ? "Updating..." : "Get Latest"}
                     </Button>
                     <Button onClick={handleRefresh} disabled={refreshing}>
-                      {refreshing ? 'Shuffling...' : 'Shuffle Nearby'}
+                      {refreshing ? "Shuffling..." : "Shuffle Nearby"}
                     </Button>
                   </div>
                 </CardContent>
@@ -812,22 +774,22 @@ const Explore = () => {
                 </div>
                 <div className="text-center py-6 border-t border-border/40">
                   <div className="flex flex-col sm:flex-row gap-2 justify-center">
-                    <Button 
+                    <Button
                       onClick={handleUpdate}
                       variant="outline"
                       disabled={refreshing}
                       className="flex items-center gap-2"
                     >
-                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                      {refreshing ? 'Updating...' : 'Get Latest'}
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                      {refreshing ? "Updating..." : "Get Latest"}
                     </Button>
-                    <Button 
+                    <Button
                       onClick={handleRefresh}
                       disabled={refreshing}
                       className="flex items-center gap-2"
                     >
-                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-                      {refreshing ? 'Shuffling...' : 'Shuffle Nearby'}
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+                      {refreshing ? "Shuffling..." : "Shuffle Nearby"}
                     </Button>
                   </div>
                 </div>
@@ -836,9 +798,7 @@ const Explore = () => {
           </TabsContent>
         </Tabs>
       </div>
-
-      <Footer />
-    </div>
+    </>
   );
 };
 
