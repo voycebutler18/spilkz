@@ -1,11 +1,7 @@
 // src/components/churches/NearbyChurchesModal.tsx
 import * as React from "react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -101,13 +97,14 @@ const FAITH_OPTIONS: FaithOption[] = [
   { key: "other", label: "Other (General Place of Worship)", religionRegex: ".*" },
 ];
 
-/* ---------------- Mirrors (avoid the one that DNS-failed for you) ---------------- */
+/* ---------------- Overpass mirrors ---------------- */
 const OVERPASS_ENDPOINTS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass-api.de/api/interpreter",
   "https://overpass.osm.ch/api/interpreter",
 ];
 
+/* ---------------- Helpers ---------------- */
 function shuffle<T>(arr: T[]) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -173,7 +170,6 @@ function haversineKm(a: { lat: number; lon: number }, b: { lat: number; lon: num
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-/* --- light (nodes only) then full (nodes+ways+relations) for reliability --- */
 function buildQueryLight(center: { lat: number; lon: number }, radius: number, relRe: string, denRe?: string) {
   const around = `(around:${Math.round(radius)},${center.lat},${center.lon})`;
   const base = `["amenity"="place_of_worship"]`;
@@ -216,32 +212,28 @@ function buildQueryFull(center: { lat: number; lon: number }, radius: number, re
   `;
 }
 
-async function geocodeToCoords(q: string): Promise<{ lat: number; lon: number } | null> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), 10000);
-  try {
-    const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", q);
-    url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("limit", "1");
-    url.searchParams.set("countrycodes", "us,ca");
-    const res = await fetch(url.toString(), {
-      headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
-      signal: controller.signal,
-    });
-    clearTimeout(id);
-    if (!res.ok) throw new Error(`Geocoding failed: ${res.status}`);
-    const arr = (await res.json()) as Array<{ lat: string; lon: string }>;
-    if (!arr.length) return null;
-    return { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
-  } catch (e: any) {
-    clearTimeout(id);
-    if (e.name === "AbortError") throw new Error("Location search timed out. Please try again.");
-    throw e;
-  }
+/* ---------- Address helpers (match Food behavior + better fallbacks) ---------- */
+function buildAddressFromTags(tags: Record<string, string> | undefined) {
+  if (!tags) return "";
+  // Prefer full string if provided
+  const full = tags["addr:full"];
+  if (full) return full;
+
+  const street = [tags["addr:housenumber"], tags["addr:street"]].filter(Boolean).join(" ").trim();
+  const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"] || tags["addr:hamlet"] || "";
+  const state = tags["addr:state"] || tags["addr:province"] || "";
+  const postcode = tags["addr:postcode"] || "";
+
+  const line1 = street && city ? `${street}, ${city}` : (street || city);
+  const line2 = [state, postcode].filter(Boolean).join(" ");
+  return [line1, line2].filter(Boolean).join(", ");
 }
 
-async function reverseGeocode(lat: number, lon: number) {
+const reverseCache = new Map<string, string>();
+async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
+  const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+  if (reverseCache.has(key)) return reverseCache.get(key)!;
+
   try {
     const url = new URL("https://nominatim.openstreetmap.org/reverse");
     url.searchParams.set("format", "jsonv2");
@@ -252,21 +244,21 @@ async function reverseGeocode(lat: number, lon: number) {
     });
     if (!res.ok) return null;
     const j = (await res.json()) as any;
-    const city = j.address?.city || j.address?.town || j.address?.village || j.address?.hamlet;
-    const state = j.address?.state || j.address?.region;
-    const country = j.address?.country_code?.toUpperCase();
-    if (!city && !state) return j.display_name || null;
-    return [city, state, country].filter(Boolean).join(", ");
+    const a = j.address ?? {};
+    const street = [a.house_number, a.road].filter(Boolean).join(" ");
+    const city = a.city || a.town || a.village || a.hamlet;
+    const state = a.state || a.region;
+    const postcode = a.postcode;
+    const addr = [street, city, state, postcode].filter(Boolean).join(", ") || j.display_name || null;
+    if (addr) reverseCache.set(key, addr);
+    return addr;
   } catch {
     return null;
   }
 }
 
 /* ---------------- Component ---------------- */
-type Props = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-};
+type Props = { open: boolean; onOpenChange: (open: boolean) => void };
 
 export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
   const [locStage, setLocStage] = React.useState<"idle" | "asking" | "have" | "error">("idle");
@@ -311,8 +303,8 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
         const c = { lat: Number(latitude), lon: Number(longitude) };
         setCoords(c);
         setLocStage("have");
-        const place = await reverseGeocode(c.lat, c.lon);
-        setLocationQuery(place ?? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}`);
+        const nice = await reverseGeocode(c.lat, c.lon);
+        setLocationQuery(nice ?? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}`);
       },
       (err) => {
         console.error("Geolocation error:", err);
@@ -326,6 +318,31 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
+
+  async function geocodeToCoords(q: string): Promise<{ lat: number; lon: number } | null> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 10000);
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("q", q);
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("limit", "1");
+      url.searchParams.set("countrycodes", "us,ca");
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+        signal: controller.signal,
+      });
+      clearTimeout(id);
+      if (!res.ok) throw new Error(`Geocoding failed: ${res.status}`);
+      const arr = (await res.json()) as Array<{ lat: string; lon: string }>;
+      if (!arr.length) return null;
+      return { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
+    } catch (e: any) {
+      clearTimeout(id);
+      if (e.name === "AbortError") throw new Error("Location search timed out. Please try again.");
+      throw e;
+    }
+  }
 
   const runNearbySearch = async () => {
     try {
@@ -379,24 +396,21 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
 
-          const addressParts = [
-            el.tags?.["addr:housenumber"],
-            el.tags?.["addr:street"],
-            el.tags?.["addr:city"],
-          ].filter(Boolean);
-
+          // 💡 Improved address (mirrors Food + more tags)
+          const addrFromTags = buildAddressFromTags(el.tags);
           return {
             id: `${el.type}/${el.id}`,
             name,
             lat: rLat,
             lon: rLon,
             distanceKm,
-            address: addressParts.length > 0 ? addressParts.join(" ") : "Address not available",
+            address: addrFromTags || undefined,
             tags: el.tags || {},
           } as NearbyPlace;
         })
         .filter(Boolean) as NearbyPlace[];
 
+      // dedupe
       const unique = mapped.reduce((acc, item) => {
         const existing = acc.find(
           (r) =>
@@ -410,6 +424,17 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
 
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
+
+      // 🔁 For entries still missing address, reverse-geocode a few (throttled)
+      const toFill = byDistance.filter(x => !x.address).slice(0, 20);
+      for (const p of toFill) {
+        const addr = await reverseGeocode(p.lat, p.lon);
+        if (addr) {
+          setNearby(prev => prev.map(it => (it.id === p.id ? { ...it, address: addr } : it)));
+        }
+        // be polite to Nominatim
+        await new Promise(r => setTimeout(r, 250));
+      }
 
       if (byDistance.length === 0) {
         setNearbyError("No results found. Try a bigger radius or a different faith/denomination.");
@@ -521,7 +546,9 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
                   />
                   <div className="max-h-52 overflow-y-auto pr-1">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {filteredFaithOptions.map((opt) => (
+                      {FAITH_OPTIONS.filter(opt =>
+                        opt.label.toLowerCase().includes(faithSearch.trim().toLowerCase())
+                      ).map((opt) => (
                         <button
                           key={opt.key}
                           type="button"
@@ -583,7 +610,7 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
                       <div className="min-w-0">
                         <div className="text-white font-semibold truncate">{place.name}</div>
                         <div className="text-gray-300 text-sm truncate">
-                          {place.address}
+                          {place.address || "Address not available"}
                         </div>
                         <div className="text-yellow-300 text-sm font-medium mt-1">
                           {prettyDistance(place.distanceKm)} away
