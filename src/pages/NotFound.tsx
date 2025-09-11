@@ -1,3 +1,4 @@
+// src/pages/NotFound.tsx
 import { useLocation, Link } from "react-router-dom";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -21,10 +22,13 @@ const NotFound = () => {
           404
         </h1>
         <p className="text-xl text-muted-foreground mb-8">
-          Oops! This splik doesn't exist
+          Oops! This page doesn't exist
         </p>
-        <Button asChild className="bg-gradient-to-r from-primary to-secondary hover:opacity-90">
-          <Link to="/">
+        <Button
+          asChild
+          className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
+        >
+          <Link to="/home">
             <Home className="mr-2 h-4 w-4" />
             Back to Home
           </Link>
