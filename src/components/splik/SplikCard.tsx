@@ -1,19 +1,24 @@
 // src/components/splik/SplikCard.tsx
 import * as React from "react";
 import { Link } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Flame,
+  Share2,
+  Bookmark,
+  BookmarkCheck,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Flame, Share2, Bookmark, BookmarkCheck, Volume2, VolumeX, Pause, Play } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { cn } from "@/lib/utils";
 
 type Profile = {
   id: string;
   username?: string | null;
   display_name?: string | null;
   first_name?: string | null;
-  last_name?: string | null;
   avatar_url?: string | null;
 };
 
@@ -24,64 +29,98 @@ type Splik = {
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
-  created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  hype_count?: number | null; // rendered count
+  created_at?: string;
+  hype_count?: number; // optional incoming
   profile?: Profile | null;
 };
 
-interface Props {
+type Props = {
   splik: Splik;
-  className?: string;
-
+  /** Optional — used by Index.tsx for primary visible item tracking */
   index?: number;
+  /** Optional — Index.tsx passes this to lazy-attach src */
   shouldLoad?: boolean;
+  /** Optional — Index.tsx passes this so it can track active window */
   onPrimaryVisible?: (index: number) => void;
-
+  /** Optional — Explore/Index may pass these callbacks */
+  onSlik?: () => void;
+  onReact?: () => void;
   onShare?: () => void;
-}
+};
 
-function profilePath(p?: Profile | null, fallbackUserId?: string) {
-  if (!p) return `/profile/${fallbackUserId || ""}`;
-  return p.username ? `/creator/${p.username}` : `/profile/${p.id || fallbackUserId}`;
-}
+const HYPE_TABLE = "hype_reactions";
 
-function displayName(p?: Profile | null) {
-  if (!p) return "Unknown";
-  return p.display_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || p.username || "Unknown";
-}
-
-export default function SplikCard({
+const SplikCard: React.FC<Props> = ({
   splik,
-  className,
   index,
   shouldLoad = true,
   onPrimaryVisible,
   onShare,
-}: Props) {
+}) => {
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const hostRef = React.useRef<HTMLDivElement | null>(null);
+
   const [userId, setUserId] = React.useState<string | null>(null);
+  const [muted, setMuted] = React.useState(true);
 
-  // Hype state
-  const [hypeCount, setHypeCount] = React.useState<number>(Number(splik.hype_count ?? 0));
-  const [hyped, setHyped] = React.useState(false);
-  const [hypeBusy, setHypeBusy] = React.useState(false);
-
-  // Favorites
   const [saved, setSaved] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
 
-  // Video
-  const [muted, setMuted] = React.useState(true);
-  const [playing, setPlaying] = React.useState(false);
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const [hyped, setHyped] = React.useState(false);
+  const [hypeBusy, setHypeBusy] = React.useState(false);
+  const [hypeCount, setHypeCount] = React.useState<number>(
+    typeof splik.hype_count === "number" ? splik.hype_count : 0
+  );
 
-  // who am I
+  // auth
   React.useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+    const { data } = supabase.auth.onAuthStateChange((_e, session) =>
+      setUserId(session?.user?.id ?? null)
+    );
+    return () => data.subscription?.unsubscribe();
   }, []);
 
-  /** -------------------- Load current hyped/saved state -------------------- */
+  // Observe visibility for parent (Index.tsx's rolling window)
+  React.useEffect(() => {
+    if (!hostRef.current || typeof onPrimaryVisible !== "function" || index == null)
+      return;
+
+    const el = hostRef.current;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.intersectionRatio >= 0.6) {
+          onPrimaryVisible(index);
+        }
+      },
+      { root: null, threshold: [0.25, 0.6, 0.9] }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [onPrimaryVisible, index]);
+
+  // Prepare video for mobile (prevent black frame)
+  React.useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.playsInline = true;
+    (v as any).webkitPlaysInline = true;
+    v.preload = "metadata";
+    v.muted = muted;
+
+    const onLoaded = () => {
+      try {
+        if (v.currentTime === 0) v.currentTime = 0.1;
+      } catch {}
+    };
+    v.addEventListener("loadeddata", onLoaded, { once: true });
+    return () => v.removeEventListener("loadeddata", onLoaded);
+  }, [muted, shouldLoad, splik.video_url]);
+
+  // Load saved/hyped state (+ backfill hype count if not provided)
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -98,108 +137,34 @@ export default function SplikCard({
         if (!cancelled) setSaved(!!data);
       } catch {}
 
-      // Hyped? (try likes → hypes.splik_id → hypes.video_id)
-      const tryCheck = async () => {
-        try {
-          const { data } = await supabase
-            .from("likes")
-            .select("id")
-            .eq("user_id", userId)
-            .eq("splik_id", splik.id)
-            .maybeSingle();
-          if (data) return true;
-        } catch {}
-        try {
-          const { data } = await supabase
-            .from("hypes")
-            .select("id")
-            .eq("user_id", userId)
-            .eq("splik_id", splik.id)
-            .maybeSingle();
-          if (data) return true;
-        } catch {}
-        try {
-          const { data } = await supabase
-            .from("hypes")
-            .select("id")
-            .eq("user_id", userId)
-            .eq("video_id", splik.id)
-            .maybeSingle();
-          if (data) return true;
-        } catch {}
-        return false;
-      };
+      // Hyped?
+      try {
+        const { data } = await supabase
+          .from(HYPE_TABLE)
+          .select("id")
+          .eq("user_id", userId)
+          .eq("splik_id", splik.id)
+          .maybeSingle();
+        if (!cancelled) setHyped(!!data);
+      } catch {}
 
-      const has = await tryCheck();
-      if (!cancelled) setHyped(has);
+      // Backfill hype count if missing
+      if (typeof splik.hype_count !== "number") {
+        try {
+          const { count } = await supabase
+            .from(HYPE_TABLE)
+            .select("id", { count: "exact", head: true })
+            .eq("splik_id", splik.id);
+          if (!cancelled && typeof count === "number") {
+            setHypeCount(count);
+          }
+        } catch {}
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [userId, splik.id]);
-
-  /** -------------------- Mobile-friendly video init -------------------- */
-  React.useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-
-    v.playsInline = true;
-    v.setAttribute("webkit-playsinline", "true");
-    v.preload = "metadata";
-    v.muted = muted;
-
-    const onLoaded = () => {
-      if (v.currentTime === 0) v.currentTime = 0.1;
-    };
-    v.addEventListener("loadeddata", onLoaded, { once: true });
-    return () => {
-      v.removeEventListener("loadeddata", onLoaded);
-      try {
-        v.pause();
-      } catch {}
-    };
-  }, [muted]);
-
-  React.useEffect(() => {
-    if (typeof index !== "number" || !onPrimaryVisible) return;
-    const card = videoRef.current?.closest("[data-card]");
-    if (!card) return;
-
-    const obs = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting && e.intersectionRatio > 0.6) {
-            onPrimaryVisible(index);
-          }
-        }
-      },
-      { threshold: [0, 0.6, 1] }
-    );
-    obs.observe(card);
-    return () => obs.disconnect();
-  }, [index, onPrimaryVisible]);
-
-  /** -------------------- Actions -------------------- */
-  const togglePlay = async () => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (playing) {
-      v.pause();
-      setPlaying(false);
-    } else {
-      try {
-        await v.play();
-        setPlaying(true);
-      } catch {
-        v.muted = true;
-        setMuted(true);
-        try {
-          await v.play();
-          setPlaying(true);
-        } catch {}
-      }
-    }
-  };
+  }, [userId, splik.id, splik.hype_count]);
 
   const toggleMute = () => {
     const v = videoRef.current;
@@ -209,200 +174,203 @@ export default function SplikCard({
     setMuted(next);
   };
 
-  // Favorites
-  const toggleSave = async () => {
+  const toggleFavorite = async () => {
     if (!userId || saving) return;
     setSaving(true);
+
+    const wasSaved = saved;
+    setSaved(!wasSaved);
+
     try {
-      if (saved) {
-        await supabase.from("favorites").delete().eq("user_id", userId).eq("splik_id", splik.id);
-        setSaved(false);
+      if (wasSaved) {
+        const { error } = await supabase
+          .from("favorites")
+          .delete()
+          .eq("user_id", userId)
+          .eq("splik_id", splik.id);
+        if (error) throw error;
       } else {
-        await supabase.from("favorites").insert({ user_id: userId, splik_id: splik.id });
-        setSaved(true);
+        const { error } = await supabase
+          .from("favorites")
+          .insert({ user_id: userId, splik_id: splik.id });
+        if (error) throw error;
       }
+    } catch {
+      // revert
+      setSaved(wasSaved);
     } finally {
       setSaving(false);
     }
   };
 
-  // Hype toggle (supports either likes or hypes tables)
   const toggleHype = async () => {
     if (!userId || hypeBusy) return;
     setHypeBusy(true);
 
+    const wasHyped = hyped;
     // optimistic
-    setHyped((prev) => !prev);
-    setHypeCount((c) => (hyped ? Math.max(0, c - 1) : c + 1));
+    setHyped(!wasHyped);
+    setHypeCount((c) => (wasHyped ? Math.max(0, c - 1) : c + 1));
 
-    const addLike = async () => {
-      try {
-        await supabase.from("likes").insert({ user_id: userId, splik_id: splik.id });
-        return true;
-      } catch {
-        return false;
+    try {
+      if (wasHyped) {
+        const { error } = await supabase
+          .from(HYPE_TABLE)
+          .delete()
+          .eq("user_id", userId)
+          .eq("splik_id", splik.id);
+        if (error) throw error;
+      } else {
+        // idempotent add
+        const { error } = await supabase
+          .from(HYPE_TABLE)
+          .upsert([{ user_id: userId, splik_id: splik.id, amount: 1 }], {
+            onConflict: "splik_id,user_id",
+            ignoreDuplicates: true,
+          });
+        if (error) throw error;
       }
-    };
-    const delLike = async () => {
-      try {
-        await supabase.from("likes").delete().eq("user_id", userId).eq("splik_id", splik.id);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    const addHype = async () => {
-      try {
-        await supabase.from("hypes").insert({ user_id: userId, splik_id: splik.id });
-        return true;
-      } catch {
-        try {
-          await supabase.from("hypes").insert({ user_id: userId, video_id: splik.id });
-          return true;
-        } catch {
-          return false;
-        }
-      }
-    };
-    const delHype = async () => {
-      try {
-        await supabase.from("hypes").delete().eq("user_id", userId).eq("splik_id", splik.id);
-        return true;
-      } catch {
-        try {
-          await supabase.from("hypes").delete().eq("user_id", userId).eq("video_id", splik.id);
-          return true;
-        } catch {
-          return false;
-        }
-      }
-    };
-
-    const ok = hyped ? await (delLike() || delHype()) : await (addLike() || addHype());
-
-    if (!ok) {
-      // revert optimistic on failure
-      setHyped((prev) => !prev);
-      setHypeCount((c) => (hyped ? c + 1 : Math.max(0, c - 1)));
+    } catch {
+      // revert on error
+      setHyped(wasHyped);
+      setHypeCount((c) => (wasHyped ? c + 1 : Math.max(0, c - 1)));
+    } finally {
+      setHypeBusy(false);
     }
-    setHypeBusy(false);
   };
 
-  const initials =
-    displayName(splik.profile)
-      .split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "U";
+  const doShare = async () => {
+    if (onShare) return onShare();
+    const url = `${window.location.origin.replace(/\/$/, "")}/video/${splik.id}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: splik.title || "Splik", url });
+      } else {
+        await navigator.clipboard.writeText(url);
+      }
+    } catch {}
+  };
+
+  const creator = splik.profile;
+  const creatorName =
+    creator?.display_name ||
+    creator?.first_name ||
+    creator?.username ||
+    "Creator";
 
   return (
-    <Card
-      data-card
-      className={cn(
-        "overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto bg-background",
-        className
-      )}
-    >
-      {/* header: avatar/name clickable */}
-      <div className="flex items-center justify-between p-3 pb-0">
-        <Link
-          to={profilePath(splik.profile, splik.user_id)}
-          className="flex items-center gap-3 hover:opacity-90 transition-opacity"
-        >
-          <Avatar className="h-9 w-9">
-            <AvatarImage src={splik.profile?.avatar_url || undefined} />
-            <AvatarFallback>{initials}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold truncate">{displayName(splik.profile)}</p>
-            {splik.title ? (
-              <p className="text-xs text-muted-foreground truncate">{splik.title}</p>
-            ) : null}
-          </div>
-        </Link>
-      </div>
-
-      {/* video: no crop */}
-      <div className="relative bg-black aspect-[9/16] mt-2">
-        {shouldLoad !== false ? (
+    <Card ref={hostRef} className="overflow-hidden border-0 bg-transparent shadow-none">
+      <div className="relative mx-auto w-full max-w-[520px]">
+        {/* Video box */}
+        <div className="relative bg-black rounded-xl overflow-hidden aspect-[9/16]">
           <video
             ref={videoRef}
-            className="absolute inset-0 w-full h-full object-contain bg-black"
-            src={splik.video_url}
+            src={shouldLoad ? splik.video_url : undefined}
             poster={splik.thumbnail_url || undefined}
+            className="w-full h-full object-contain" /* keep full video visible; change to object-cover if you prefer crop */
             playsInline
             muted={muted}
-            onEnded={() => setPlaying(false)}
+            preload="metadata"
+            loop
           />
-        ) : (
-          <div className="absolute inset-0 bg-black" />
-        )}
+          {/* Gradient bottom overlay */}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/70 to-transparent" />
 
-        {/* center play/pause */}
-        <button
-          onClick={togglePlay}
-          className="absolute inset-0 flex items-center justify-center focus:outline-none"
-          aria-label={playing ? "Pause" : "Play"}
-        >
-          {playing ? (
-            <span className="opacity-0 hover:opacity-100 transition-opacity bg-black/25 rounded-full p-3">
-              <Pause className="h-10 w-10 text-white" />
+          {/* Mute toggle */}
+          <button
+            onClick={toggleMute}
+            className="absolute bottom-3 right-3 z-10 rounded-full bg-black/60 p-2 hover:bg-black/80"
+            aria-label={muted ? "Unmute" : "Mute"}
+          >
+            {muted ? (
+              <VolumeX className="h-5 w-5 text-white" />
+            ) : (
+              <Volume2 className="h-5 w-5 text-white" />
+            )}
+          </button>
+
+          {/* Creator chip — clickable */}
+          <Link
+            to={`/creator/${creator?.username || splik.user_id}`}
+            className="absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-full bg-black/60 px-2.5 py-1.5 hover:bg-black/75"
+            aria-label={`Open ${creatorName}'s profile`}
+            title={creatorName}
+          >
+            <Avatar className="h-7 w-7 ring-1 ring-white/20">
+              <AvatarImage src={creator?.avatar_url || undefined} />
+              <AvatarFallback className="text-[10px]">
+                {(creatorName || "C").slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <span className="text-white text-xs font-medium max-w-[120px] truncate">
+              {creatorName}
             </span>
-          ) : (
-            <span className="bg-black/35 rounded-full p-3 hover:bg-black/45 transition-colors">
-              <Play className="h-10 w-10 text-white ml-1" />
-            </span>
-          )}
-        </button>
+          </Link>
+        </div>
 
-        {/* mute */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleMute();
-          }}
-          className="absolute bottom-3 right-3 bg-black/60 rounded-full p-2 hover:bg-black/80"
-          aria-label={muted ? "Unmute" : "Mute"}
-        >
-          {muted ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
-        </button>
-      </div>
-
-      {/* actions: Hype / Share / Save */}
-      <div className="p-3">
-        <div className="flex items-center gap-2">
+        {/* Action row */}
+        <div className="mt-3 flex items-center gap-2">
+          {/* Hype */}
           <Button
             size="sm"
             variant={hyped ? "default" : "outline"}
             onClick={toggleHype}
-            disabled={hypeBusy}
-            className="flex-1"
-            title={hyped ? "Hyped" : "Hype"}
+            disabled={!userId || hypeBusy}
+            className={`flex-1 ${hyped ? "bg-gradient-to-r from-orange-500 to-pink-500 text-white" : ""}`}
+            aria-pressed={hyped}
+            aria-label="Hype"
+            title="Hype"
           >
-            <Flame className={cn("h-4 w-4 mr-2", hyped ? "fill-current" : "")} />
+            <Flame className={`h-4 w-4 mr-2 ${hyped ? "fill-current" : ""}`} />
             <span className="font-semibold">{hypeCount}</span>
           </Button>
 
-          <Button size="sm" variant="outline" onClick={onShare}>
-            <Share2 className="h-4 w-4" />
-          </Button>
-
+          {/* Save / Favorite */}
           <Button
             size="sm"
             variant={saved ? "default" : "outline"}
-            onClick={toggleSave}
-            disabled={saving}
+            onClick={toggleFavorite}
+            disabled={!userId || saving}
+            className={`flex-1 ${saved ? "bg-yellow-400 text-black hover:bg-yellow-500" : ""}`}
+            aria-pressed={saved}
+            aria-label={saved ? "Saved" : "Save"}
             title={saved ? "Saved" : "Save"}
           >
-            {saved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+            {saved ? (
+              <BookmarkCheck className="h-4 w-4 mr-2" />
+            ) : (
+              <Bookmark className="h-4 w-4 mr-2" />
+            )}
+            <span className="font-semibold">{saved ? "Saved" : "Save"}</span>
+          </Button>
+
+          {/* Share */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={doShare}
+            aria-label="Share"
+            title="Share"
+            className="px-3"
+          >
+            <Share2 className="h-4 w-4" />
           </Button>
         </div>
 
-        {splik.description ? (
-          <p className="text-sm mt-3 text-foreground/90">{splik.description}</p>
-        ) : null}
+        {/* Title / Caption (optional) */}
+        {(splik.title || splik.description) && (
+          <div className="mt-2 text-sm">
+            {splik.title && (
+              <p className="font-semibold mb-0.5">{splik.title}</p>
+            )}
+            {splik.description && (
+              <p className="text-muted-foreground">{splik.description}</p>
+            )}
+          </div>
+        )}
       </div>
     </Card>
   );
-}
+};
+
+export default SplikCard;
