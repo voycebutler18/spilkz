@@ -1,3 +1,4 @@
+// src/components/prayers/PrayerComposer.tsx
 import { useState } from "react";
 import { createPrayer, PrayerType } from "@/lib/prayers";
 import { Button } from "@/components/ui/button";
@@ -18,11 +19,10 @@ export default function PrayerComposer({ onPosted }: { onPosted?: (p: any) => vo
     if (!text) return;
     try {
       setLoading(true);
-      // get the inserted row back from Supabase
-      const created = await createPrayer(type, text);
+      const created = await createPrayer(type, text);   // <—
       setBody("");
       toast({ title: "Shared", description: "Your post was published." });
-      onPosted?.(created); // <— send row up so the feed can prepend instantly
+      onPosted?.(created);                               // <—
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
