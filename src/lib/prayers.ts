@@ -80,19 +80,47 @@ export async function amenPrayer(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("not_authed");
 
-  // Upsert so a user can only Amen a prayer once.
-  // Requires a unique index on (prayer_id, user_id) in DB.
+  // First check if user already amened this prayer
+  const { data: existing } = await supabase
+    .from("prayer_amens")
+    .select("id")
+    .eq("prayer_id", prayerId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (existing) {
+    // Already amened
+    return { inserted: false };
+  }
+
+  // Insert new amen
   const { data, error } = await supabase
     .from("prayer_amens")
-    .upsert(
-      { prayer_id: prayerId, user_id: user.id },
-      { onConflict: "prayer_id,user_id", ignoreDuplicates: true }
-    )
-    .select("id"); // [] if duplicate, 1 row if newly inserted
+    .insert({ prayer_id: prayerId, user_id: user.id })
+    .select("id");
 
   if (error) throw error;
-  const inserted = Array.isArray(data) && data.length > 0;
-  return { inserted };
+  return { inserted: true };
+}
+
+/* ---------- Check if user has amened a prayer ---------- */
+export async function hasUserAmened(prayerId: string): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const { data, error } = await supabase
+    .from("prayer_amens")
+    .select("id")
+    .eq("prayer_id", prayerId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error checking amen status:", error);
+    return false;
+  }
+
+  return !!data;
 }
 
 /* ---------- Replies ---------- */
