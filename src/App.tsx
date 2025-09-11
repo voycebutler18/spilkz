@@ -65,6 +65,8 @@ import PrayersPage from "./pages/Prayers";
 import PrayerDetailPage from "./pages/PrayerDetail";
 import PrayersTagPage from "./pages/PrayersTag";
 import PrayersSearchPage from "./pages/PrayersSearch";
+import AmenButton from "@/components/prayers/AmenButton";
+
 
 // 404
 import NotFound from "./pages/NotFound";
