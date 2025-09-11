@@ -1,14 +1,28 @@
 // src/components/splik/SplikCard.tsx
 import * as React from "react";
+import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Share2, Heart, Volume2, VolumeX } from "lucide-react";
+import {
+  Heart,
+  Share2,
+  Bookmark,
+  BookmarkCheck,
+  Volume2,
+  VolumeX,
+  Pause,
+  Play,
+} from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 
 type Profile = {
   id: string;
   username?: string | null;
   display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   avatar_url?: string | null;
 };
 
@@ -19,171 +33,288 @@ type Splik = {
   description?: string | null;
   video_url: string;
   thumbnail_url?: string | null;
-  created_at?: string;
+  created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  likes_count?: number;
-  profile?: Profile;
+  hype_count?: number | null;
+  profile?: Profile | null;
 };
 
-type Props = {
+interface Props {
   splik: Splik;
+  className?: string;
+
+  // optional hooks used by some pages — safe to ignore elsewhere
   index?: number;
-  // optional hooks used in some places
   shouldLoad?: boolean;
   onPrimaryVisible?: (index: number) => void;
-  onSplik?: () => void;
+
   onReact?: () => void;
   onShare?: () => void;
-};
+}
 
-const isTouch =
-  typeof window !== "undefined" &&
-  ("ontouchstart" in window || (navigator as any).maxTouchPoints > 0);
+function profilePath(p?: Profile | null, fallbackUserId?: string) {
+  if (!p) return `/profile/${fallbackUserId || ""}`;
+  return p.username ? `/creator/${p.username}` : `/profile/${p.id || fallbackUserId}`;
+}
+
+function displayName(p?: Profile | null) {
+  if (!p) return "Unknown";
+  return (
+    p.display_name ||
+    [p.first_name, p.last_name].filter(Boolean).join(" ") ||
+    p.username ||
+    "Unknown"
+  );
+}
 
 export default function SplikCard({
   splik,
-  index = 0,
+  className,
+  index,
+  shouldLoad = true,
+  onPrimaryVisible,
   onReact,
   onShare,
 }: Props) {
-  const vRef = React.useRef<HTMLVideoElement | null>(null);
-  const [muted, setMuted] = React.useState<boolean>(isTouch ? true : false);
+  const [userId, setUserId] = React.useState<string | null>(null);
+  const [saved, setSaved] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
 
-  // Seek slightly off 0 to avoid black first frame
-  const seekNonZero = React.useCallback((v: HTMLVideoElement) => {
-    const start = Number(splik.trim_start ?? 0);
-    const t = start ? Math.max(0.05, start) : 0.1;
-    try {
-      if (v.currentTime === 0) v.currentTime = t;
-    } catch {}
-  }, [splik.trim_start]);
+  const [muted, setMuted] = React.useState(true);
+  const [playing, setPlaying] = React.useState(false);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
 
+  // who am I
   React.useEffect(() => {
-    const v = vRef.current;
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+  }, []);
+
+  // check if favorited
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!userId) return;
+      const { data } = await supabase
+        .from("favorites")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("splik_id", splik.id)
+        .maybeSingle();
+      if (!cancelled) setSaved(!!data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, splik.id]);
+
+  // minimal mobile-first video setup (prevents black flicker)
+  React.useEffect(() => {
+    const v = videoRef.current;
     if (!v) return;
 
-    // harden video for mobile autoplay
-    v.setAttribute("playsinline", "true");
-    // @ts-ignore
+    v.playsInline = true;
     v.setAttribute("webkit-playsinline", "true");
-    v.disablePictureInPicture = true;
     v.preload = "metadata";
-    v.crossOrigin = "anonymous";
     v.muted = muted;
 
-    const onLoadedMeta = () => seekNonZero(v);
-
-    const onPlayRecovery = () => {
-      // If we somehow got audio-only (width/height 0), try to jog the decoder.
-      if ((v.videoWidth === 0 || v.videoHeight === 0) && !v.paused) {
-        try {
-          const cur = v.currentTime;
-          v.pause();
-          v.currentTime = Math.max(0.12, cur + 0.12);
-          // small async wait before resuming
-          setTimeout(() => {
-            v.play().catch(() => {});
-          }, 80);
-        } catch {}
-      }
+    const onLoaded = () => {
+      if (v.currentTime === 0) v.currentTime = 0.1;
     };
-
-    v.addEventListener("loadedmetadata", onLoadedMeta);
-    v.addEventListener("play", onPlayRecovery);
-
-    // initial nudge
-    if (v.readyState >= 1) seekNonZero(v);
+    v.addEventListener("loadeddata", onLoaded, { once: true });
 
     return () => {
-      v.removeEventListener("loadedmetadata", onLoadedMeta);
-      v.removeEventListener("play", onPlayRecovery);
+      v.removeEventListener("loadeddata", onLoaded);
+      try {
+        v.pause();
+      } catch {}
     };
-  }, [muted, seekNonZero]);
+  }, [muted]);
 
-  const toggleMute = () => {
-    const v = vRef.current;
+  // visible observer (optional)
+  React.useEffect(() => {
+    if (typeof index !== "number" || !onPrimaryVisible) return;
+    const card = videoRef.current?.closest("[data-card]");
+    if (!card) return;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting && e.intersectionRatio > 0.6) {
+            onPrimaryVisible(index);
+          }
+        }
+      },
+      { threshold: [0, 0.6, 1] }
+    );
+    obs.observe(card);
+    return () => obs.disconnect();
+  }, [index, onPrimaryVisible]);
+
+  const togglePlay = async () => {
+    const v = videoRef.current;
     if (!v) return;
-    v.muted = !muted;
-    setMuted(v.muted);
+    if (playing) {
+      v.pause();
+      setPlaying(false);
+    } else {
+      try {
+        await v.play();
+        setPlaying(true);
+      } catch {
+        // try muted autoplay as a fallback
+        v.muted = true;
+        setMuted(true);
+        try {
+          await v.play();
+          setPlaying(true);
+        } catch {}
+      }
+    }
   };
 
-  return (
-    <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
-      {/* video */}
-      <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-        <video
-          key={splik.id}
-          ref={vRef}
-          src={splik.video_url}
-          poster={splik.thumbnail_url ?? undefined}
-          className="w-full h-full object-cover"
-          playsInline
-          // important: do not auto preload data—metadata only
-          preload="metadata"
-          muted={muted}
-          // keep the background black during decode
-          style={{
-            backgroundColor: "#000",
-            WebkitBackfaceVisibility: "hidden",
-            backfaceVisibility: "hidden",
-            transform: "translateZ(0)", // force GPU layer on iOS
-          }}
-        />
+  const toggleMute = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    const next = !muted;
+    v.muted = next;
+    setMuted(next);
+  };
 
-        {/* mute toggle */}
+  const toggleSave = async () => {
+    if (!userId) {
+      // optional: toast prompt
+      return;
+    }
+    if (saving) return;
+
+    setSaving(true);
+    try {
+      if (saved) {
+        await supabase
+          .from("favorites")
+          .delete()
+          .eq("user_id", userId)
+          .eq("splik_id", splik.id);
+        setSaved(false);
+      } else {
+        await supabase.from("favorites").insert({ user_id: userId, splik_id: splik.id });
+        setSaved(true);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const initials =
+    displayName(splik.profile)
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "U";
+
+  return (
+    <Card
+      data-card
+      className={cn(
+        "overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto bg-background",
+        className
+      )}
+    >
+      {/* header (avatar + name — clickable) */}
+      <div className="flex items-center justify-between p-3 pb-0">
+        <Link
+          to={profilePath(splik.profile, splik.user_id)}
+          className="flex items-center gap-3 hover:opacity-90 transition-opacity"
+        >
+          <Avatar className="h-9 w-9">
+            <AvatarImage src={splik.profile?.avatar_url || undefined} />
+            <AvatarFallback>{initials}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold truncate">{displayName(splik.profile)}</p>
+            {splik.title ? (
+              <p className="text-xs text-muted-foreground truncate">{splik.title}</p>
+            ) : null}
+          </div>
+        </Link>
+      </div>
+
+      {/* video — NOTE: object-contain to avoid cutting */}
+      <div className="relative bg-black aspect-[9/16] mt-2">
+        {shouldLoad !== false ? (
+          <video
+            ref={videoRef}
+            className="absolute inset-0 w-full h-full object-contain bg-black"
+            src={splik.video_url}
+            poster={splik.thumbnail_url || undefined}
+            playsInline
+            muted={muted}
+            onEnded={() => setPlaying(false)}
+          />
+        ) : (
+          <div className="absolute inset-0 bg-black" />
+        )}
+
+        {/* center play/pause tap area */}
         <button
-          onClick={toggleMute}
-          className="absolute bottom-3 right-3 bg-black/55 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
+          onClick={togglePlay}
+          className="absolute inset-0 flex items-center justify-center focus:outline-none"
+          aria-label={playing ? "Pause" : "Play"}
+        >
+          {playing ? (
+            <span className="opacity-0 hover:opacity-100 transition-opacity bg-black/25 rounded-full p-3">
+              <Pause className="h-10 w-10 text-white" />
+            </span>
+          ) : (
+            <span className="bg-black/35 rounded-full p-3 hover:bg-black/45 transition-colors">
+              <Play className="h-10 w-10 text-white ml-1" />
+            </span>
+          )}
+        </button>
+
+        {/* mute button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleMute();
+          }}
+          className="absolute bottom-3 right-3 bg-black/60 rounded-full p-2 hover:bg-black/80"
           aria-label={muted ? "Unmute" : "Mute"}
         >
-          {muted ? (
-            <VolumeX className="h-4 w-4 text-white" />
-          ) : (
-            <Volume2 className="h-4 w-4 text-white" />
-          )}
+          {muted ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
         </button>
       </div>
 
-      {/* actions (no comments) */}
-      <div className="p-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button
-            size="sm"
-            variant="outline"
-            className="hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-950 dark:hover:text-red-400"
-            onClick={onReact}
-          >
+      {/* actions: Like / Share / Save */}
+      <div className="p-3">
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onReact} className="flex-1">
             <Heart className="h-4 w-4 mr-2" />
-            {(splik.likes_count ?? 0).toLocaleString()}
+            {splik.hype_count ?? 0}
           </Button>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onShare}
-            className="px-3 hover:bg-green-50 hover:text-green-600 hover:border-green-200 dark:hover:bg-green-950 dark:hover:text-green-400"
-          >
+          <Button size="sm" variant="outline" onClick={onShare}>
             <Share2 className="h-4 w-4" />
           </Button>
+
+          {/* Save / Saved (favorites) */}
+          <Button
+            size="sm"
+            variant={saved ? "default" : "outline"}
+            onClick={toggleSave}
+            disabled={saving}
+            title={saved ? "Saved" : "Save"}
+          >
+            {saved ? <BookmarkCheck className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+          </Button>
         </div>
 
-        <div className="flex items-center gap-3">
-          <Avatar className="h-8 w-8">
-            {splik.profile?.avatar_url ? (
-              <AvatarImage src={splik.profile?.avatar_url} />
-            ) : (
-              <AvatarFallback>
-                {(splik.profile?.display_name || splik.profile?.username || "U")
-                  .slice(0, 1)
-                  .toUpperCase()}
-              </AvatarFallback>
-            )}
-          </Avatar>
-          <div className="text-sm font-semibold">
-            {splik.profile?.display_name || splik.profile?.username || "User"}
-          </div>
-        </div>
+        {/* description (optional) */}
+        {splik.description ? (
+          <p className="text-sm mt-3 text-foreground/90">{splik.description}</p>
+        ) : null}
       </div>
     </Card>
   );
