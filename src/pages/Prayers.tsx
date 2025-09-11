@@ -47,11 +47,6 @@ export default function PrayersPage() {
     <div className="mx-auto max-w-3xl p-4 space-y-4">
       <h1 className="text-2xl font-semibold">Daily Prayers and Testimonies</h1>
 
-      {/* TEMP debug – remove later */}
-      <div className="rounded-md border border-muted/30 bg-muted/10 p-2 text-xs text-muted-foreground">
-        Supabase URL: {import.meta.env.VITE_SUPABASE_URL}
-      </div>
-
       {/* Prepend new post instantly */}
       <PrayerComposer onPosted={(p) => setItems((cur) => [p as Prayer, ...cur])} />
 
