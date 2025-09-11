@@ -1,7 +1,7 @@
 // src/components/prayers/PrayerCard.tsx
 import { Link } from "react-router-dom";
 import { format } from "date-fns";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { amenPrayer, createReply, fetchReplies } from "@/lib/prayers";
@@ -29,7 +29,11 @@ export default function PrayerCard({
           {item.type}
         </span>
         {item.answered && (
-          <span className="inline-flex rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5">
+          <span
+            className="inline-flex rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5"
+            aria-label="Marked as answered"
+            title="Marked as answered"
+          >
             Answered
           </span>
         )}
@@ -54,59 +58,112 @@ export default function PrayerCard({
 function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
   const [local, setLocal] = useState(initialCount);
   const [busy, setBusy] = useState(false);
+  const [clicked, setClicked] = useState(false); // prevent double-amen on this session
 
   const click = async () => {
-    if (busy) return;
+    if (busy || clicked) return;
     setBusy(true);
-    setLocal(v => v + 1); // optimistic
-    try { await amenPrayer(id); }
-    catch { setLocal(v => v - 1); }
-    finally { setBusy(false); }
+    setClicked(true);
+    setLocal((v) => v + 1); // optimistic
+    try {
+      await amenPrayer(id);
+    } catch {
+      setClicked(false);
+      setLocal((v) => v - 1);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <Button variant="ghost" size="sm" onClick={click} disabled={busy}>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={click}
+      disabled={busy || clicked}
+      aria-label="Amen"
+      title={clicked ? "You already clicked Amen" : "Amen"}
+    >
       🙏 <span className="ml-2">{local}</span>
     </Button>
   );
 }
 
 /** Inline Reply list (avoids missing import) */
-function ReplyListInline({ prayerId, initialCount }: { prayerId: string; initialCount: number }) {
+function ReplyListInline({
+  prayerId,
+  initialCount
+}: {
+  prayerId: string;
+  initialCount: number;
+}) {
   const [open, setOpen] = useState(false);
-  const [list, setList] = useState<Array<{id:string; body:string; created_at:string}>>([]);
+  const [list, setList] = useState<Array<{ id: string; body: string; created_at: string }>>([]);
   const [text, setText] = useState("");
-  const total = Math.max(initialCount, list.length);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    fetchReplies(prayerId).then((d:any) => setList(d || [])).catch(()=>{});
+    fetchReplies(prayerId).then((d: any) => setList(d || [])).catch(() => {});
   }, [open, prayerId]);
+
+  const total = useMemo(() => Math.max(initialCount, list.length), [initialCount, list.length]);
 
   const post = async () => {
     const t = text.trim();
-    if (!t) return;
-    const r:any = await createReply(prayerId, t);
-    setList(l => [...l, r]);
-    setText("");
+    if (!t || t.length > 1000 || sending) return;
+    setSending(true);
+    try {
+      const r: any = await createReply(prayerId, t);
+      setList((l) => [...l, r]);
+      setText("");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const onKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    // Enter or Cmd/Ctrl+Enter to send
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
+      e.preventDefault();
+      post();
+    }
   };
 
   return (
     <div>
-      <button className="text-muted-foreground" onClick={()=>setOpen(v=>!v)}>
+      <button
+        className="text-muted-foreground"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={`replies-${prayerId}`}
+      >
         💬 {open ? "Hide" : "Replies"} ({total})
       </button>
+
       {open && (
-        <div className="mt-2 space-y-2">
-          {list.map(r => (
+        <div id={`replies-${prayerId}`} className="mt-2 space-y-2">
+          {list.map((r) => (
             <div key={r.id} className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap">
               {r.body}
             </div>
           ))}
           <div className="flex gap-2">
-            <Input value={text} onChange={(e)=>setText(e.target.value)} placeholder="Write a reply…" />
-            <Button onClick={post} disabled={!text.trim()}>Send</Button>
+            <Input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Write a reply…"
+              aria-label="Write a reply"
+              disabled={sending}
+            />
+            <Button onClick={post} disabled={!text.trim() || text.length > 1000 || sending}>
+              {sending ? "Sending…" : "Send"}
+            </Button>
           </div>
+          {text.length > 1000 && (
+            <div className="text-xs text-red-500">Replies must be 1–1000 characters.</div>
+          )}
         </div>
       )}
     </div>
