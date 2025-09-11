@@ -73,16 +73,26 @@ export async function fetchPrayer(id: string): Promise<Prayer | null> {
   return (data as Prayer) ?? null;
 }
 
-/* ---------- Amen ---------- */
-export async function amenPrayer(prayerId: string): Promise<void> {
+/* ---------- Amen (duplicate-safe) ---------- */
+export async function amenPrayer(
+  prayerId: string
+): Promise<{ inserted: boolean }> {
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error("Sign in first");
+  if (!user) throw new Error("not_authed");
 
-  const { error } = await supabase
+  // Upsert so a user can only Amen a prayer once.
+  // Requires a unique index on (prayer_id, user_id) in DB.
+  const { data, error } = await supabase
     .from("prayer_amens")
-    .insert({ prayer_id: prayerId, user_id: user.id });
+    .upsert(
+      { prayer_id: prayerId, user_id: user.id },
+      { onConflict: "prayer_id,user_id", ignoreDuplicates: true }
+    )
+    .select("id"); // [] if duplicate, 1 row if newly inserted
 
   if (error) throw error;
+  const inserted = Array.isArray(data) && data.length > 0;
+  return { inserted };
 }
 
 /* ---------- Replies ---------- */
