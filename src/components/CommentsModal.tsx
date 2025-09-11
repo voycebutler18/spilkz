@@ -39,7 +39,7 @@ interface CommentsModalProps {
   onClose: () => void;
   splikId: string;
   splikTitle?: string;
-  /** Notify parent to adjust the visible count immediately (+1 on insert, -1 on delete) */
+  /** Tell the card to adjust its visible count immediately (+1 / -1). */
   onCountDelta?: (delta: number) => void;
 }
 
@@ -51,13 +51,14 @@ const CommentsModal = ({
 }: CommentsModalProps) => {
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [newComment, setNewComment] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingList, setLoadingList] = useState(false);
+  const [loadingCount, setLoadingCount] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Accurate count (not derived from rendered list)
   const [count, setCount] = useState(0);
 
-  // Auth
+  // Auth only for the composer (never blocks list/count)
   const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id: string; profile?: Profile } | null>(null);
 
@@ -80,10 +81,9 @@ const CommentsModal = ({
   const initials = (p?: Profile | null) =>
     (displayName(p).substring(0, 2) || "UU").toUpperCase();
 
-  /* ----------------------- Auth session ----------------------- */
+  /* ----------------------- Auth (composer only) ----------------------- */
   useEffect(() => {
     if (!isOpen) return;
-
     let cancelled = false;
 
     (async () => {
@@ -101,7 +101,6 @@ const CommentsModal = ({
       } else {
         setCurrentUser(null);
       }
-
       setAuthReady(true);
     })();
 
@@ -109,7 +108,7 @@ const CommentsModal = ({
       if (session?.user) {
         setCurrentUser((prev) => ({
           id: session.user!.id,
-          profile: prev?.profile, // keep until we re-fetch
+          profile: prev?.profile,
         }));
       } else {
         setCurrentUser(null);
@@ -123,19 +122,33 @@ const CommentsModal = ({
     };
   }, [isOpen]);
 
-  /* -------------------- Initial load + count ------------------- */
+  /* ---------------- Reset dedup set when opening/new id --------------- */
+  useEffect(() => {
+    if (isOpen) seenIds.current = new Set();
+  }, [isOpen, splikId]);
+
+  /* -------------------- Initial load (list + count) -------------------- */
   useEffect(() => {
     if (!isOpen) return;
 
     let cancelled = false;
-    setLoading(true);
+    setLoadingList(true);
+    setLoadingCount(true);
 
     (async () => {
       try {
-        // Load latest first for UX
+        // Load comments (newest first). Join profiles to avoid N+1.
         const { data: rows, error } = await supabase
           .from("comments")
-          .select("id, content, created_at, user_id")
+          .select(`
+            id,
+            content,
+            created_at,
+            user_id,
+            profiles:profiles!comments_user_id_fkey (
+              id, display_name, first_name, last_name, username, avatar_url
+            )
+          `)
           .eq("splik_id", splikId)
           .order("created_at", { ascending: false });
 
@@ -144,7 +157,7 @@ const CommentsModal = ({
         const list = rows || [];
         list.forEach((r: any) => seenIds.current.add(r.id));
 
-        // Accurate count (constant-time HEAD)
+        // Accurate count (constant-time HEAD; not blocked by auth)
         const { count: exact } = await supabase
           .from("comments")
           .select("id", { count: "exact", head: true })
@@ -153,23 +166,12 @@ const CommentsModal = ({
         if (!cancelled) {
           setCount(exact ?? list.length);
 
-          // Batch load profiles
-          const ids = Array.from(new Set(list.map((r: any) => r.user_id).filter(Boolean)));
-          const profilesById = new Map<string, Profile>();
-          if (ids.length > 0) {
-            const { data: profs } = await supabase
-              .from("profiles")
-              .select("id,display_name,first_name,last_name,username,avatar_url")
-              .in("id", ids);
-            (profs || []).forEach((p: any) => profilesById.set(p.id, p as Profile));
-          }
-
           const hydrated: CommentRow[] = list.map((c: any) => ({
             id: c.id,
             content: c.content,
             created_at: c.created_at,
             user_id: c.user_id,
-            profile: profilesById.get(c.user_id) ?? null,
+            profile: (c.profiles as Profile) ?? null,
           }));
 
           setComments(hydrated);
@@ -182,7 +184,10 @@ const CommentsModal = ({
           variant: "destructive",
         });
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoadingList(false);
+          setLoadingCount(false);
+        }
       }
     })();
 
@@ -210,14 +215,18 @@ const CommentsModal = ({
           if (!row?.id || seenIds.current.has(row.id)) return;
           seenIds.current.add(row.id);
 
-          // One-off fetch for the newcomer's profile
-          let prof: Profile | null = null;
-          const { data: p } = await supabase
-            .from("profiles")
-            .select("id,display_name,first_name,last_name,username,avatar_url")
-            .eq("id", row.user_id)
-            .maybeSingle();
-          prof = (p as Profile) || null;
+          // Prefer current user's profile if it's their comment; otherwise fetch once.
+          let prof: Profile | null =
+            row.user_id === currentUser?.id ? (currentUser.profile ?? null) : null;
+
+          if (!prof) {
+            const { data: p } = await supabase
+              .from("profiles")
+              .select("id,display_name,first_name,last_name,username,avatar_url")
+              .eq("id", row.user_id)
+              .maybeSingle();
+            prof = (p as Profile) || null;
+          }
 
           setComments((prev) => [
             { id: row.id, content: row.content, created_at: row.created_at, user_id: row.user_id, profile: prof },
@@ -249,7 +258,7 @@ const CommentsModal = ({
         channelRef.current = null;
       }
     };
-  }, [isOpen, splikId, onCountDelta]);
+  }, [isOpen, splikId, onCountDelta, currentUser?.id, currentUser?.profile]);
 
   /* ------------------------- Submit --------------------------- */
   const handleSubmit = async (e: React.FormEvent) => {
@@ -297,13 +306,13 @@ const CommentsModal = ({
         <DialogHeader>
           <DialogTitle>Comments</DialogTitle>
           <DialogDescription>
-            {count} {count === 1 ? "comment" : "comments"}
+            {loadingCount ? "Loading…" : `${count} ${count === 1 ? "comment" : "comments"}`}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 flex flex-col space-y-4 min-h-0">
           <ScrollArea className="flex-1 pr-4">
-            {loading ? (
+            {loadingList ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
@@ -340,7 +349,7 @@ const CommentsModal = ({
             )}
           </ScrollArea>
 
-          {/* Composer */}
+          {/* Composer (auth does not block list/count) */}
           {!authReady ? (
             <div className="text-center py-4 border-t text-muted-foreground text-sm">
               <Loader2 className="h-4 w-4 inline mr-2 animate-spin" />
