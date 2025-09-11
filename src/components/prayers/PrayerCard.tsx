@@ -1,5 +1,5 @@
 // src/components/prayers/PrayerCard.tsx
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,9 @@ import {
   amenPrayer,
   createReply,
   fetchReplies,
-  deletePrayer,   // <-- add
+  deletePrayer,
 } from "@/lib/prayers";
-import { supabase } from "@/integrations/supabase/client"; // <-- add
+import { supabase } from "@/integrations/supabase/client";
 
 export default function PrayerCard({
   item,
@@ -18,7 +18,7 @@ export default function PrayerCard({
 }: {
   item: {
     id: string;
-    author: string;  // <-- REQUIRED for ownership check
+    author: string;
     type: "request" | "testimony" | "quote";
     body: string;
     amen_count: number;
@@ -31,7 +31,6 @@ export default function PrayerCard({
   const day = format(new Date(item.created_at), "MMM d, yyyy");
   const time = format(new Date(item.created_at), "h:mm a");
 
-  // who is logged in?
   const [me, setMe] = useState<string | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
@@ -76,7 +75,6 @@ export default function PrayerCard({
           {day} at {time}
         </span>
 
-        {/* Delete for owner only */}
         {isOwner && (
           <Button
             variant="ghost"
@@ -86,6 +84,7 @@ export default function PrayerCard({
             disabled={deleting}
             aria-label="Delete post"
             title="Delete post"
+            type="button"
           >
             {deleting ? "Deleting…" : "Delete"}
           </Button>
@@ -104,20 +103,41 @@ export default function PrayerCard({
   );
 }
 
-/** Inline Amen button */
+/** Amen button – mobile-safe */
 function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
+  const navigate = useNavigate();
   const [local, setLocal] = useState(initialCount);
   const [busy, setBusy] = useState(false);
   const [clicked, setClicked] = useState(false);
+  const [authed, setAuthed] = useState(false);
 
-  const click = async () => {
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setAuthed(!!s)
+    );
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+
+  const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
+    // prevent tap from triggering parent link or scroll
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!authed) {
+      // send user to login on mobile if they're not signed in
+      navigate("/login");
+      return;
+    }
+
     if (busy || clicked) return;
     setBusy(true);
     setClicked(true);
-    setLocal((v) => v + 1);
+    setLocal((v) => v + 1); // optimistic
     try {
       await amenPrayer(id);
     } catch {
+      // revert if backend rejects (e.g., duplicate)
       setClicked(false);
       setLocal((v) => v - 1);
     } finally {
@@ -129,10 +149,12 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
     <Button
       variant="ghost"
       size="sm"
-      onClick={click}
+      onClick={onTap}
       disabled={busy || clicked}
       aria-label="Amen"
-      title={clicked ? "You already clicked Amen" : "Amen"}
+      title={!authed ? "Log in to Amen" : clicked ? "You already clicked Amen" : "Amen"}
+      type="button"
+      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]" // bigger hit target for mobile
     >
       🙏 <span className="ml-2">{local}</span>
     </Button>
@@ -175,6 +197,7 @@ function ReplyListInline({
   const onKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
       e.preventDefault();
+      e.stopPropagation();
       post();
     }
   };
@@ -183,7 +206,11 @@ function ReplyListInline({
     <div>
       <button
         className="text-muted-foreground"
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
         aria-expanded={open}
         aria-controls={`replies-${prayerId}`}
       >
@@ -206,10 +233,13 @@ function ReplyListInline({
               aria-label="Write a reply"
               disabled={sending}
             />
-            <Button onClick={post} disabled={!text.trim() || text.length > 1000 || sending}>
+            <Button onClick={post} disabled={!text.trim() || text.length > 1000 || sending} type="button">
               {sending ? "Sending…" : "Send"}
             </Button>
           </div>
+          {text.length > 1000 && (
+            <div className="text-xs text-red-500">Replies must be 1–1000 characters.</div>
+          )}
         </div>
       )}
     </div>
