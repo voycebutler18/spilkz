@@ -1,19 +1,16 @@
-// src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  MessageCircle,
+  Flame,
   Share2,
   Bookmark,
   BookmarkCheck,
   MoreVertical,
   Volume2,
   VolumeX,
-  Send,
   Play,
   Pause,
 } from "lucide-react";
@@ -30,11 +27,11 @@ interface Splik {
   video_url: string;
   thumbnail_url?: string | null;
   user_id: string;
-  comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  hype_count?: number;
+  hype_score?: number | null;
+  hype_givers?: number | null;
   profile?: {
     id?: string;
     username?: string | null;
@@ -43,15 +40,6 @@ interface Splik {
     last_name?: string | null;
     avatar_url?: string | null;
   } | null;
-}
-
-interface Comment {
-  id: string;
-  content: string;
-  created_at: string;
-  user_id: string;
-  // keep this light; we only read first_name in the UI
-  profiles?: { first_name?: string | null; last_name?: string | null } | null;
 }
 
 interface VideoFeedProps {
@@ -78,9 +66,8 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
     .filter(Boolean)
     .map((r) => ({
       ...r,
-      comments_count: Number.isFinite(r?.comments_count as any)
-        ? (r!.comments_count as number)
-        : 0,
+      hype_score: Number.isFinite(r?.hype_score as any) ? (r!.hype_score as number) : 0,
+      hype_givers: Number.isFinite(r?.hype_givers as any) ? (r!.hype_givers as number) : 0,
       profile:
         r.profile ?? {
           id: r.user_id,
@@ -122,15 +109,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
-  // inline comments
-  const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [newComment, setNewComment] = useState("");
-  const [loadingComments, setLoadingComments] = useState(false);
-  const liveCommentsCh = useRef<ReturnType<typeof supabase.channel> | null>(null);
-
-  // cache the viewer's profile for optimistic inserts
-  const meProfileRef = useRef<{ first_name?: string | null; last_name?: string | null } | null>(null);
+  // hype UI
+  const [isHyped, setIsHyped] = useState<Record<string, boolean>>({});
+  const [hypeScore, setHypeScore] = useState<Record<string, number>>({});
+  const [hypeGivers, setHypeGivers] = useState<Record<string, number>>({});
 
   // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -140,42 +122,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  // force-remount key
+  // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
   // prewarmed feed from splash/store
   const { feed: storeFeed } = useFeedStore();
 
-  // prime viewer profile for optimistic comment display
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!user?.id) {
-        meProfileRef.current = null;
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("first_name, last_name, display_name, username")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (!cancelled) {
-        meProfileRef.current = {
-          first_name:
-            (data?.display_name as string | undefined) ??
-            (data?.first_name as string | undefined) ??
-            (data?.username as string | undefined) ??
-            null,
-          last_name: (data?.last_name as string | undefined) ?? null,
-        };
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
-
-  // Try store → sessionStorage → network
+  // Try store → sessionStorage → network (only if needed)
   useEffect(() => {
     let cancelled = false;
 
@@ -228,6 +181,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setLoading(false);
         primeUI(cached);
         backgroundRefresh();
+        // also seed hype maps from cached values
+        const s = Object.fromEntries(cached.map((r) => [r.id, r.hype_score ?? 0]));
+        const g = Object.fromEntries(cached.map((r) => [r.id, r.hype_givers ?? 0]));
+        setHypeScore(s);
+        setHypeGivers(g);
         return;
       }
 
@@ -238,6 +196,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
             trim_start, trim_end, created_at,
+            hype_score, hype_givers,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
@@ -251,6 +210,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!cancelled) {
           setSpliks(ordered);
           primeUI(ordered);
+          // seed hype maps
+          const s = Object.fromEntries(ordered.map((r) => [r.id, r.hype_score ?? 0]));
+          const g = Object.fromEntries(ordered.map((r) => [r.id, r.hype_givers ?? 0]));
+          setHypeScore(s);
+          setHypeGivers(g);
         }
       } catch (e) {
         console.error("Feed fetch error:", e);
@@ -265,6 +229,23 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, storeFeed]);
+
+  /* ---------- which of these spliks did I hype? ---------- */
+  useEffect(() => {
+    const run = async () => {
+      if (!user?.id || spliks.length === 0) return;
+      const ids = spliks.map((s) => s.id);
+      const { data } = await supabase
+        .from("hype_reactions")
+        .select("splik_id")
+        .eq("user_id", user.id)
+        .in("splik_id", ids);
+      const map: Record<string, boolean> = {};
+      (data || []).forEach((r: any) => (map[r.splik_id] = true));
+      setIsHyped(map);
+    };
+    run();
+  }, [user?.id, spliks]);
 
   /* ---------- favorites realtime for this user ---------- */
   useEffect(() => {
@@ -450,6 +431,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         toast({ title: "Added to favorites" });
       }
     } catch {
+      // revert
       setSavedIds((prev) => {
         const ns = new Set(prev);
         currentlySaved ? ns.add(splikId) : ns.delete(splikId);
@@ -465,167 +447,62 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     }
   };
 
-  /* ---------------------- Comments (no join) ---------------------- */
-  const unsubscribeComments = () => {
-    if (liveCommentsCh.current) {
-      try {
-        supabase.removeChannel(liveCommentsCh.current);
-      } catch {}
-      liveCommentsCh.current = null;
-    }
-  };
-
-  const openComments = async (s: Splik) => {
-    // toggle panel
-    if (showCommentsFor === s.id) {
-      setShowCommentsFor(null);
-      setComments([]);
-      unsubscribeComments();
+  /* ---------- Hype toggle ---------- */
+  const toggleHype = async (splikId: string) => {
+    const {
+      data: { user: me },
+    } = await supabase.auth.getUser();
+    if (!me) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to hype videos",
+        variant: "destructive",
+      });
       return;
     }
 
-    setShowCommentsFor(s.id);
-    setLoadingComments(true);
-    unsubscribeComments();
+    const currentlyHyped = !!isHyped[splikId];
+
+    // optimistic
+    setIsHyped((m) => ({ ...m, [splikId]: !currentlyHyped }));
+    setHypeScore((m) => ({
+      ...m,
+      [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? -1 : 1)),
+    }));
+    setHypeGivers((m) => ({
+      ...m,
+      [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? -1 : 1)),
+    }));
 
     try {
-      // 1) plain comments
-      const { data: rows, error } = await supabase
-        .from("comments")
-        .select("id, content, created_at, user_id")
-        .eq("splik_id", s.id)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-
-      // 2) batch lookup profiles
-      const ids = Array.from(new Set((rows || []).map((r) => r.user_id).filter(Boolean)));
-      const byId = new Map<string, any>();
-      if (ids.length) {
-        const { data: profs } = await supabase
-          .from("profiles")
-          .select("id, first_name, last_name, display_name, username, avatar_url")
-          .in("id", ids);
-        (profs || []).forEach((p: any) => byId.set(p.id, p));
+      if (currentlyHyped) {
+        await supabase
+          .from("hype_reactions")
+          .delete()
+          .eq("user_id", me.id)
+          .eq("splik_id", splikId);
+      } else {
+        await supabase
+          .from("hype_reactions")
+          .upsert(
+            { user_id: me.id, splik_id: splikId, amount: 1 },
+            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
+          );
       }
-
-      // 3) hydrate comments
-      const hydrated: Comment[] = (rows || []).map((c: any) => {
-        const p = byId.get(c.user_id);
-        return {
-          id: c.id,
-          content: c.content,
-          created_at: c.created_at,
-          user_id: c.user_id,
-          profiles: {
-            first_name: p?.display_name ?? p?.first_name ?? p?.username ?? null,
-            last_name: p?.last_name ?? null,
-          },
-        };
-      });
-
-      setComments(hydrated);
-
-      // 4) live updates for this splik
-      liveCommentsCh.current = supabase
-        .channel(`vf-comments-${s.id}`)
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "comments", event: "INSERT", filter: `splik_id=eq.${s.id}` },
-          async (payload) => {
-            const row = payload.new as any;
-            // fetch profile for the new commenter (tiny one-off)
-            let profFirst: string | null = null;
-            let profLast: string | null = null;
-            const { data: p } = await supabase
-              .from("profiles")
-              .select("first_name, last_name, display_name, username")
-              .eq("id", row.user_id)
-              .maybeSingle();
-            profFirst = (p?.display_name as string) ?? (p?.first_name as string) ?? (p?.username as string) ?? null;
-            profLast = (p?.last_name as string) ?? null;
-
-            setComments((prev) => [
-              {
-                id: row.id,
-                content: row.content,
-                created_at: row.created_at,
-                user_id: row.user_id,
-                profiles: { first_name: profFirst, last_name: profLast },
-              },
-              ...prev,
-            ]);
-          }
-        )
-        .on(
-          "postgres_changes",
-          { schema: "public", table: "comments", event: "DELETE", filter: `splik_id=eq.${s.id}` },
-          (payload) => {
-            setComments((prev) => prev.filter((c) => c.id !== (payload.old as any)?.id));
-          }
-        )
-        .subscribe();
-    } catch (e) {
-      console.error(e);
-      toast({ title: "Error", description: "Failed to load comments", variant: "destructive" });
-    } finally {
-      setLoadingComments(false);
+    } catch {
+      // revert on error
+      setIsHyped((m) => ({ ...m, [splikId]: currentlyHyped }));
+      setHypeScore((m) => ({
+        ...m,
+        [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? 1 : -1)),
+      }));
+      setHypeGivers((m) => ({
+        ...m,
+        [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? 1 : -1)),
+      }));
+      toast({ title: "Error", description: "Failed to update hype", variant: "destructive" });
     }
   };
-
-  const submitComment = async () => {
-    if (!showCommentsFor || !user?.id || !newComment.trim()) return;
-
-    const content = newComment.trim();
-    setNewComment("");
-
-    try {
-      const { data, error } = await supabase
-        .from("comments")
-        .insert({
-          splik_id: showCommentsFor,
-          user_id: user.id,
-          content,
-        })
-        .select("id, content, created_at, user_id")
-        .single();
-
-      if (error) throw error;
-
-      // Optimistic add; realtime will also arrive, but we keep a lightweight dedupe:
-      setComments((prev) => {
-        if (prev.some((c) => c.id === data.id)) return prev;
-        return [
-          {
-            id: data.id,
-            content: data.content,
-            created_at: data.created_at,
-            user_id: data.user_id,
-            profiles: meProfileRef.current ?? { first_name: "You", last_name: null },
-          },
-          ...prev,
-        ];
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description:
-          error?.code === "42501"
-            ? "You don't have permission to post comments."
-            : error?.message || "Failed to post comment",
-        variant: "destructive",
-      });
-      // restore input if failed
-      setNewComment(content);
-    }
-  };
-
-  // cleanup live channel on unmount
-  useEffect(() => {
-    return () => {
-      unsubscribeComments();
-    };
-  }, []);
 
   /* ------------------------------ UI ------------------------------ */
   if (loading && spliks.length === 0) {
@@ -644,8 +521,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       {spliks.map((s, i) => {
         const videoIsPlaying = isPlaying[i] ?? false;
         const shouldShowPauseButton = showPauseButton[i] ?? true;
-        const isSaved = savedIds.has(s.id);
+        const saved = savedIds.has(s.id);
         const saving = savingIds.has(s.id);
+        const hyped = !!isHyped[s.id];
 
         return (
           <section
@@ -742,24 +620,28 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 )}
               </div>
 
-              {/* actions */}
+              {/* actions: Hype · Share · Save */}
               <div className="p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <Button
-                      size="icon"
+                      size="sm"
                       variant="ghost"
-                      onClick={() => openComments(s)}
-                      className="hover:text-blue-500"
+                      onClick={() => toggleHype(s.id)}
+                      className={hyped ? "text-orange-500 hover:text-orange-600" : ""}
                     >
-                      <MessageCircle className="h-6 w-6" />
+                      <Flame className={`h-5 w-5 ${hyped ? "fill-current" : ""}`} />
+                      <span className="ml-2 text-sm font-semibold">Hype</span>
+                      <span className="ml-2 text-sm tabular-nums">
+                        {(hypeScore[s.id] ?? 0).toLocaleString()}
+                      </span>
                     </Button>
 
                     <Button
                       size="icon"
                       variant="ghost"
                       onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
+                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
@@ -769,22 +651,20 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     </Button>
                   </div>
 
-                  {/* Save / Saved */}
                   <Button
                     size="icon"
                     variant="ghost"
                     onClick={() => toggleFavorite(s.id)}
                     disabled={saving}
-                    className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
-                    aria-pressed={isSaved}
-                    aria-label={isSaved ? "Saved" : "Save"}
-                    title={isSaved ? "Saved" : "Save"}
+                    className={saved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                    aria-pressed={saved}
+                    aria-label={saved ? "Saved" : "Save"}
+                    title={saved ? "Saved" : "Save"}
                   >
-                    {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                    {saved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
                   </Button>
                 </div>
 
-                {/* caption */}
                 {s.description && (
                   <p className="text-sm">
                     <span className="font-semibold mr-2">{nameFor(s)}</span>
@@ -792,38 +672,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </p>
                 )}
               </div>
-
-              {/* comments inline */}
-              {showCommentsFor === s.id && (
-                <div className="px-3 pb-4">
-                  <div className="border-t pt-3 space-y-3">
-                    {loadingComments ? (
-                      <div className="text-sm text-muted-foreground">Loading…</div>
-                    ) : comments.length === 0 ? (
-                      <div className="text-sm text-muted-foreground">No comments yet</div>
-                    ) : (
-                      comments.map((c) => (
-                        <div key={c.id} className="text-sm">
-                          <span className="font-semibold mr-2">{c.profiles?.first_name || "User"}</span>
-                          {c.content}
-                        </div>
-                      ))
-                    )}
-
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Add a comment…"
-                        value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && submitComment()}
-                      />
-                      <Button size="icon" onClick={submitComment} disabled={!newComment.trim()}>
-                        <Send className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </Card>
           </section>
         );
