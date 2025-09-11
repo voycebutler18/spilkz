@@ -1,11 +1,12 @@
 // src/lib/prayers.ts
 import { supabase } from "@/integrations/supabase/client";
 
+/* ---------- Types ---------- */
 export type PrayerType = "request" | "testimony" | "quote";
 
 export type Prayer = {
   id: string;
-  author: string;                 // <— REQUIRED for ownership checks
+  author: string;           // required for ownership checks
   type: PrayerType;
   body: string;
   tags: string[] | null;
@@ -15,32 +16,43 @@ export type Prayer = {
   created_at: string;
 };
 
-// Create
+export type PrayerReply = {
+  id: string;
+  prayer_id?: string;
+  author?: string;
+  body: string;
+  created_at: string;
+};
+
+/* ---------- Column list used in selects ---------- */
+const PRAYER_COLUMNS =
+  "id, author, type, body, tags, amen_count, reply_count, answered, created_at";
+
+/* ---------- Create ---------- */
 export async function createPrayer(type: PrayerType, body: string): Promise<Prayer> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
 
   const { data, error } = await supabase
     .from("prayers")
-    .insert({
-      author: user.id,            // <— make sure author is set
-      type,
-      body: body.trim(),
-    })
-    .select("id, author, type, body, tags, amen_count, reply_count, answered, created_at")
+    .insert({ author: user.id, type, body: body.trim() })
+    .select(PRAYER_COLUMNS)
     .single();
 
   if (error) throw error;
   return data as Prayer;
 }
 
-// List (paged by created_at desc)
-export async function fetchPrayers({ cursor }: { cursor?: string }): Promise<Prayer[]> {
+/* ---------- List (paged, newest first) ---------- */
+export async function fetchPrayers({
+  cursor,
+  limit = 20,
+}: { cursor?: string; limit?: number }): Promise<Prayer[]> {
   let q = supabase
     .from("prayers")
-    .select("id, author, type, body, tags, amen_count, reply_count, answered, created_at")
+    .select(PRAYER_COLUMNS)
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(limit);
 
   if (cursor) q = q.lt("created_at", cursor);
 
@@ -49,41 +61,61 @@ export async function fetchPrayers({ cursor }: { cursor?: string }): Promise<Pra
   return (data || []) as Prayer[];
 }
 
-// Amen (optional, you already have this)
-export async function amenPrayer(id: string) {
+/* ---------- Single by id (for detail page) ---------- */
+export async function fetchPrayer(id: string): Promise<Prayer | null> {
+  const { data, error } = await supabase
+    .from("prayers")
+    .select(PRAYER_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data as Prayer) ?? null;
+}
+
+/* ---------- Amen ---------- */
+export async function amenPrayer(prayerId: string): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
-  const { error } = await supabase.from("prayer_amens").insert({ prayer_id: id, user_id: user.id });
+
+  const { error } = await supabase
+    .from("prayer_amens")
+    .insert({ prayer_id: prayerId, user_id: user.id });
+
   if (error) throw error;
 }
 
-// Replies (optional, you already have these)
-export async function fetchReplies(prayerId: string) {
+/* ---------- Replies ---------- */
+export async function fetchReplies(prayerId: string): Promise<PrayerReply[]> {
   const { data, error } = await supabase
     .from("prayer_replies")
-    .select("id, body, created_at")
+    .select("id, prayer_id, author, body, created_at")
     .eq("prayer_id", prayerId)
     .order("created_at", { ascending: true });
+
   if (error) throw error;
-  return data || [];
+  return (data || []) as PrayerReply[];
 }
 
-export async function createReply(prayerId: string, body: string) {
+export async function createReply(prayerId: string, body: string): Promise<PrayerReply> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
+
   const { data, error } = await supabase
     .from("prayer_replies")
     .insert({ prayer_id: prayerId, author: user.id, body: body.trim() })
-    .select("id, body, created_at")
+    .select("id, prayer_id, author, body, created_at")
     .single();
+
   if (error) throw error;
-  return data;
+  return data as PrayerReply;
 }
 
-// DELETE (owner only – enforced by RLS)
-export async function deletePrayer(id: string) {
+/* ---------- Delete (owner only; enforced by RLS) ---------- */
+export async function deletePrayer(id: string): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
+
   const { error } = await supabase.from("prayers").delete().eq("id", id);
   if (error) throw error;
 }
