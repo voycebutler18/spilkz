@@ -103,14 +103,12 @@ export default function PrayerCard({
   );
 }
 
-/** Amen button – duplicate-safe + mobile-safe (increments only after success) */
+/** Amen button – simplified version */
 function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
   const navigate = useNavigate();
-  const [local, setLocal] = useState(initialCount);
+  const [count, setCount] = useState(initialCount);
   const [busy, setBusy] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [hasAmened, setHasAmened] = useState(false);
-  const [checkingAmenStatus, setCheckingAmenStatus] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
@@ -120,28 +118,6 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // Check if user has already amened this prayer when component mounts or auth changes
-  useEffect(() => {
-    const checkAmenStatus = async () => {
-      if (!authed) {
-        setHasAmened(false);
-        return;
-      }
-      
-      setCheckingAmenStatus(true);
-      try {
-        const amened = await hasUserAmened(id);
-        setHasAmened(amened);
-      } catch (err) {
-        console.error("Error checking amen status:", err);
-      } finally {
-        setCheckingAmenStatus(false);
-      }
-    };
-
-    checkAmenStatus();
-  }, [id, authed]);
-
   const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -150,48 +126,41 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
       navigate("/login");
       return;
     }
-    if (busy || hasAmened || checkingAmenStatus) return;
+    
+    if (busy) return;
 
     setBusy(true);
     try {
-      const { inserted } = await amenPrayer(id);
-      if (inserted) {
-        setLocal((v) => v + 1);
-        setHasAmened(true);
+      console.log("Attempting to amen prayer:", id);
+      const result = await amenPrayer(id);
+      console.log("Amen result:", result);
+      
+      if (result.inserted) {
+        setCount(prev => prev + 1);
+        console.log("Amen successful, count incremented");
       } else {
-        // User had already amened but we didn't know - update state
-        setHasAmened(true);
+        console.log("Already amened or duplicate");
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error amening prayer:", err);
+      alert("Error adding amen. Please try again.");
     } finally {
       setBusy(false);
     }
   };
-
-  const isDisabled = busy || hasAmened || checkingAmenStatus;
-  const buttonTitle = !authed 
-    ? "Log in to Amen" 
-    : hasAmened 
-    ? "You've already amened this" 
-    : checkingAmenStatus 
-    ? "Loading..." 
-    : "Amen";
 
   return (
     <Button
       variant="ghost"
       size="sm"
       onClick={onTap}
-      disabled={isDisabled}
+      disabled={busy}
       aria-label="Amen"
-      title={buttonTitle}
+      title={!authed ? "Log in to Amen" : busy ? "Processing..." : "Amen"}
       type="button"
-      className={`relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px] ${
-        hasAmened ? 'opacity-60' : ''
-      }`}
+      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]"
     >
-      🙏 <span className="ml-2">{local}</span>
+      🙏 <span className="ml-2">{count}</span>
     </Button>
   );
 }
@@ -208,13 +177,16 @@ function ReplyListInline({
   const [list, setList] = useState<Array<{ id: string; body: string; created_at: string }>>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [replyCount, setReplyCount] = useState(initialCount);
 
   useEffect(() => {
     if (!open) return;
-    fetchReplies(prayerId).then((d: any) => setList(d || [])).catch(() => {});
-  }, [open, prayerId]);
-
-  const total = useMemo(() => Math.max(initialCount, list.length), [initialCount, list.length]);
+    fetchReplies(prayerId).then((d: any) => {
+      setList(d || []);
+      // Update the count when we fetch replies
+      setReplyCount(Math.max(initialCount, (d || []).length));
+    }).catch(() => {});
+  }, [open, prayerId, initialCount]);
 
   const post = async () => {
     const t = text.trim();
@@ -223,6 +195,7 @@ function ReplyListInline({
     try {
       const r: any = await createReply(prayerId, t);
       setList((l) => [...l, r]);
+      setReplyCount((prev) => prev + 1);
       setText("");
     } finally {
       setSending(false);
@@ -249,7 +222,7 @@ function ReplyListInline({
         aria-expanded={open}
         aria-controls={`replies-${prayerId}`}
       >
-        💬 {open ? "Hide" : "Replies"} ({total})
+        💬 {open ? "Hide" : "Replies"} ({replyCount})
       </button>
 
       {open && (
