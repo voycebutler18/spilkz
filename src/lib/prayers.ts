@@ -80,27 +80,31 @@ export async function amenPrayer(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("not_authed");
 
-  // First check if user already amened this prayer
-  const { data: existing } = await supabase
-    .from("prayer_amens")
-    .select("id")
-    .eq("prayer_id", prayerId)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  console.log("amenPrayer called for prayer:", prayerId, "user:", user.id);
 
-  if (existing) {
-    // Already amened
-    return { inserted: false };
+  try {
+    // Try to insert - will fail if duplicate due to unique constraint
+    const { data, error } = await supabase
+      .from("prayer_amens")
+      .insert({ prayer_id: prayerId, user_id: user.id })
+      .select("id");
+
+    if (error) {
+      console.log("Insert error:", error);
+      // If it's a duplicate key error, return false but don't throw
+      if (error.code === '23505' || error.message.includes('duplicate')) {
+        console.log("Duplicate amen detected");
+        return { inserted: false };
+      }
+      throw error;
+    }
+
+    console.log("Amen inserted successfully:", data);
+    return { inserted: true };
+  } catch (err) {
+    console.error("amenPrayer error:", err);
+    throw err;
   }
-
-  // Insert new amen
-  const { data, error } = await supabase
-    .from("prayer_amens")
-    .insert({ prayer_id: prayerId, user_id: user.id })
-    .select("id");
-
-  if (error) throw error;
-  return { inserted: true };
 }
 
 /* ---------- Check if user has amened a prayer ---------- */
@@ -110,7 +114,7 @@ export async function hasUserAmened(prayerId: string): Promise<boolean> {
 
   const { data, error } = await supabase
     .from("prayer_amens")
-    .select("id")
+    .select("prayer_id")
     .eq("prayer_id", prayerId)
     .eq("user_id", user.id)
     .maybeSingle();
