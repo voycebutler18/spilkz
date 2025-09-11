@@ -17,9 +17,9 @@ import AppLayout from "@/components/layout/AppLayout";
 
 // Pages
 import Splash from "./pages/Splash";
-import Index from "./pages/Index";
+// import Index from "./pages/Index"; // ⬅️ remove: old Home, no longer used
 import About from "./pages/About";
-import Explore from "./pages/Explore";
+import Explore from "./pages/Explore"; // ⬅️ this is your current “Discover” page
 import Food from "./pages/Food";
 import ForBrands from "./pages/business/ForBrands";
 import ForCreators from "./pages/business/ForCreators";
@@ -66,7 +66,6 @@ import PrayerDetailPage from "./pages/PrayerDetail";
 import PrayersTagPage from "./pages/PrayersTag";
 import PrayersSearchPage from "./pages/PrayersSearch";
 import AmenButton from "@/components/prayers/AmenButton";
-
 
 // 404
 import NotFound from "./pages/NotFound";
@@ -157,14 +156,18 @@ const App = () => (
             {/* Back-compat upload (no layout) */}
             <Route path="/upload" element={<UploadRoute />} />
 
-            {/* Splash OUTSIDE layout to avoid heavy/global code before it renders */}
+            {/* Splash OUTSIDE layout */}
             <Route path="/" element={<Splash />} />
 
             {/* Everything else uses the global layout */}
             <Route element={<AppLayout />}>
-              <Route path="/home" element={<Index />} />
+              {/* NEW: Use Discover/Explore as the Home page */}
+              <Route path="/home" element={<Explore />} />
+
+              {/* Redirect old /explore links to /home */}
+              <Route path="/explore" element={<Navigate to="/home" replace />} />
+
               <Route path="/about" element={<About />} />
-              <Route path="/explore" element={<Explore />} />
               <Route path="/food" element={<Food />} />
               <Route path="/brands" element={<ForBrands />} />
               <Route path="/creators" element={<ForCreators />} />
@@ -193,10 +196,6 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
-
-              {/* Messaging */}
-              <Route path="/messages" element={<MessagesIndexRoute />} />
-              <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
 
               {/* Daily Prayers and Testimonies */}
               <Route path="/prayers" element={<PrayersPage />} />
