@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+  import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { MapPin, LocateFixed, Search as SearchIcon, ExternalLink, Loader2, Sparkles } from "lucide-react";
 
@@ -122,7 +122,7 @@ export default function PrayersPage() {
     { key: "jewish_reform", label: "Jewish – Reform", religionRegex: "jewish|judaism", denomRegex: "reform" },
     { key: "jewish_reconstructionist", label: "Jewish – Reconstructionist", religionRegex: "jewish|judaism", denomRegex: "reconstructionist" },
 
-    // Indian & other
+    // Other religions
     { key: "hindu", label: "Hindu", religionRegex: "hindu" },
     { key: "buddhist_any", label: "Buddhist (Any)", religionRegex: "buddhist" },
     { key: "buddhist_theravada", label: "Buddhist – Theravada", religionRegex: "buddhist", denomRegex: "theravada" },
@@ -147,7 +147,7 @@ export default function PrayersPage() {
   const [locationQuery, setLocationQuery] = useState("");
   const [distanceKey, setDistanceKey] = useState<DistanceKey>("5mi");
 
-  // ✅ default to broad “Christian (Any)” to avoid empty results
+  // start broad to avoid “no results” in big cities
   const [faithFilter, setFaithFilter] = useState<string>("christian_any");
   const [faithSearch, setFaithSearch] = useState("");
 
@@ -155,6 +155,7 @@ export default function PrayersPage() {
   const [nearbyError, setNearbyError] = useState<string | null>(null);
   const [nearby, setNearby] = useState<NearbyChurch[]>([]);
   const [broadenNote, setBroadenNote] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState(false); // fetching missing addresses
 
   const metersForDistanceKey = useMemo(
     () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.meters || 8046.72,
@@ -180,12 +181,84 @@ export default function PrayersPage() {
     setNearbyError(null);
     setBroadenNote(null);
     setFetchingNearby(false);
+    setEnriching(false);
     setDistanceKey("5mi");
     setFaithFilter("christian_any");
     setFaithSearch("");
   };
 
-  /* ----------------- Nominatim ----------------- */
+  /* ------------ Address helpers ------------ */
+
+  const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
+    if (!tags) return "";
+    // prefer addr:full
+    if (tags["addr:full"]) return tags["addr:full"];
+
+    const parts = [
+      [tags["addr:housenumber"], tags["addr:unit"]].filter(Boolean).join(" "),
+      tags["addr:street"] || tags["addr:road"],
+      tags["addr:neighbourhood"] || tags["addr:suburb"],
+      tags["addr:city"] || tags["addr:town"] || tags["addr:village"],
+      tags["addr:state"],
+      tags["addr:postcode"],
+    ].filter(Boolean);
+
+    return parts.join(", ");
+  };
+
+  async function reverseGeocodeAddress(lat: number, lon: number): Promise<string | null> {
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/reverse");
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("lat", String(lat));
+      url.searchParams.set("lon", String(lon));
+      // favor detail address
+      url.searchParams.set("addressdetails", "1");
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+      });
+      if (!res.ok) return null;
+      const j = (await res.json()) as any;
+      const a = j.address || {};
+      const parts = [
+        [a.house_number, a.unit].filter(Boolean).join(" "),
+        a.road || a.pedestrian,
+        a.neighbourhood || a.suburb,
+        a.city || a.town || a.village,
+        a.state,
+        a.postcode,
+      ].filter(Boolean);
+      return (parts.join(", ") || j.display_name || null);
+    } catch {
+      return null;
+    }
+  }
+
+  async function enrichMissingAddresses(list: NearbyChurch[]) {
+    // Fill in missing addresses for the first few results (polite rate).
+    const limit = Math.min(15, list.length); // avoid hammering the service
+    setEnriching(true);
+    try {
+      for (let i = 0; i < limit; i++) {
+        const item = list[i];
+        if (!item.address || item.address === "Address not available") {
+          const addr = await reverseGeocodeAddress(item.lat, item.lon);
+          if (addr) {
+            setNearby(prev =>
+              prev.map(p => (p.id === item.id ? { ...p, address: addr } : p))
+            );
+          }
+          // tiny delay between calls (be nice to Nominatim)
+          // NOTE: for heavier traffic, move this to your backend with proper caching.
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+    } finally {
+      setEnriching(false);
+    }
+  }
+
+  /* ----------------- Nominatim (place search) ----------------- */
   async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
     try {
       const url = new URL("https://nominatim.openstreetmap.org/reverse");
@@ -363,6 +436,7 @@ export default function PrayersPage() {
     try {
       setNearbyError(null);
       setBroadenNote(null);
+      setEnriching(false);
       setFetchingNearby(true);
       setNearby([]);
 
@@ -386,19 +460,19 @@ export default function PrayersPage() {
 
       const faith = FAITH_OPTIONS.find(f => f.key === faithFilter) || FAITH_OPTIONS[0];
 
-      // 1) Try nodes-only, with denom if set
+      // 1) nodes-only
       let json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex, true));
       let elements: any[] = json.elements || [];
 
-      // 2) If empty → full (ways/relations)
+      // 2) broaden to full if empty
       if (!elements.length) {
         json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex, false));
         elements = json.elements || [];
       }
 
-      // 3) If still empty AND a denom was selected → broaden to religion-only
+      // 3) if still empty & denominational → broaden to religion-only
       if (!elements.length && faith.denomRegex) {
-        setBroadenNote(`No exact matches for “${faith.label}”. Broadened to ${faith.religionRegex === "christian" ? "Christian (Any)" : "religion only"} to show results.`);
+        setBroadenNote(`No exact matches for “${faith.label}”. Broadened to ${faith.religionRegex === "christian" ? "Christian (Any)" : "religion only"}.`);
         json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, undefined, true));
         elements = json.elements || [];
         if (!elements.length) {
@@ -413,17 +487,14 @@ export default function PrayersPage() {
           const rLat = el.lat ?? el.center?.lat;
           const rLon = el.lon ?? el.center?.lon;
           if (typeof rLat !== "number" || typeof rLon !== "number") return null;
+
           const distanceKm = haversineKm(center!, { lat: rLat, lon: rLon });
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
 
-          const addrFull = el.tags?.["addr:full"];
-          const addrPieces = [
-            el.tags?.["addr:housenumber"],
-            el.tags?.["addr:street"],
-            el.tags?.["addr:city"],
-          ].filter(Boolean);
-          const address = addrFull || (addrPieces.length ? addrPieces.join(" ") : "Address not available");
+          // Build address from tags (many churches don't carry complete addr tags)
+          const addrFromTags = assembleAddressFromTags(el.tags);
+          const address = addrFromTags || "Address not available";
 
           return {
             id: `${el.type}/${el.id}`,
@@ -451,6 +522,11 @@ export default function PrayersPage() {
 
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
+
+      // 🔥 Fill missing addresses (first few) via reverse geocode
+      if (byDistance.some(p => !p.address || p.address === "Address not available")) {
+        enrichMissingAddresses(byDistance);
+      }
 
       if (byDistance.length === 0) {
         setNearbyError("No results found. Try a bigger radius or a different faith/denomination.");
@@ -666,9 +742,10 @@ export default function PrayersPage() {
                 </div>
               )}
 
-              {fetchingNearby && (
+              {(fetchingNearby || enriching) && (
                 <div className="flex items-center gap-3 text-purple-200">
-                  <Loader2 className="h-5 w-5 animate-spin" /> Searching for places of worship…
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  {fetchingNearby ? "Searching for places of worship…" : "Adding street addresses…"}
                 </div>
               )}
 
