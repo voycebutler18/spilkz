@@ -602,18 +602,23 @@ export default function PrayersPage() {
           if (!open) resetFinder();
         }}
       >
-        {/* Fixed full-screen dialog with proper mobile scrolling */}
+        {/* Full-screen on mobile/tablet; centered modal on desktop */}
         <DialogContent
           className="
-            sm:max-w-3xl sm:max-h-[90vh] sm:rounded-3xl
-            fixed inset-0 w-full h-full max-w-none rounded-none m-0 p-0
-            bg-slate-900/95 backdrop-blur-2xl border-0 sm:border sm:border-white/20 shadow-2xl
-            overflow-hidden
+            fixed inset-0 left-0 top-0 translate-x-0 translate-y-0
+            w-screen h-[100svh] max-w-none rounded-none m-0 p-0
+            bg-slate-900/95 backdrop-blur-2xl shadow-2xl
+            overflow-hidden overflow-x-hidden z-50 border-0
+
+            lg:inset-auto lg:left-1/2 lg:top-1/2
+            lg:translate-x-[-50%] lg:translate-y-[-50%]
+            lg:w-full lg:max-w-3xl lg:max-h-[90svh]
+            lg:rounded-3xl lg:border lg:border-white/20
           "
         >
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
-          <div className="relative z-10 flex flex-col h-full">
+          <div className="relative z-10 flex flex-col h-full max-w-screen">
             {/* Fixed Header */}
             <DialogHeader className="flex-shrink-0 space-y-2 sm:space-y-4 px-4 sm:px-6 pt-6 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10 bg-slate-900/90 backdrop-blur-xl">
               <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl">
@@ -633,7 +638,7 @@ export default function PrayersPage() {
             </DialogHeader>
 
             {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto overscroll-behavior-y-contain">
+            <div className="flex-1 overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
               <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-20">
                 {/* Location */}
                 <div className="space-y-3">
@@ -685,7 +690,7 @@ export default function PrayersPage() {
                       <SelectTrigger className="bg-white/10 backdrop-blur-xl border border-white/20 text-white rounded-xl py-3 text-base">
                         <SelectValue placeholder="Distance" />
                       </SelectTrigger>
-                      <SelectContent className="bg-slate-800 border border-white/20 rounded-xl">
+                      <SelectContent className="bg-slate-800 border border-white/20 rounded-xl !max-w-[min(92vw,28rem)]">
                         {DISTANCE_OPTIONS.map((d) => (
                           <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
                             {d.label}
@@ -704,7 +709,7 @@ export default function PrayersPage() {
                         onChange={(e) => setFaithSearch(e.target.value)}
                         className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
                       />
-                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain pr-1">
+                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain overscroll-contain pr-1">
                         <div className="grid grid-cols-1 gap-2">
                           {filteredFaithOptions.map((opt) => (
                             <button
@@ -767,7 +772,7 @@ export default function PrayersPage() {
                   <div className="space-y-4">
                     <h3 className="text-white text-lg sm:text-xl font-semibold">Found {nearby.length} nearby</h3>
                     <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                      <div className="max-h-[60vh] overflow-y-auto overscroll-behavior-y-contain">
+                      <div className="max-h-[65svh] overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
                         {nearby.map((place, index) => (
                           <div
                             key={place.id}
