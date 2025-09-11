@@ -1,5 +1,5 @@
 // src/components/ui/VideoFeed.tsx
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,6 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-
-// NEW: use the prewarmed feed Splash stored
 import { useFeedStore } from "@/store/feedStore";
 
 /* ---------------- types ---------------- */
@@ -36,7 +34,6 @@ interface Splik {
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  // optional counts Splash may attach (prevents "0 → real value" flash)
   hype_count?: number;
   profile?: {
     id?: string;
@@ -53,6 +50,7 @@ interface Comment {
   content: string;
   created_at: string;
   user_id: string;
+  // keep this light; we only read first_name in the UI
   profiles?: { first_name?: string | null; last_name?: string | null } | null;
 }
 
@@ -118,17 +116,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
-  // loading only covers the *first paint*. If we have cache, we skip it.
   const [loading, setLoading] = useState(true);
 
   // favorites UI
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
+  // inline comments
   const [showCommentsFor, setShowCommentsFor] = useState<string | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
+  const liveCommentsCh = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // cache the viewer's profile for optimistic inserts
+  const meProfileRef = useRef<{ first_name?: string | null; last_name?: string | null } | null>(null);
 
   // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -138,20 +140,47 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
-  // force-remount key to ensure DOM order changes on each shuffle
+  // force-remount key
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  // pull any prewarmed feed the Splash page left in the store/session
+  // prewarmed feed from splash/store
   const { feed: storeFeed } = useFeedStore();
 
-  // Try store → sessionStorage → network (only if needed)
+  // prime viewer profile for optimistic comment display
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!user?.id) {
+        meProfileRef.current = null;
+        return;
+      }
+      const { data } = await supabase
+        .from("profiles")
+        .select("first_name, last_name, display_name, username")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (!cancelled) {
+        meProfileRef.current = {
+          first_name:
+            (data?.display_name as string | undefined) ??
+            (data?.first_name as string | undefined) ??
+            (data?.username as string | undefined) ??
+            null,
+          last_name: (data?.last_name as string | undefined) ?? null,
+        };
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // Try store → sessionStorage → network
   useEffect(() => {
     let cancelled = false;
 
-    // helper to set UI state consistently
     const primeUI = (rows: Splik[]) => {
       const ordered = rows;
-      // init player UI
       const mutedState: Record<number, boolean> = {};
       const pauseState: Record<number, boolean> = {};
       ordered.forEach((_, index) => {
@@ -160,18 +189,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       setMuted(mutedState);
       setShowPauseButton(pauseState);
-
-      // force DOM reorder + scroll top
       setOrderEpoch((e) => e + 1);
       containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
     };
 
     const hydrateFromCacheIfPossible = (): Splik[] | null => {
-      // 1) Zustand store (set by Splash)
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
         return normalizeSpliks(storeFeed as Splik[]);
       }
-      // 2) session cache (set by Splash)
       try {
         const raw = sessionStorage.getItem("feed:cached");
         if (raw) {
@@ -185,7 +210,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
 
     const backgroundRefresh = async () => {
-      // Keep your existing behavior (e.g., favorites preload) but avoid jank
       try {
         if (user?.id) {
           const { data: favs } = await supabase
@@ -198,20 +222,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
 
     const load = async () => {
-      // First try cache for instant paint
       const cached = hydrateFromCacheIfPossible();
       if (cached && !cancelled) {
-        console.log("✅ Using cached feed data, painting instantly");
         setSpliks(cached);
-        setLoading(false); // CRITICAL: Set loading false immediately
+        setLoading(false);
         primeUI(cached);
-        // Background refresh for favorites without blocking UI
         backgroundRefresh();
-        return; // CRITICAL: Return early, don't continue to network fetch
+        return;
       }
 
-      console.log("❌ No cached data found, doing network fetch");
-      // No cache? do the network fetch (original behavior)
       setLoading(true);
       try {
         const { data, error } = await supabase
@@ -431,7 +450,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         toast({ title: "Added to favorites" });
       }
     } catch {
-      // revert
       setSavedIds((prev) => {
         const ns = new Set(prev);
         currentlySaved ? ns.add(splikId) : ns.delete(splikId);
@@ -447,19 +465,109 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     }
   };
 
+  /* ---------------------- Comments (no join) ---------------------- */
+  const unsubscribeComments = () => {
+    if (liveCommentsCh.current) {
+      try {
+        supabase.removeChannel(liveCommentsCh.current);
+      } catch {}
+      liveCommentsCh.current = null;
+    }
+  };
+
   const openComments = async (s: Splik) => {
+    // toggle panel
+    if (showCommentsFor === s.id) {
+      setShowCommentsFor(null);
+      setComments([]);
+      unsubscribeComments();
+      return;
+    }
+
     setShowCommentsFor(s.id);
     setLoadingComments(true);
+    unsubscribeComments();
+
     try {
-      const { data, error } = await supabase
+      // 1) plain comments
+      const { data: rows, error } = await supabase
         .from("comments")
-        .select("*, profiles!comments_user_id_fkey(first_name,last_name)")
+        .select("id, content, created_at, user_id")
         .eq("splik_id", s.id)
         .order("created_at", { ascending: false });
+
       if (error) throw error;
-      setComments(data || []);
+
+      // 2) batch lookup profiles
+      const ids = Array.from(new Set((rows || []).map((r) => r.user_id).filter(Boolean)));
+      const byId = new Map<string, any>();
+      if (ids.length) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, first_name, last_name, display_name, username, avatar_url")
+          .in("id", ids);
+        (profs || []).forEach((p: any) => byId.set(p.id, p));
+      }
+
+      // 3) hydrate comments
+      const hydrated: Comment[] = (rows || []).map((c: any) => {
+        const p = byId.get(c.user_id);
+        return {
+          id: c.id,
+          content: c.content,
+          created_at: c.created_at,
+          user_id: c.user_id,
+          profiles: {
+            first_name: p?.display_name ?? p?.first_name ?? p?.username ?? null,
+            last_name: p?.last_name ?? null,
+          },
+        };
+      });
+
+      setComments(hydrated);
+
+      // 4) live updates for this splik
+      liveCommentsCh.current = supabase
+        .channel(`vf-comments-${s.id}`)
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "comments", event: "INSERT", filter: `splik_id=eq.${s.id}` },
+          async (payload) => {
+            const row = payload.new as any;
+            // fetch profile for the new commenter (tiny one-off)
+            let profFirst: string | null = null;
+            let profLast: string | null = null;
+            const { data: p } = await supabase
+              .from("profiles")
+              .select("first_name, last_name, display_name, username")
+              .eq("id", row.user_id)
+              .maybeSingle();
+            profFirst = (p?.display_name as string) ?? (p?.first_name as string) ?? (p?.username as string) ?? null;
+            profLast = (p?.last_name as string) ?? null;
+
+            setComments((prev) => [
+              {
+                id: row.id,
+                content: row.content,
+                created_at: row.created_at,
+                user_id: row.user_id,
+                profiles: { first_name: profFirst, last_name: profLast },
+              },
+              ...prev,
+            ]);
+          }
+        )
+        .on(
+          "postgres_changes",
+          { schema: "public", table: "comments", event: "DELETE", filter: `splik_id=eq.${s.id}` },
+          (payload) => {
+            setComments((prev) => prev.filter((c) => c.id !== (payload.old as any)?.id));
+          }
+        )
+        .subscribe();
     } catch (e) {
       console.error(e);
+      toast({ title: "Error", description: "Failed to load comments", variant: "destructive" });
     } finally {
       setLoadingComments(false);
     }
@@ -468,32 +576,59 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const submitComment = async () => {
     if (!showCommentsFor || !user?.id || !newComment.trim()) return;
 
-    const { error } = await supabase.from("comments").insert({
-      splik_id: showCommentsFor,
-      user_id: user.id,
-      content: newComment.trim(),
-    });
+    const content = newComment.trim();
+    setNewComment("");
 
-    if (error) {
+    try {
+      const { data, error } = await supabase
+        .from("comments")
+        .insert({
+          splik_id: showCommentsFor,
+          user_id: user.id,
+          content,
+        })
+        .select("id, content, created_at, user_id")
+        .single();
+
+      if (error) throw error;
+
+      // Optimistic add; realtime will also arrive, but we keep a lightweight dedupe:
+      setComments((prev) => {
+        if (prev.some((c) => c.id === data.id)) return prev;
+        return [
+          {
+            id: data.id,
+            content: data.content,
+            created_at: data.created_at,
+            user_id: data.user_id,
+            profiles: meProfileRef.current ?? { first_name: "You", last_name: null },
+          },
+          ...prev,
+        ];
+      });
+    } catch (error: any) {
       toast({
         title: "Error",
         description:
-          (error as any).code === "42501"
-            ? "You don't have permission to post comments. (RLS policy)"
-            : (error as any).message || "Failed to post comment",
+          error?.code === "42501"
+            ? "You don't have permission to post comments."
+            : error?.message || "Failed to post comment",
         variant: "destructive",
       });
-      return;
+      // restore input if failed
+      setNewComment(content);
     }
-
-    setNewComment("");
-    const splik = spliks.find((sx) => sx.id === showCommentsFor);
-    if (splik) openComments(splik);
   };
+
+  // cleanup live channel on unmount
+  useEffect(() => {
+    return () => {
+      unsubscribeComments();
+    };
+  }, []);
 
   /* ------------------------------ UI ------------------------------ */
   if (loading && spliks.length === 0) {
-    // Only show this if there was truly nothing cached
     return (
       <div className="flex justify-center items-center min-h-[40vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -624,7 +759,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       size="icon"
                       variant="ghost"
                       onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
+                        const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
                         navigator.clipboard.writeText(url);
                         toast({ title: "Link copied!" });
                       }}
