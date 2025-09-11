@@ -1,15 +1,10 @@
 // src/components/prayers/PrayerCard.tsx
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { format } from "date-fns";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  amenPrayer,
-  createReply,
-  fetchReplies,
-  deletePrayer,
-} from "@/lib/prayers";
+import { createReply, fetchReplies, deletePrayer } from "@/lib/prayers";
 import { supabase } from "@/integrations/supabase/client";
 
 export default function PrayerCard({
@@ -21,7 +16,6 @@ export default function PrayerCard({
     author: string;
     type: "request" | "testimony" | "quote";
     body: string;
-    amen_count: number;
     reply_count: number;
     answered: boolean;
     created_at: string;
@@ -31,6 +25,7 @@ export default function PrayerCard({
   const day = format(new Date(item.created_at), "MMM d, yyyy");
   const time = format(new Date(item.created_at), "h:mm a");
 
+  // who am I?
   const [me, setMe] = useState<string | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
@@ -41,6 +36,7 @@ export default function PrayerCard({
   }, []);
   const isOwner = me === item.author;
 
+  // delete
   const [deleting, setDeleting] = useState(false);
   const handleDelete = async () => {
     if (!isOwner || deleting) return;
@@ -91,101 +87,48 @@ export default function PrayerCard({
         )}
       </div>
 
-      <Link to={`/prayers/${item.id}`} className="whitespace-pre-wrap leading-7">
+      <Link
+        to={`/prayers/${item.id}`}
+        className="whitespace-pre-wrap leading-7"
+      >
         {item.body}
       </Link>
 
-      <div className="mt-3 flex items-center gap-4 text-sm">
-        <AmenButtonInline id={item.id} initialCount={item.amen_count} />
-        <ReplyListInline prayerId={item.id} initialCount={item.reply_count} />
+      {/* Comments only */}
+      <div className="mt-3 text-sm">
+        <ReplyListInline
+          prayerId={item.id}
+          initialCount={item.reply_count}
+        />
       </div>
     </div>
   );
 }
 
-/** Amen button – simplified version */
-function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
-  const navigate = useNavigate();
-  const [count, setCount] = useState(initialCount);
-  const [busy, setBusy] = useState(false);
-  const [authed, setAuthed] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
-      setAuthed(!!s)
-    );
-    return () => sub?.subscription?.unsubscribe();
-  }, []);
-
-  const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!authed) {
-      navigate("/login");
-      return;
-    }
-    
-    if (busy) return;
-
-    setBusy(true);
-    try {
-      console.log("Attempting to amen prayer:", id);
-      const result = await amenPrayer(id);
-      console.log("Amen result:", result);
-      
-      if (result.inserted) {
-        setCount(prev => prev + 1);
-        console.log("Amen successful, count incremented");
-      } else {
-        console.log("Already amened or duplicate");
-      }
-    } catch (err) {
-      console.error("Error amening prayer:", err);
-      alert("Error adding amen. Please try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={onTap}
-      disabled={busy}
-      aria-label="Amen"
-      title={!authed ? "Log in to Amen" : busy ? "Processing..." : "Amen"}
-      type="button"
-      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]"
-    >
-      🙏 <span className="ml-2">{count}</span>
-    </Button>
-  );
-}
-
-/** Inline Reply list */
+/** Inline Reply list (mobile-safe, with count) */
 function ReplyListInline({
   prayerId,
-  initialCount
+  initialCount,
 }: {
   prayerId: string;
   initialCount: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [list, setList] = useState<Array<{ id: string; body: string; created_at: string }>>([]);
+  const [list, setList] = useState<
+    Array<{ id: string; body: string; created_at: string }>
+  >([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [replyCount, setReplyCount] = useState(initialCount);
 
   useEffect(() => {
     if (!open) return;
-    fetchReplies(prayerId).then((d: any) => {
-      setList(d || []);
-      // Update the count when we fetch replies
-      setReplyCount(Math.max(initialCount, (d || []).length));
-    }).catch(() => {});
+    fetchReplies(prayerId)
+      .then((d: any) => {
+        setList(d || []);
+        setReplyCount(Math.max(initialCount, (d || []).length));
+      })
+      .catch(() => {});
   }, [open, prayerId, initialCount]);
 
   const post = async () => {
@@ -228,7 +171,10 @@ function ReplyListInline({
       {open && (
         <div id={`replies-${prayerId}`} className="mt-2 space-y-2">
           {list.map((r) => (
-            <div key={r.id} className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap">
+            <div
+              key={r.id}
+              className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap"
+            >
               {r.body}
             </div>
           ))}
@@ -241,12 +187,18 @@ function ReplyListInline({
               aria-label="Write a reply"
               disabled={sending}
             />
-            <Button onClick={post} disabled={!text.trim() || text.length > 1000 || sending} type="button">
+            <Button
+              onClick={post}
+              disabled={!text.trim() || text.length > 1000 || sending}
+              type="button"
+            >
               {sending ? "Sending…" : "Send"}
             </Button>
           </div>
           {text.length > 1000 && (
-            <div className="text-xs text-red-500">Replies must be 1–1000 characters.</div>
+            <div className="text-xs text-red-500">
+              Replies must be 1–1000 characters.
+            </div>
           )}
         </div>
       )}
