@@ -184,18 +184,33 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return null;
     };
 
+    const backgroundRefresh = async () => {
+      // Keep your existing behavior (e.g., favorites preload) but avoid jank
+      try {
+        if (user?.id) {
+          const { data: favs } = await supabase
+            .from("favorites")
+            .select("splik_id")
+            .eq("user_id", user.id);
+          if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
+        }
+      } catch {}
+    };
+
     const load = async () => {
       // First try cache for instant paint
       const cached = hydrateFromCacheIfPossible();
       if (cached && !cancelled) {
+        console.log("✅ Using cached feed data, painting instantly");
         setSpliks(cached);
-        setLoading(false);
+        setLoading(false); // CRITICAL: Set loading false immediately
         primeUI(cached);
-        // We still refresh in the background for staleness, but UI is ready.
+        // Background refresh for favorites without blocking UI
         backgroundRefresh();
-        return;
+        return; // CRITICAL: Return early, don't continue to network fetch
       }
 
+      console.log("❌ No cached data found, doing network fetch");
       // No cache? do the network fetch (original behavior)
       setLoading(true);
       try {
@@ -214,26 +229,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const all = normalizeSpliks((data as Splik[]) || []);
         const ordered = shuffle(all);
 
-        setSpliks(ordered);
-        primeUI(ordered);
+        if (!cancelled) {
+          setSpliks(ordered);
+          primeUI(ordered);
+        }
       } catch (e) {
-        console.error(e);
+        console.error("Feed fetch error:", e);
       } finally {
         if (!cancelled) setLoading(false);
       }
-    };
-
-    const backgroundRefresh = async () => {
-      // Keep your existing behavior (e.g., favorites preload) but avoid jank
-      try {
-        if (user?.id) {
-          const { data: favs } = await supabase
-            .from("favorites")
-            .select("splik_id")
-            .eq("user_id", user.id);
-          if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
-        }
-      } catch {}
     };
 
     load();
