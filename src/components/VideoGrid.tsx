@@ -25,11 +25,10 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import FollowButton from "@/components/FollowButton"; // ← default import (fix)
+import { FollowButton } from "@/components/FollowButton";
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
-  id?: string;
   username: string;
   display_name: string;
   avatar_url?: string;
@@ -65,18 +64,28 @@ export function VideoGrid({
   const [playingVideo, setPlayingVideo] = useState<string | null>(null);
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
+
+  // Central place for counts we render
   const [videoStats, setVideoStats] = useState<{
-    [key: string]: { views: number; likes: number; comments: number };
+    [id: string]: { views: number; likes: number; comments: number };
   }>({});
+
+  // Comments modal state
   const [showComments, setShowComments] = useState<string | null>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loadingComments, setLoadingComments] = useState(false);
+
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
   const sessionIdRef = useRef(
     `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  );
+
+  // keep reference to the live comments channel to clean it up
+  const commentsChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(
+    null
   );
 
   useEffect(() => {
@@ -86,38 +95,34 @@ export function VideoGrid({
   }, []);
 
   useEffect(() => {
+    // seed stats for each card
     const stats: any = {};
-    spliks.forEach((splik) => {
-      stats[splik.id] = {
-        views: splik.views || 0,
-        likes: splik.likes_count || 0,
-        comments: splik.comments_count || 0,
+    spliks.forEach((s) => {
+      stats[s.id] = {
+        views: s.views || 0,
+        likes: s.likes_count || 0,
+        comments: s.comments_count || 0,
       };
     });
     setVideoStats(stats);
     checkLikedStatus();
 
+    // keep in sync with spliks table updates (likes/comments/views)
     const channel = supabase
       .channel("video-grid-updates")
       .on(
         "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "spliks",
-        },
+        { event: "UPDATE", schema: "public", table: "spliks" },
         (payload) => {
-          if (payload.new) {
-            const s = payload.new as any;
-            setVideoStats((prev) => ({
-              ...prev,
-              [s.id]: {
-                views: s.views || 0,
-                likes: s.likes_count || 0,
-                comments: s.comments_count || 0,
-              },
-            }));
-          }
+          const n: any = payload.new;
+          setVideoStats((prev) => ({
+            ...prev,
+            [n.id]: {
+              views: n.views || 0,
+              likes: n.likes_count || 0,
+              comments: n.comments_count || 0,
+            },
+          }));
         }
       )
       .subscribe();
@@ -132,15 +137,11 @@ export function VideoGrid({
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
-
     const { data } = await supabase
       .from("likes")
       .select("splik_id")
       .eq("user_id", user.id);
-
-    if (data) {
-      setLikedVideos(new Set(data.map((like) => like.splik_id)));
-    }
+    if (data) setLikedVideos(new Set(data.map((l) => l.splik_id)));
   };
 
   const handlePlayToggle = async (splikId: string) => {
@@ -155,9 +156,10 @@ export function VideoGrid({
         videoRefs.current[playingVideo].pause();
       }
       video.currentTime = 0;
-      await video.play().catch(() => {});
+      video.play();
       setPlayingVideo(splikId);
 
+      // view RPC (keep your existing function)
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -196,15 +198,15 @@ export function VideoGrid({
     const video = videoRefs.current[splikId];
     if (!video) return;
 
-    const newMuted = new Set(mutedVideos);
-    if (newMuted.has(splikId)) {
-      newMuted.delete(splikId);
+    const next = new Set(mutedVideos);
+    if (next.has(splikId)) {
+      next.delete(splikId);
       video.muted = false;
     } else {
-      newMuted.add(splikId);
+      next.add(splikId);
       video.muted = true;
     }
-    setMutedVideos(newMuted);
+    setMutedVideos(next);
   };
 
   const handleLike = async (splikId: string) => {
@@ -217,12 +219,7 @@ export function VideoGrid({
     }
 
     if (likedVideos.has(splikId)) {
-      await supabase
-        .from("likes")
-        .delete()
-        .eq("splik_id", splikId)
-        .eq("user_id", user.id);
-
+      await supabase.from("likes").delete().eq("splik_id", splikId).eq("user_id", user.id);
       setLikedVideos((prev) => {
         const next = new Set(prev);
         next.delete(splikId);
@@ -234,58 +231,106 @@ export function VideoGrid({
     }
   };
 
-  /** Robust comments loader that also fetches author profiles */
   const loadComments = async (splikId: string) => {
     setLoadingComments(true);
     try {
-      // 1) get comments
-      const { data: rows, error } = await supabase
+      const { data, error } = await supabase
         .from("comments")
-        .select("id, content, created_at, user_id, splik_id")
+        .select(
+          `
+          *,
+          profiles!comments_user_id_fkey (
+            username,
+            display_name,
+            avatar_url
+          )
+        `
+        )
         .eq("splik_id", splikId)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-
-      if (!rows?.length) {
-        setComments([]);
-        return;
-      }
-
-      // 2) get unique authors
-      const userIds = Array.from(new Set(rows.map((r) => r.user_id))).filter(Boolean);
-      let profilesMap: Record<string, Profile> = {};
-
-      if (userIds.length) {
-        const { data: profs, error: pErr } = await supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar_url")
-          .in("id", userIds as string[]);
-        if (pErr) {
-          // non-fatal – show comments without profile
-          console.warn("Profile join failed:", pErr.message);
-        } else {
-          profilesMap = Object.fromEntries(
-            (profs || []).map((p) => [p.id as string, p as Profile])
-          );
-        }
-      }
-
-      // 3) stitch
-      const stitched = rows.map((r) => ({
-        ...r,
-        profiles: profilesMap[r.user_id] || null,
-      }));
-
-      setComments(stitched);
-    } catch (err: any) {
-      console.error("Error loading comments:", err?.message || err);
-      toast.error("Could not load comments");
-      setComments([]);
+      setComments(data || []);
+    } catch (e) {
+      console.error("Error loading comments:", e);
     } finally {
       setLoadingComments(false);
     }
   };
+
+  // 🔴 new: keep the modal live while it's open
+  useEffect(() => {
+    // cleanup previous channel
+    if (commentsChannelRef.current) {
+      try {
+        supabase.removeChannel(commentsChannelRef.current);
+      } catch {}
+      commentsChannelRef.current = null;
+    }
+    if (!showComments) return;
+
+    // subscribe to INSERT/DELETE for this splik's comments
+    const ch = supabase
+      .channel(`comments-${showComments}`)
+      .on(
+        "postgres_changes",
+        {
+          schema: "public",
+          table: "comments",
+          event: "INSERT",
+          filter: `splik_id=eq.${showComments}`,
+        },
+        () => {
+          // live refresh list
+          loadComments(showComments);
+          // bump local count immediately
+          setVideoStats((prev) => ({
+            ...prev,
+            [showComments]: {
+              ...prev[showComments],
+              comments: (prev[showComments]?.comments || 0) + 1,
+            },
+          }));
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          schema: "public",
+          table: "comments",
+          event: "DELETE",
+          filter: `splik_id=eq.${showComments}`,
+        },
+        () => {
+          loadComments(showComments);
+          setVideoStats((prev) => ({
+            ...prev,
+            [showComments]: {
+              ...prev[showComments],
+              comments: Math.max(
+                0,
+                (prev[showComments]?.comments || 0) - 1
+              ),
+            },
+          }));
+        }
+      )
+      .subscribe();
+
+    commentsChannelRef.current = ch;
+
+    // initial load when opening
+    loadComments(showComments);
+
+    return () => {
+      if (commentsChannelRef.current) {
+        try {
+          supabase.removeChannel(commentsChannelRef.current);
+        } catch {}
+        commentsChannelRef.current = null;
+      }
+    };
+  }, [showComments]);
 
   const handleComment = async (splikId: string) => {
     const {
@@ -295,22 +340,30 @@ export function VideoGrid({
       toast.error("Please sign in to add comments");
       return;
     }
-
     if (!newComment.trim()) return;
 
     try {
       const { error } = await supabase.from("comments").insert({
         splik_id: splikId,
         user_id: user.id,
-        content: newComment,
+        content: newComment.trim(),
       });
-
       if (error) throw error;
 
+      // optimistic bump so the counter moves immediately
+      setVideoStats((prev) => ({
+        ...prev,
+        [splikId]: {
+          ...prev[splikId],
+          comments: (prev[splikId]?.comments || 0) + 1,
+        },
+      }));
+
       setNewComment("");
-      await loadComments(splikId);
+      // list will refresh via realtime; still do a fetch to show the new one instantly
+      loadComments(splikId);
       toast.success("Comment added");
-    } catch {
+    } catch (e) {
       toast.error("Failed to add comment");
     }
   };
@@ -355,7 +408,7 @@ export function VideoGrid({
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
 
-                {/* Views badge (remove if you don't want views) */}
+                {/* Views badge */}
                 <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-2 rounded-full border border-white/20 shadow-lg">
                   <Eye className="h-3.5 w-3.5 text-white" />
                   <span className="text-white font-bold text-xs tracking-wide">
@@ -364,7 +417,7 @@ export function VideoGrid({
                   <div className="w-2 h-2 bg-gradient-to-r from-red-500 to-pink-500 rounded-full animate-pulse shadow-lg" />
                 </div>
 
-                {/* Play/Pause Overlay */}
+                {/* Play/Pause overlay */}
                 <div
                   className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/40 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-all duration-300 cursor-pointer"
                   onClick={() => handlePlayToggle(splik.id)}
@@ -378,7 +431,7 @@ export function VideoGrid({
                   </div>
                 </div>
 
-                {/* Sound Control */}
+                {/* Sound toggle */}
                 {playingVideo === splik.id && (
                   <Button
                     size="icon"
@@ -400,7 +453,7 @@ export function VideoGrid({
                 <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
               </div>
 
-              {/* Creator Info */}
+              {/* Creator row */}
               {showCreatorInfo && splik.profiles && (
                 <div className="flex items-center justify-between p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
                   <Link
@@ -434,7 +487,7 @@ export function VideoGrid({
                 </div>
               )}
 
-              {/* Video Info + Actions */}
+              {/* Body */}
               <div className="p-4 space-y-3 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm">
                 {splik.title && (
                   <h3 className="font-bold text-base leading-tight text-gray-900 dark:text-white line-clamp-2">
@@ -447,6 +500,20 @@ export function VideoGrid({
                   </p>
                 )}
 
+                {/* Counts row */}
+                <div className="flex items-center justify-between text-xs font-medium">
+                  <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
+                    <Eye className="h-3 w-3" />
+                    <span>
+                      {(videoStats[splik.id]?.views || 0).toLocaleString()} views
+                    </span>
+                  </div>
+                  <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
+                    {formatTime(splik.created_at)}
+                  </span>
+                </div>
+
+                {/* Action buttons */}
                 <div className="flex items-center gap-2 pt-2">
                   <Button
                     size="sm"
@@ -471,10 +538,7 @@ export function VideoGrid({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => {
-                      setShowComments(splik.id);
-                      loadComments(splik.id);
-                    }}
+                    onClick={() => setShowComments(splik.id)}
                     className="flex-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 dark:hover:bg-blue-950 dark:hover:text-blue-400 transition-all duration-200"
                   >
                     <MessageCircle className="h-4 w-4 mr-2" />
@@ -493,6 +557,7 @@ export function VideoGrid({
                   </Button>
                 </div>
 
+                {/* Owner-only: delete */}
                 {isOwner && (
                   <div className="pt-2">
                     <DeleteSplikButton
@@ -509,14 +574,8 @@ export function VideoGrid({
         })}
       </div>
 
-      {/* Comments Dialog */}
-      <Dialog
-        open={!!showComments}
-        onOpenChange={(open) => {
-          // IMPORTANT: only clear id when closing, otherwise it instantly closes on open
-          if (!open) setShowComments(null);
-        }}
-      >
+      {/* Comments Dialog (live) */}
+      <Dialog open={!!showComments} onOpenChange={() => setShowComments(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border-0 shadow-2xl">
           <DialogHeader className="pb-4 border-b border-gray-200 dark:border-gray-700">
             <DialogTitle className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -525,7 +584,7 @@ export function VideoGrid({
           </DialogHeader>
 
           <div className="space-y-6">
-            {/* Comment Input */}
+            {/* Create comment */}
             <div className="flex gap-3 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
               <Textarea
                 placeholder="Share your thoughts..."
@@ -542,7 +601,7 @@ export function VideoGrid({
               </Button>
             </div>
 
-            {/* Comments List */}
+            {/* Comments list */}
             <ScrollArea className="h-[400px] px-2">
               {loadingComments ? (
                 <div className="text-center py-8">
@@ -571,9 +630,7 @@ export function VideoGrid({
                       <Avatar className="h-10 w-10 ring-2 ring-gray-200 dark:ring-gray-700 flex-shrink-0">
                         <AvatarImage src={comment.profiles?.avatar_url} />
                         <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white font-bold text-sm">
-                          {comment.profiles?.display_name?.charAt(0) ||
-                            comment.profiles?.username?.charAt(0) ||
-                            "?"}
+                          {comment.profiles?.display_name?.charAt(0) || "?"}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1 min-w-0">
@@ -581,8 +638,7 @@ export function VideoGrid({
                           <div>
                             <p className="font-bold text-sm text-gray-900 dark:text-white">
                               {comment.profiles?.display_name ||
-                                comment.profiles?.username ||
-                                "User"}
+                                comment.profiles?.username}
                             </p>
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                               {formatTime(comment.created_at)}
