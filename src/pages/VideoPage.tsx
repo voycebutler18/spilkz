@@ -25,8 +25,7 @@ type Splik = {
   trim_start?: number | null;
   trim_end?: number | null;
   status?: string | null;
-  // attached after fetch:
-  profile?: Profile | null;
+  profile?: Profile | null; // attached after fetch
 };
 
 export default function VideoPage() {
@@ -103,7 +102,7 @@ export default function VideoPage() {
     <>
       <Header />
       <main className="container py-6">
-        {/* SplikCard: comments-removed variant */}
+        {/* SplikCard: comments-removed version (hype / share / save) */}
         <SplikCard splik={splik} />
       </main>
       <Footer />
