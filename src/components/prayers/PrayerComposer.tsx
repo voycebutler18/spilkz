@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 
-export default function PrayerComposer({ onPosted }: { onPosted?: () => void }) {
+export default function PrayerComposer({ onPosted }: { onPosted?: (p: any) => void }) {
   const [type, setType] = useState<PrayerType>("request");
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,10 +18,11 @@ export default function PrayerComposer({ onPosted }: { onPosted?: () => void }) 
     if (!text) return;
     try {
       setLoading(true);
-      await createPrayer(type, text);
+      // get the inserted row back from Supabase
+      const created = await createPrayer(type, text);
       setBody("");
       toast({ title: "Shared", description: "Your post was published." });
-      onPosted?.();
+      onPosted?.(created); // <— send row up so the feed can prepend instantly
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
