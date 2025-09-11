@@ -1,22 +1,24 @@
 // src/components/prayers/PrayerCard.tsx
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createReply, fetchReplies, deletePrayer } from "@/lib/prayers";
+import { amenPrayer, createReply, deletePrayer } from "@/lib/prayers";
 import { supabase } from "@/integrations/supabase/client";
 
+/* ---------- Card for a single prayer ---------- */
 export default function PrayerCard({
   item,
   onDeleted,
 }: {
   item: {
     id: string;
-    author: string;
+    author: string; // prayer owner
     type: "request" | "testimony" | "quote";
     body: string;
-    reply_count: number;   // keep this in your list SELECT; it’s the seed value
+    amen_count: number;
+    reply_count: number;
     answered: boolean;
     created_at: string;
   };
@@ -25,7 +27,6 @@ export default function PrayerCard({
   const day = format(new Date(item.created_at), "MMM d, yyyy");
   const time = format(new Date(item.created_at), "h:mm a");
 
-  // who am I?
   const [me, setMe] = useState<string | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
@@ -36,7 +37,6 @@ export default function PrayerCard({
   }, []);
   const isOwner = me === item.author;
 
-  // delete
   const [deleting, setDeleting] = useState(false);
   const handleDelete = async () => {
     if (!isOwner || deleting) return;
@@ -87,17 +87,15 @@ export default function PrayerCard({
         )}
       </div>
 
-      <Link
-        to={`/prayers/${item.id}`}
-        className="whitespace-pre-wrap leading-7"
-      >
+      <Link to={`/prayers/${item.id}`} className="whitespace-pre-wrap leading-7">
         {item.body}
       </Link>
 
-      {/* Comments only, with realtime count */}
-      <div className="mt-3 text-sm">
+      <div className="mt-3 flex items-center gap-4 text-sm">
+        <AmenButtonInline id={item.id} initialCount={item.amen_count} />
         <ReplyListInline
           prayerId={item.id}
+          prayerAuthorId={item.author}
           initialCount={item.reply_count}
         />
       </div>
@@ -105,29 +103,98 @@ export default function PrayerCard({
   );
 }
 
-/** Inline Reply list with realtime count */
+/* ---------- Amen button – simplified & mobile-safe ---------- */
+function AmenButtonInline({
+  id,
+  initialCount,
+}: {
+  id: string;
+  initialCount: number;
+}) {
+  const navigate = useNavigate();
+  const [count, setCount] = useState(initialCount);
+  const [busy, setBusy] = useState(false);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setAuthed(!!s)
+    );
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+
+  const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!authed) {
+      navigate("/login");
+      return;
+    }
+    if (busy) return;
+
+    setBusy(true);
+    try {
+      const result = await amenPrayer(id);
+      if (result.inserted) setCount((prev) => prev + 1);
+    } catch {
+      alert("Error adding amen. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onTap}
+      disabled={busy}
+      aria-label="Amen"
+      title={!authed ? "Log in to Amen" : busy ? "Processing..." : "Amen"}
+      type="button"
+      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]"
+    >
+      🙏 <span className="ml-2">{count}</span>
+    </Button>
+  );
+}
+
+/* ---------- Replies with realtime count & owner/author delete ---------- */
 function ReplyListInline({
   prayerId,
+  prayerAuthorId,
   initialCount,
 }: {
   prayerId: string;
+  prayerAuthorId: string; // the prayer owner can delete any reply
   initialCount: number;
 }) {
+  type ReplyRow = { id: string; body: string; created_at: string; author: string };
+
   const [open, setOpen] = useState(false);
-  const [list, setList] = useState<
-    Array<{ id: string; body: string; created_at: string }>
-  >([]);
+  const [list, setList] = useState<ReplyRow[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
 
-  // This is the number you display next to "Replies"
+  // current user
+  const [me, setMe] = useState<string | null>(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setMe(s?.user?.id ?? null)
+    );
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+
+  // authoratitive count shown beside "Replies"
   const [replyCount, setReplyCount] = useState(initialCount);
 
-  // 1) On mount, fetch an authoritative count so it’s correct even after a hard refresh.
+  // fetch authoritative count on mount (so refresh shows correct value)
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // We do a HEAD count to avoid pulling rows
       const { count, error } = await supabase
         .from("prayer_replies")
         .select("id", { count: "exact", head: true })
@@ -142,30 +209,41 @@ function ReplyListInline({
     };
   }, [prayerId]);
 
-  // 2) Realtime: update the count (and the open list) as replies are inserted/deleted.
+  // realtime: INSERT/DELETE on prayer_replies for this prayer
   useEffect(() => {
     const channel = supabase
       .channel(`replies-${prayerId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "prayer_replies", filter: `prayer_id=eq.${prayerId}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "prayer_replies",
+          filter: `prayer_id=eq.${prayerId}`,
+        },
         (payload) => {
+          const row = payload.new as ReplyRow;
           setReplyCount((c) => c + 1);
           if (open) {
-            // only append to visible list if user has the thread open
-            const row = payload.new as { id: string; body: string; created_at: string };
-            setList((l) => [...l, { id: row.id, body: (row as any).body, created_at: row.created_at }]);
+            setList((prev) =>
+              prev.some((r) => r.id === row.id) ? prev : [...prev, row]
+            );
           }
         }
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "prayer_replies", filter: `prayer_id=eq.${prayerId}` },
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "prayer_replies",
+          filter: `prayer_id=eq.${prayerId}`,
+        },
         (payload) => {
+          const removedId = (payload.old as any).id as string;
           setReplyCount((c) => Math.max(0, c - 1));
           if (open) {
-            const id = (payload.old as any).id;
-            setList((l) => l.filter((r) => r.id !== id));
+            setList((prev) => prev.filter((r) => r.id !== removedId));
           }
         }
       )
@@ -176,12 +254,17 @@ function ReplyListInline({
     };
   }, [prayerId, open]);
 
-  // 3) When opened, fetch the messages so the user sees them
+  // when opening, fetch the list once (include author to decide delete visibility)
   useEffect(() => {
     if (!open) return;
-    fetchReplies(prayerId)
-      .then((d: any) => setList(d || []))
-      .catch(() => {});
+    supabase
+      .from("prayer_replies")
+      .select("id, body, created_at, author")
+      .eq("prayer_id", prayerId)
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (!error) setList((data as ReplyRow[]) || []);
+      });
   }, [open, prayerId]);
 
   const post = async () => {
@@ -189,12 +272,32 @@ function ReplyListInline({
     if (!t || t.length > 1000 || sending) return;
     setSending(true);
     try {
-      const r: any = await createReply(prayerId, t);
-      // The realtime handler will bump the count. Still append locally for snappy UX:
-      setList((l) => [...l, r]);
+      // do not append locally; realtime INSERT will add it & bump count
+      await createReply(prayerId, t);
       setText("");
     } finally {
       setSending(false);
+    }
+  };
+
+  const canDeleteReply = (replyAuthorId: string) =>
+    !!me && (me === replyAuthorId || me === prayerAuthorId);
+
+  const deleteReply = async (replyId: string) => {
+    if (!window.confirm("Delete this reply?")) return;
+    // optimistic UI: remove immediately; realtime will also fire a DELETE
+    setList((prev) => prev.filter((r) => r.id !== replyId));
+    try {
+      await supabase.from("prayer_replies").delete().eq("id", replyId);
+    } catch (e) {
+      console.error(e);
+      // fallback: refetch if something goes wrong
+      const { data } = await supabase
+        .from("prayer_replies")
+        .select("id, body, created_at, author")
+        .eq("prayer_id", prayerId)
+        .order("created_at", { ascending: true });
+      setList((data as ReplyRow[]) || []);
     }
   };
 
@@ -226,11 +329,22 @@ function ReplyListInline({
           {list.map((r) => (
             <div
               key={r.id}
-              className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap"
+              className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap flex items-start gap-2"
             >
-              {r.body}
+              <div className="flex-1">{r.body}</div>
+              {canDeleteReply(r.author) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-400 hover:text-red-500"
+                  onClick={() => deleteReply(r.id)}
+                >
+                  Delete
+                </Button>
+              )}
             </div>
           ))}
+
           <div className="flex gap-2">
             <Input
               value={text}
@@ -248,6 +362,7 @@ function ReplyListInline({
               {sending ? "Sending…" : "Send"}
             </Button>
           </div>
+
           {text.length > 1000 && (
             <div className="text-xs text-red-500">
               Replies must be 1–1000 characters.
