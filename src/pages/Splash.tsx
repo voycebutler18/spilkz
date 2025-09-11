@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useFeedStore } from "@/store/feedStore";
 import { createHomeFeed } from "@/lib/feed";
 
-// --------- helpers: seeded shuffle + anon id ----------
+/* --------- helpers: seeded shuffle + anon id ---------- */
 const strToSeed = (s: string) => {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -29,12 +29,10 @@ const shuffleWithSeed = <T,>(arr: T[], seed: number) => {
   }
   return a;
 };
-
-/** Use sessionStorage (artifacts-safe) instead of localStorage */
+/** session-scoped anon id (so reload reshuffles) */
 const getAnonId = () => {
   const KEY = "feed:anon-id";
   try {
-    if (typeof window === "undefined") return "anon";
     const store = window.sessionStorage;
     let id = store.getItem(KEY);
     if (!id) {
@@ -49,7 +47,46 @@ const getAnonId = () => {
     return "anon";
   }
 };
-// -------------------------------------------------------
+/* ----------------------------------------------------- */
+
+/** warm a few poster images in the HTTP cache */
+function warmPosters(urls: (string | null | undefined)[], limit = 6) {
+  urls.filter(Boolean).slice(0, limit).forEach((u) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.loading = "eager";
+    img.src = u as string;
+  });
+}
+
+/** warm metadata for the FIRST video (no heavy download) */
+function warmFirstVideoMeta(url?: string | null) {
+  if (!url) return;
+  try {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.src = url;
+    v.muted = true;
+    v.playsInline = true;
+    // kick the network request
+    v.load();
+    // cleanup in a few seconds
+    setTimeout(() => v.remove(), 5000);
+  } catch {}
+}
+
+/** optional: preconnect to CDN/origin of media */
+function preconnect(url?: string | null) {
+  if (!url) return;
+  try {
+    const u = new URL(url);
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = `${u.protocol}//${u.host}`;
+    link.crossOrigin = "";
+    document.head.appendChild(link);
+  } catch {}
+}
 
 export default function Splash() {
   const navigate = useNavigate();
@@ -89,17 +126,21 @@ export default function Splash() {
         const { data: auth } = await supabase.auth.getUser();
         const viewerId = auth?.user?.id || getAnonId();
 
-        setProgress(20);
+        setProgress(22);
 
-        // 1) Fetch spliks (must succeed) + boosted (optional, non-fatal)
+        // 1) Fetch base spliks (limit generously to let feed pick top N)
         const nowIso = new Date().toISOString();
 
         const allResp = await supabase
           .from("spliks")
-          .select("*")
+          .select(`
+            id, user_id, title, description, video_url, thumbnail_url,
+            trim_start, trim_end, created_at, hype_count
+          `)
           .order("created_at", { ascending: false })
           .limit(150);
 
+        // Boosted (optional)
         let boostedData: any[] = [];
         try {
           const boostedResp = await supabase
@@ -117,7 +158,6 @@ export default function Splash() {
             .gt("boosted_videos.end_date", nowIso)
             .order("boost_score", { ascending: false })
             .limit(15);
-
           if (boostedResp.data) boostedData = boostedResp.data;
         } catch {
           boostedData = [];
@@ -128,18 +168,18 @@ export default function Splash() {
 
         setProgress(40);
 
-        // 2) Build feed (pass boostedData)
-        const feed = createHomeFeed(allResp.data || [], boostedData, {
+        // 2) Build personalized feed
+        const feedBase = createHomeFeed(allResp.data || [], boostedData, {
           userId: auth?.user?.id,
           feedType: "home",
           maxResults: 60,
         }) as any[];
 
-        // 3) Personalized deterministic shuffle (per user/device, per reload)
+        // 3) Deterministic shuffle (per user/device, per reload)
         const seed = (strToSeed(viewerId) ^ sessionSeed) >>> 0;
-        let shuffled = shuffleWithSeed(feed, seed);
+        let shuffled = shuffleWithSeed(feedBase, seed);
 
-        // 4) Newest stays pinned UNTIL this user performs a full page reload
+        // Keep newest pinned unless this is a hard reload
         if (!isReload) {
           const newest = (allResp.data || [])[0];
           if (newest) {
@@ -153,7 +193,7 @@ export default function Splash() {
 
         setProgress(55);
 
-        // 5) Attach profiles in ONE query (avoid N+1)
+        // 4) Attach profiles in ONE query
         const uniqueUserIds = Array.from(new Set(shuffled.map((s) => s.user_id).filter(Boolean)));
         let profilesData: any[] = [];
         if (uniqueUserIds.length > 0) {
@@ -165,11 +205,49 @@ export default function Splash() {
           profilesData = data || [];
         }
         const pmap = new Map((profilesData || []).map((p: any) => [p.id, p]));
-        const withProfiles = shuffled.map((s) => ({ ...s, profile: pmap.get(s.user_id) }));
+        let withProfiles = shuffled.map((s) => ({ ...s, profile: pmap.get(s.user_id) }));
 
-        setProgress(78);
+        setProgress(68);
 
-        // 6) Store for Index page + persist for SWR-like instant paint
+        // 5) Attach hype_count if the column isn't populated
+        const missingCounts = withProfiles.some((s: any) => typeof s.hype_count !== "number");
+        if (missingCounts) {
+          const ids = withProfiles.map((s: any) => s.id);
+          const map = new Map<string, number>();
+
+          // try "likes"
+          try {
+            const { data } = await supabase.from("likes").select("video_id").in("video_id", ids);
+            (data || []).forEach((r: any) => {
+              map.set(r.video_id, (map.get(r.video_id) || 0) + 1);
+            });
+          } catch {}
+
+          // fallback "hypes"
+          if (map.size === 0) {
+            try {
+              const { data } = await supabase.from("hypes").select("video_id").in("video_id", ids);
+              (data || []).forEach((r: any) => {
+                map.set(r.video_id, (map.get(r.video_id) || 0) + 1);
+              });
+            } catch {}
+          }
+
+          if (map.size) {
+            withProfiles = withProfiles.map((s: any) =>
+              typeof s.hype_count === "number" ? s : { ...s, hype_count: map.get(s.id) ?? 0 }
+            );
+          }
+        }
+
+        setProgress(80);
+
+        // 6) Warm the cache for a smoother first frame
+        preconnect(withProfiles[0]?.video_url);
+        warmPosters(withProfiles.map((s: any) => s.thumbnail_url));
+        warmFirstVideoMeta(withProfiles[0]?.video_url);
+
+        // 7) Store for Index page + persist for instant paint
         if (!cancelled) {
           setFeed(withProfiles);
           setLastFetchedAt(Date.now());
@@ -180,10 +258,10 @@ export default function Splash() {
 
         setProgress(96);
 
-        // 7) Let the splash show for a beat (no flash), then go
+        // 8) Navigate after a tiny beat (no flash)
         setTimeout(() => {
           if (!cancelled) navigate("/home", { replace: true });
-        }, 350);
+        }, 250);
       } catch {
         // If anything fails, still move on—Index will fallback fetch.
         navigate("/home", { replace: true });
@@ -199,7 +277,6 @@ export default function Splash() {
   return (
     <div className="min-h-[100svh] w-full bg-gradient-to-b from-background to-muted flex items-center justify-center">
       <div className="max-w-sm w-[90%] text-center">
-        {/* Logo / mark */}
         <div className="mx-auto h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center shadow-sm mb-4 animate-pulse">
           <span className="text-2xl font-black text-primary">S</span>
         </div>
@@ -209,7 +286,6 @@ export default function Splash() {
           Warming up your personalized feed…
         </p>
 
-        {/* progress bar */}
         <div className="w-full h-2 rounded-full bg-muted-foreground/10 overflow-hidden">
           <div
             className="h-full bg-primary transition-[width] duration-300"
@@ -218,7 +294,7 @@ export default function Splash() {
         </div>
 
         <p className="text-[11px] text-muted-foreground mt-3">
-          Pro tip: videos start cached as you scroll ✨
+          Preloading videos & posters for an instant feed ✨
         </p>
       </div>
     </div>
