@@ -1,10 +1,10 @@
+// src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
-  Flame,
   Share2,
   Bookmark,
   BookmarkCheck,
@@ -17,6 +17,8 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+
+// Prewarmed feed from Splash
 import { useFeedStore } from "@/store/feedStore";
 
 /* ---------------- types ---------------- */
@@ -27,11 +29,11 @@ interface Splik {
   video_url: string;
   thumbnail_url?: string | null;
   user_id: string;
+  comments_count?: number | null;
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  hype_score?: number | null;
-  hype_givers?: number | null;
+  hype_count?: number;
   profile?: {
     id?: string;
     username?: string | null;
@@ -66,8 +68,8 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
     .filter(Boolean)
     .map((r) => ({
       ...r,
-      hype_score: Number.isFinite(r?.hype_score as any) ? (r!.hype_score as number) : 0,
-      hype_givers: Number.isFinite(r?.hype_givers as any) ? (r!.hype_givers as number) : 0,
+      comments_count:
+        Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
       profile:
         r.profile ?? {
           id: r.user_id,
@@ -97,6 +99,11 @@ const shuffle = <T,>(arr: T[]) => {
   return a;
 };
 
+// Detect touch device (mobile browsers)
+const isTouchDevice = () =>
+  typeof window !== "undefined" &&
+  ("ontouchstart" in window || (navigator as any).maxTouchPoints > 0);
+
 /* =================================================================== */
 
 export default function VideoFeed({ user }: VideoFeedProps) {
@@ -109,11 +116,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
 
-  // hype UI
-  const [isHyped, setIsHyped] = useState<Record<string, boolean>>({});
-  const [hypeScore, setHypeScore] = useState<Record<string, number>>({});
-  const [hypeGivers, setHypeGivers] = useState<Record<string, number>>({});
-
   // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
@@ -125,31 +127,38 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  // prewarmed feed from splash/store
+  // pull any prewarmed feed the Splash page left in the store/session
   const { feed: storeFeed } = useFeedStore();
 
   // Try store → sessionStorage → network (only if needed)
   useEffect(() => {
     let cancelled = false;
 
+    // helper to set UI state consistently
     const primeUI = (rows: Splik[]) => {
       const ordered = rows;
       const mutedState: Record<number, boolean> = {};
       const pauseState: Record<number, boolean> = {};
+      const touch = isTouchDevice();
       ordered.forEach((_, index) => {
-        mutedState[index] = false;
+        // 🔸 default to muted on touch devices for reliable autoplay
+        mutedState[index] = touch ? true : false;
         pauseState[index] = true;
       });
       setMuted(mutedState);
       setShowPauseButton(pauseState);
+
+      // force DOM reorder + scroll top
       setOrderEpoch((e) => e + 1);
       containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
     };
 
     const hydrateFromCacheIfPossible = (): Splik[] | null => {
+      // 1) Zustand store (set by Splash)
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
         return normalizeSpliks(storeFeed as Splik[]);
       }
+      // 2) session cache (set by Splash)
       try {
         const raw = sessionStorage.getItem("feed:cached");
         if (raw) {
@@ -178,17 +187,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       const cached = hydrateFromCacheIfPossible();
       if (cached && !cancelled) {
         setSpliks(cached);
-        setLoading(false);
+        setLoading(false); // critical: no initial spinner if cache exists
         primeUI(cached);
         backgroundRefresh();
-        // also seed hype maps from cached values
-        const s = Object.fromEntries(cached.map((r) => [r.id, r.hype_score ?? 0]));
-        const g = Object.fromEntries(cached.map((r) => [r.id, r.hype_givers ?? 0]));
-        setHypeScore(s);
-        setHypeGivers(g);
         return;
       }
 
+      // No cache? do the network fetch
       setLoading(true);
       try {
         const { data, error } = await supabase
@@ -196,7 +201,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           .select(`
             id, user_id, title, description, video_url, thumbnail_url,
             trim_start, trim_end, created_at,
-            hype_score, hype_givers,
             profile:profiles(
               id, username, display_name, first_name, avatar_url
             )
@@ -210,11 +214,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!cancelled) {
           setSpliks(ordered);
           primeUI(ordered);
-          // seed hype maps
-          const s = Object.fromEntries(ordered.map((r) => [r.id, r.hype_score ?? 0]));
-          const g = Object.fromEntries(ordered.map((r) => [r.id, r.hype_givers ?? 0]));
-          setHypeScore(s);
-          setHypeGivers(g);
         }
       } catch (e) {
         console.error("Feed fetch error:", e);
@@ -229,23 +228,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, storeFeed]);
-
-  /* ---------- which of these spliks did I hype? ---------- */
-  useEffect(() => {
-    const run = async () => {
-      if (!user?.id || spliks.length === 0) return;
-      const ids = spliks.map((s) => s.id);
-      const { data } = await supabase
-        .from("hype_reactions")
-        .select("splik_id")
-        .eq("user_id", user.id)
-        .in("splik_id", ids);
-      const map: Record<string, boolean> = {};
-      (data || []).forEach((r: any) => (map[r.splik_id] = true));
-      setIsHyped(map);
-    };
-    run();
-  }, [user?.id, spliks]);
 
   /* ---------- favorites realtime for this user ---------- */
   useEffect(() => {
@@ -290,7 +272,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay ========== */
+  /* ========== Autoplay with flicker fixes ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -309,6 +291,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const video = videoRefs.current[index];
         if (!video) continue;
 
+        const startAt = Number(spliks[index]?.trim_start ?? 0);
+        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+
         if (entry.intersectionRatio > 0.5) {
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
@@ -317,14 +302,34 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
           muteOtherVideos(index);
 
-          video.muted = muted[index] ?? false;
-          video.playsInline = true;
+          // Ensure mobile-friendly attributes and preload are set
+          video.setAttribute("playsinline", "true");
+          // @ts-expect-error - iOS attr
+          video.setAttribute("webkit-playsinline", "true");
+          video.disablePictureInPicture = true;
+          video.preload = "metadata";
+          video.crossOrigin = "anonymous";
 
-          const startAt = Number(spliks[index]?.trim_start ?? 0);
-          if (startAt > 0) video.currentTime = startAt;
+          // Default mute on touch devices to satisfy autoplay
+          if (isTouchDevice()) {
+            video.muted = true;
+          } else {
+            video.muted = muted[index] ?? false;
+          }
+
+          // Seek slightly off 0 to avoid black frame flicker
+          try {
+            if (video.currentTime === 0) {
+              video.currentTime = resetAt;
+            }
+          } catch {}
 
           const onTimeUpdate = () => {
-            if (video.currentTime - startAt >= 3) video.currentTime = startAt;
+            if (video.currentTime - startAt >= 3) {
+              try {
+                video.currentTime = resetAt;
+              } catch {}
+            }
           };
           video.removeEventListener("timeupdate", onTimeUpdate);
           video.addEventListener("timeupdate", onTimeUpdate);
@@ -336,7 +341,26 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             setIsPlaying((prev) => ({ ...prev, [index]: true }));
             setShowPauseButton((prev) => ({ ...prev, [index]: true }));
           } catch {
-            if (video.currentTime === 0) video.currentTime = startAt || 0.1;
+            // Try again muted if needed (some Android browsers)
+            if (!video.muted) {
+              video.muted = true;
+              try {
+                await video.play();
+                currentPlayingVideo = video;
+                currentPlayingIndex = index;
+                setIsPlaying((prev) => ({ ...prev, [index]: true }));
+                setShowPauseButton((prev) => ({ ...prev, [index]: true }));
+              } catch {
+                // As a last resort, at least show the first frame
+                try {
+                  video.currentTime = resetAt;
+                } catch {}
+              }
+            } else {
+              try {
+                video.currentTime = resetAt;
+              } catch {}
+            }
           }
         } else if (entry.intersectionRatio < 0.5 && video === currentPlayingVideo) {
           video.pause();
@@ -371,7 +395,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const toggleMute = (i: number) => {
     const v = videoRefs.current[i];
     if (!v) return;
-    const newMutedState = !(muted[i] ?? false);
+    const newMutedState = !(muted[i] ?? isTouchDevice());
     if (!newMutedState) muteOtherVideos(i);
     v.muted = newMutedState;
     setMuted((m) => ({ ...m, [i]: newMutedState }));
@@ -381,6 +405,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const video = videoRefs.current[index];
     if (!video) return;
     const currentlyPlaying = isPlaying[index] ?? false;
+
+    const startAt = Number(spliks[index]?.trim_start ?? 0);
+    const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
 
     if (currentlyPlaying) {
       video.pause();
@@ -392,9 +419,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }, 2000);
     } else {
       muteOtherVideos(index);
-      const startAt = Number(spliks[index]?.trim_start ?? 0);
-      if (startAt > 0) video.currentTime = startAt;
-      video.muted = muted[index] ?? false;
+      try {
+        if (video.currentTime === 0) video.currentTime = resetAt;
+      } catch {}
+      video.muted = muted[index] ?? isTouchDevice();
       video.play().catch(console.error);
       setIsPlaying((prev) => ({ ...prev, [index]: true }));
       setShowPauseButton((prev) => ({ ...prev, [index]: true }));
@@ -447,65 +475,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     }
   };
 
-  /* ---------- Hype toggle ---------- */
-  const toggleHype = async (splikId: string) => {
-    const {
-      data: { user: me },
-    } = await supabase.auth.getUser();
-    if (!me) {
-      toast({
-        title: "Sign in required",
-        description: "Please sign in to hype videos",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const currentlyHyped = !!isHyped[splikId];
-
-    // optimistic
-    setIsHyped((m) => ({ ...m, [splikId]: !currentlyHyped }));
-    setHypeScore((m) => ({
-      ...m,
-      [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? -1 : 1)),
-    }));
-    setHypeGivers((m) => ({
-      ...m,
-      [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? -1 : 1)),
-    }));
-
-    try {
-      if (currentlyHyped) {
-        await supabase
-          .from("hype_reactions")
-          .delete()
-          .eq("user_id", me.id)
-          .eq("splik_id", splikId);
-      } else {
-        await supabase
-          .from("hype_reactions")
-          .upsert(
-            { user_id: me.id, splik_id: splikId, amount: 1 },
-            { onConflict: "user_id,splik_id", ignoreDuplicates: true }
-          );
-      }
-    } catch {
-      // revert on error
-      setIsHyped((m) => ({ ...m, [splikId]: currentlyHyped }));
-      setHypeScore((m) => ({
-        ...m,
-        [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? 1 : -1)),
-      }));
-      setHypeGivers((m) => ({
-        ...m,
-        [splikId]: Math.max(0, (m[splikId] ?? 0) + (currentlyHyped ? 1 : -1)),
-      }));
-      toast({ title: "Error", description: "Failed to update hype", variant: "destructive" });
-    }
-  };
-
   /* ------------------------------ UI ------------------------------ */
   if (loading && spliks.length === 0) {
+    // Only show this if there was truly nothing cached
     return (
       <div className="flex justify-center items-center min-h-[40vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -521,9 +493,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       {spliks.map((s, i) => {
         const videoIsPlaying = isPlaying[i] ?? false;
         const shouldShowPauseButton = showPauseButton[i] ?? true;
-        const saved = savedIds.has(s.id);
+        const isSaved = savedIds.has(s.id);
         const saving = savingIds.has(s.id);
-        const hyped = !!isHyped[s.id];
 
         return (
           <section
@@ -548,7 +519,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     </p>
                   </div>
                 </Link>
-                <Button size="icon" variant="ghost">
+                <Button size="icon" variant="ghost" title="More">
                   <MoreVertical className="h-5 w-5" />
                 </Button>
               </div>
@@ -557,24 +528,38 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
                 <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
                 <video
-                  ref={(el) => (videoRefs.current[i] = el)}
+                  ref={(el) => {
+                    videoRefs.current[i] = el;
+                    if (el) {
+                      el.setAttribute("playsinline", "true");
+                      // @ts-expect-error iOS attribute
+                      el.setAttribute("webkit-playsinline", "true");
+                      el.disablePictureInPicture = true;
+                      el.preload = "metadata";
+                      el.crossOrigin = "anonymous";
+                      // default mute on touch; keep state on desktop
+                      el.muted = muted[i] ?? isTouchDevice();
+                    }
+                  }}
                   src={s.video_url}
                   poster={s.thumbnail_url ?? undefined}
                   className="w-full h-full object-cover"
                   playsInline
-                  muted={muted[i] ?? false}
+                  // Important: use metadata (no heavy download) and set a non-zero first frame
                   preload="metadata"
-                  onEnded={() => {
-                    const next = Math.min(i + 1, spliks.length - 1);
-                    const root = containerRef.current;
-                    const child = root?.querySelector<HTMLElement>(`[data-index="${next}"]`);
-                    child?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  muted={muted[i] ?? isTouchDevice()}
+                  onLoadedMetadata={() => {
+                    const v = videoRefs.current[i];
+                    const startAt = Number(spliks[i]?.trim_start ?? 0);
+                    const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+                    if (v && v.currentTime === 0) {
+                      try {
+                        v.currentTime = resetAt;
+                      } catch {}
+                    }
                   }}
-                  onLoadedData={() => {
-                    const video = videoRefs.current[i];
-                    if (video && video.currentTime === 0) video.currentTime = 0.1;
-                  }}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  onError={(e) => console.warn("video error", s.id, e)}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }}
                 />
 
                 {/* Center play/pause controls */}
@@ -602,6 +587,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     toggleMute(i);
                   }}
                   className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
+                  title={muted[i] ? "Unmute" : "Mute"}
                 >
                   {muted[i] ? (
                     <VolumeX className="h-4 w-4 text-white" />
@@ -620,23 +606,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 )}
               </div>
 
-              {/* actions: Hype · Share · Save */}
+              {/* actions */}
               <div className="p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => toggleHype(s.id)}
-                      className={hyped ? "text-orange-500 hover:text-orange-600" : ""}
-                    >
-                      <Flame className={`h-5 w-5 ${hyped ? "fill-current" : ""}`} />
-                      <span className="ml-2 text-sm font-semibold">Hype</span>
-                      <span className="ml-2 text-sm tabular-nums">
-                        {(hypeScore[s.id] ?? 0).toLocaleString()}
-                      </span>
-                    </Button>
-
+                    {/* Share */}
                     <Button
                       size="icon"
                       variant="ghost"
@@ -646,25 +620,28 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         toast({ title: "Link copied!" });
                       }}
                       className="hover:text-green-500"
+                      title="Share"
                     >
                       <Share2 className="h-6 w-6" />
                     </Button>
                   </div>
 
+                  {/* Save / Saved */}
                   <Button
                     size="icon"
                     variant="ghost"
                     onClick={() => toggleFavorite(s.id)}
                     disabled={saving}
-                    className={saved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
-                    aria-pressed={saved}
-                    aria-label={saved ? "Saved" : "Save"}
-                    title={saved ? "Saved" : "Save"}
+                    className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                    aria-pressed={isSaved}
+                    aria-label={isSaved ? "Saved" : "Save"}
+                    title={isSaved ? "Saved" : "Save"}
                   >
-                    {saved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                    {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
                   </Button>
                 </div>
 
+                {/* caption */}
                 {s.description && (
                   <p className="text-sm">
                     <span className="font-semibold mr-2">{nameFor(s)}</span>
