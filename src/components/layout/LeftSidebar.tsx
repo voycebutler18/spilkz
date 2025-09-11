@@ -1,11 +1,13 @@
 // src/components/layout/LeftSidebar.tsx
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 const LeftSidebar: React.FC = () => {
   const [user, setUser] = React.useState<any>(null);
+  const location = useLocation();
 
   React.useEffect(() => {
     let mounted = true;
@@ -27,6 +29,10 @@ const LeftSidebar: React.FC = () => {
     };
   }, []);
 
+  // helper for active highlight
+  const isActive = (path: string) =>
+    location.pathname === path || location.pathname.startsWith(path + "/");
+
   return (
     <aside
       className="
@@ -47,12 +53,35 @@ const LeftSidebar: React.FC = () => {
         </div>
 
         <nav className="mt-3 space-y-1">
-          <Link to="/explore" className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5">
+          <Link
+            to="/explore"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/explore") && "bg-white/10 font-medium"
+            )}
+          >
             Discover
           </Link>
 
-          <Link to="/food" className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5">
+          <Link
+            to="/food"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/food") && "bg-white/10 font-medium"
+            )}
+          >
             Food
+          </Link>
+
+          {/* NEW: Daily Prayers */}
+          <Link
+            to="/prayers"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/prayers") && "bg-white/10 font-medium"
+            )}
+          >
+            🙏 Daily Prayers
           </Link>
 
           {/* Splikz Dating (coming soon) — desktop/tablet only */}
@@ -62,16 +91,36 @@ const LeftSidebar: React.FC = () => {
             title="Splikz Dating is coming soon"
           >
             <span>Splikz Dating</span>
-            <Badge variant="secondary" className="text-[10px]">Coming soon</Badge>
+            <Badge variant="secondary" className="text-[10px]">
+              Coming soon
+            </Badge>
           </div>
 
-          <Link to="/brands" className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5">
+          <Link
+            to="/brands"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/brands") && "bg-white/10 font-medium"
+            )}
+          >
             For Brands
           </Link>
-          <Link to="/help" className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5">
+          <Link
+            to="/help"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/help") && "bg-white/10 font-medium"
+            )}
+          >
             Help
           </Link>
-          <Link to="/about" className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5">
+          <Link
+            to="/about"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/about") && "bg-white/10 font-medium"
+            )}
+          >
             About
           </Link>
         </nav>
@@ -85,11 +134,20 @@ const LeftSidebar: React.FC = () => {
             <nav className="mt-1 space-y-1">
               <Link
                 to="/dashboard/favorites"
-                className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5"
+                className={cn(
+                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                  isActive("/dashboard/favorites") && "bg-white/10 font-medium"
+                )}
               >
                 My Favorites
               </Link>
-              <Link to="/messages" className="block rounded-lg px-3 py-2 text-sm hover:bg-white/5">
+              <Link
+                to="/messages"
+                className={cn(
+                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                  isActive("/messages") && "bg-white/10 font-medium"
+                )}
+              >
                 Messages
               </Link>
             </nav>
