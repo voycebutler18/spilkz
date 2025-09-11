@@ -13,8 +13,6 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import RightProfileMenu from "@/components/layout/RightProfileMenu";
-
-// Type-ahead search (make sure this file exists)
 import SearchOmni from "@/components/search/SearchOmni";
 
 type Profile = {
@@ -30,11 +28,9 @@ const Header: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // active helper
   const isActive = (path: string) =>
     location.pathname === path || location.pathname.startsWith(path + "/");
 
-  // Load current user + listen for auth changes
   React.useEffect(() => {
     let mounted = true;
 
@@ -79,7 +75,7 @@ const Header: React.FC = () => {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    navigate("/"); // Splash still lives at /
+    navigate("/home");
   };
 
   const avatarInitial =
@@ -91,14 +87,14 @@ const Header: React.FC = () => {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-3 sm:px-4">
-        {/* Left: Logo -> go straight to /home for speed */}
-        <Link to="/home" className="flex items-center gap-2" aria-label="Home">
+        {/* Left: Logo (→ /home) */}
+        <Link to="/home" className="flex items-center gap-2" aria-label="Splikz Home">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gradient-to-br from-purple-500 to-cyan-400">
             <Sparkles className="h-4 w-4 text-white" />
           </span>
         </Link>
 
-        {/* Universal Search (with autocomplete) */}
+        {/* Universal Search */}
         <div className="relative hidden w-full max-w-xl flex-1 md:block">
           <SearchOmni />
         </div>
@@ -111,7 +107,6 @@ const Header: React.FC = () => {
             className={cn("gap-2", isActive("/home") && "font-semibold")}
             onClick={() => navigate("/home")}
             aria-label="Home"
-            title="Home"
           >
             <Home className="h-4 w-4" /> Home
           </Button>
@@ -140,7 +135,6 @@ const Header: React.FC = () => {
             </Button>
           )}
 
-          {/* Messages visible ONLY when logged in */}
           {user && (
             <Button
               variant="ghost"
