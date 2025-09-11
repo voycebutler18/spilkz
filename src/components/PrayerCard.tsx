@@ -109,7 +109,8 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
   const [local, setLocal] = useState(initialCount);
   const [busy, setBusy] = useState(false);
   const [authed, setAuthed] = useState(false);
-  const [locked, setLocked] = useState(false); // stop second tap after success
+  const [hasAmened, setHasAmened] = useState(false);
+  const [checkingAmenStatus, setCheckingAmenStatus] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
@@ -119,6 +120,42 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
+  // Check if user has already amened this prayer when component mounts or auth changes
+  useEffect(() => {
+    const checkAmenStatus = async () => {
+      if (!authed) {
+        setHasAmened(false);
+        return;
+      }
+      
+      setCheckingAmenStatus(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        const { data, error } = await supabase
+          .from("prayer_amens")
+          .select("id")
+          .eq("prayer_id", id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error("Error checking amen status:", error);
+          return;
+        }
+
+        setHasAmened(!!data);
+      } catch (err) {
+        console.error("Error checking amen status:", err);
+      } finally {
+        setCheckingAmenStatus(false);
+      }
+    };
+
+    checkAmenStatus();
+  }, [id, authed]);
+
   const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -127,36 +164,46 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
       navigate("/login");
       return;
     }
-    if (busy || locked) return;
+    if (busy || hasAmened || checkingAmenStatus) return;
 
     setBusy(true);
     try {
       const { inserted } = await amenPrayer(id);
       if (inserted) {
-        setLocal((v) => v + 1); // only increment when DB confirms insert
-        setLocked(true);
+        setLocal((v) => v + 1);
+        setHasAmened(true);
       } else {
-        // duplicate (already amen'ed earlier) — just lock it, no number change
-        setLocked(true);
+        // User had already amened but we didn't know - update state
+        setHasAmened(true);
       }
     } catch (err) {
       console.error(err);
-      // leave number alone on hard failure
     } finally {
       setBusy(false);
     }
   };
+
+  const isDisabled = busy || hasAmened || checkingAmenStatus;
+  const buttonTitle = !authed 
+    ? "Log in to Amen" 
+    : hasAmened 
+    ? "You've already amened this" 
+    : checkingAmenStatus 
+    ? "Loading..." 
+    : "Amen";
 
   return (
     <Button
       variant="ghost"
       size="sm"
       onClick={onTap}
-      disabled={busy || locked}
+      disabled={isDisabled}
       aria-label="Amen"
-      title={!authed ? "Log in to Amen" : locked ? "Amened" : "Amen"}
+      title={buttonTitle}
       type="button"
-      className="relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px]"
+      className={`relative z-10 select-none touch-manipulation min-h-[36px] min-w-[64px] ${
+        hasAmened ? 'opacity-60' : ''
+      }`}
     >
       🙏 <span className="ml-2">{local}</span>
     </Button>
