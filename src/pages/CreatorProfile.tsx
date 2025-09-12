@@ -1,772 +1,587 @@
-// src/pages/CombinedMessages.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+// src/pages/CreatorProfile.tsx
+import { useState, useEffect, useRef } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { BlockButton, UnblockButton } from "@/components/DM/BlockButtons";
+import { VideoGrid } from "@/components/VideoGrid";
+import FollowButton from "@/components/FollowButton";
+import FollowersList from "@/components/FollowersList";
+import { MapPin, Calendar, Film, Users, MessageSquare, Heart } from "lucide-react";
 import { toast } from "sonner";
-import {
-  Send, Paperclip, Smile, MoreVertical, Phone, Video, Search, Circle,
-  Mail, MessageSquare, Loader2,
-} from "lucide-react";
 
-type Msg = {
-  id: string;
-  sender_id: string;
-  recipient_id: string;
-  body: string | null;
-  created_at: string;
-  thread_key: string;
-  read_at: string | null;
-};
-
-type ProfileLite = {
+interface Profile {
   id: string;
   username: string | null;
   display_name: string | null;
-  full_name?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
-  avatar_url?: string | null;
-};
+  first_name?: string | null;   // ✅ new
+  last_name?: string | null;    // ✅ new
+  bio: string | null;
+  avatar_url: string | null;
+  city: string | null;
+  followers_count: number;
+  following_count: number;
+  spliks_count: number;
+  is_private: boolean;
+  created_at: string;
+  followers_private?: boolean;
+  following_private?: boolean;
+}
 
-type ThreadRow = {
-  partnerId: string;
-  lastMessage: Msg | null;
-  unread: number;
-  partner: ProfileLite | null;
-};
+const isUuid = (v: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 
-export default function CombinedMessages() {
-  const { otherId } = useParams();
+export default function CreatorProfile() {
+  const { slug = "" } = useParams();
   const navigate = useNavigate();
-  const [me, setMe] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [spliks, setSpliks] = useState<any[]>([]);
+  const [likedSpliks, setLikedSpliks] = useState<any[]>([]);
+  const [likedLoading, setLikedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [showFollowersList, setShowFollowersList] = useState(false);
+  const [showFollowingList, setShowFollowingList] = useState(false);
 
-  // Inbox state
-  const [allMessages, setAllMessages] = useState<Msg[]>([]);
-  const [profiles, setProfiles] = useState<Record<string, ProfileLite>>({});
-  const [searchQuery, setSearchQuery] = useState("");
+  const unsubRef = useRef<null | (() => void)>(null);
 
-  // Active chat state
-  const [activeThreadMsgs, setActiveThreadMsgs] = useState<Msg[]>([]);
-  const [text, setText] = useState("");
-  const [otherTyping, setOtherTyping] = useState(false);
-  const [otherOnline, setOtherOnline] = useState(false);
-  const [isScrolledUp, setIsScrolledUp] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
-
-  // Refs
-  const messagesRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-
-  // consistent display-name helper
-  const humanName = (p?: ProfileLite | null) => {
-    const full = [p?.first_name, p?.last_name].filter(Boolean).join(" ").trim();
-    return (
-      p?.display_name?.trim() ||
-      p?.full_name?.trim() ||
-      (full || undefined) ||
-      p?.username?.trim() ||
-      "User"
-    );
-  };
-
-  const scrollThreadToBottom = (smooth = true) => {
-    const el = messagesRef.current;
-    if (!el) return;
-    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    else el.scrollTop = el.scrollHeight;
-  };
-
-  const commonEmojis = ["😀","😂","❤️","👍","👎","😢","😮","😡","🎉","🔥","💯","😊"];
-
-  // Who am I?
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUserId(data.user?.id || null);
+    });
   }, []);
 
-  const activeThreadKey = useMemo(() => {
-    if (!me || !otherId) return null;
-    return me < (otherId as string) ? `${me}|${otherId}` : `${otherId}|${me}`;
-  }, [me, otherId]);
-
-  // Load inbox (left list)
+  // Resolve profile slug (username or uuid); redirect /creator -> own profile when logged in
   useEffect(() => {
-    if (!me) return;
     let cancelled = false;
-    setLoading(true);
 
-    const loadInbox = async () => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select("*")
-        .or(`sender_id.eq.${me},recipient_id.eq.${me}`)
-        .order("created_at", { ascending: false });
+    const run = async () => {
+      const s = (slug || "").trim();
 
-      if (error) {
-        toast.error("Failed to load messages");
+      if (!s) {
+        const { data: session } = await supabase.auth.getSession();
+        const uid = session?.session?.user?.id;
+        if (uid) {
+          const { data: me } = await supabase
+            .from("profiles")
+            .select("username")
+            .eq("id", uid)
+            .maybeSingle();
+          if (me?.username) {
+            navigate(`/creator/${me.username}`, { replace: true });
+          } else {
+            navigate(`/creator/${uid}`, { replace: true });
+          }
+          return;
+        }
         setLoading(false);
+        setProfile(null);
         return;
       }
-      if (cancelled) return;
 
-      setAllMessages((data as Msg[]) ?? []);
+      setLoading(true);
+      setProfile(null);
+      setSpliks([]);
+      setLikedSpliks([]);
 
-      // Load partner profiles for everyone visible in the inbox
-      const partnerIds = Array.from(
-        new Set((data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id)))
-      );
-      if (partnerIds.length) {
-        const { data: ps } = await supabase
-          .from("profiles")
-          .select("id,username,display_name,full_name,first_name,last_name,avatar_url")
-          .in("id", partnerIds);
-        const map: Record<string, ProfileLite> = {};
-        (ps || []).forEach((p: any) => (map[p.id] = p));
-        setProfiles(map);
-      }
-      setLoading(false);
-    };
+      try {
+        let profileData: Profile | null = null;
 
-    loadInbox();
+        if (!isUuid(s)) {
+          let { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .ilike("username", s)
+            .maybeSingle<Profile>();
 
-    // Realtime for inbox
-    if (subRef.current) supabase.removeChannel(subRef.current);
+          if (!data) {
+            const byLower = await supabase
+              .from("profiles")
+              .select("*")
+              .eq("username", s.toLowerCase())
+              .maybeSingle<Profile>();
+            data = byLower.data || null;
+          }
+          profileData = data;
+        }
 
-    const ch = supabase
-      .channel(`inbox-${me}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `sender_id=eq.${me}` },
-        (payload) => setAllMessages((prev) => [payload.new as Msg, ...prev])
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `recipient_id=eq.${me}` },
-        (payload) => {
-          const newMsg = payload.new as Msg;
-          setAllMessages((prev) => [newMsg, ...prev]);
-          if (activeThreadKey && newMsg.thread_key === activeThreadKey) {
-            setActiveThreadMsgs((prev) => [...prev, newMsg]);
-            setTimeout(() => scrollThreadToBottom(true), 0);
+        if (!profileData && isUuid(s)) {
+          const byId = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", s)
+            .maybeSingle<Profile>();
+          profileData = byId.data || null;
+
+          if (profileData?.username && s !== profileData.username) {
+            navigate(`/creator/${profileData.username}`, { replace: true });
+            return;
           }
         }
+
+        if (!profileData && !isUuid(s)) {
+          const { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("username", s)
+            .maybeSingle<Profile>();
+          profileData = data;
+        }
+
+        if (!profileData) {
+          if (!cancelled) {
+            setProfile(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        if (cancelled) return;
+
+        setProfile(profileData);
+        await fetchSpliks(profileData.id, cancelled);
+        await fetchLikedSpliks(profileData.id, cancelled);
+      } catch (e) {
+        console.error("Error resolving profile:", e);
+        if (!cancelled) {
+          toast.error("Failed to load profile");
+          setProfile(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, navigate]);
+
+  // Realtime subscriptions for this profile
+  useEffect(() => {
+    if (unsubRef.current) {
+      try { unsubRef.current(); } catch {}
+      unsubRef.current = null;
+    }
+    if (!profile?.id) return;
+
+    const channel = supabase
+      .channel(`creator-${profile.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles", filter: `id=eq.${profile.id}` },
+        (payload) => setProfile(payload.new as Profile)
       )
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "messages" },
-        (payload) => {
-          const m = payload.new as Msg;
-          if (m.sender_id !== me && m.recipient_id !== me) return;
-          setAllMessages((prev) => {
-            const idx = prev.findIndex((x) => x.id === m.id);
-            if (idx === -1) return prev;
-            const copy = prev.slice();
-            copy[idx] = m;
-            return copy;
-          });
-          setActiveThreadMsgs((prev) => prev.map((p) => (p.id === m.id ? m : p)));
-        }
+        { event: "*", schema: "public", table: "spliks", filter: `user_id=eq.${profile.id}` },
+        () => fetchSpliks(profile.id)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "followers" },
+        () => refreshCounts(profile.id)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "hype_reactions", filter: `user_id=eq.${profile.id}` },
+        () => fetchLikedSpliks(profile.id)
       )
       .subscribe();
 
-    subRef.current = ch;
-
+    unsubRef.current = () => supabase.removeChannel(channel);
     return () => {
-      cancelled = true;
-      if (subRef.current) supabase.removeChannel(subRef.current);
-      subRef.current = null;
-    };
-  }, [me, activeThreadKey]);
-
-  // Ensure the selected partner profile is loaded even if no prior messages exist
-  useEffect(() => {
-    (async () => {
-      if (!otherId) return;
-      if (profiles[otherId as string]) return;
-      const { data } = await supabase
-        .from("profiles")
-        .select("id,username,display_name,full_name,first_name,last_name,avatar_url")
-        .eq("id", otherId as string)
-        .maybeSingle();
-      if (data) {
-        setProfiles((prev) => ({ ...prev, [data.id]: data as ProfileLite }));
+      if (unsubRef.current) {
+        try { unsubRef.current(); } finally { unsubRef.current = null; }
       }
-    })();
-  }, [otherId, profiles]);
+    };
+  }, [profile?.id]);
 
-  // Load active thread history (if any)
-  useEffect(() => {
-    if (!activeThreadKey || !me || !otherId) {
-      setActiveThreadMsgs([]);
-      return;
+  const refreshCounts = async (profileId: string) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("followers_count, following_count, spliks_count")
+      .eq("id", profileId)
+      .maybeSingle();
+    if (data) {
+      setProfile((prev) => (prev ? ({ ...prev, ...data } as Profile) : prev));
     }
+  };
 
-    const loadActiveThread = async () => {
+  const fetchSpliks = async (userId: string, cancelled?: boolean) => {
+    try {
       const { data, error } = await supabase
-        .from("messages")
+        .from("spliks")
         .select("*")
-        .eq("thread_key", activeThreadKey)
-        .order("created_at", { ascending: true });
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error(error);
+      if (error) throw error;
+      if (cancelled) return;
+
+      const spliksWithProfiles = await Promise.all(
+        (data || []).map(async (s) => {
+          const { data: p } = await supabase
+            .from("profiles")
+            .select("username, display_name, first_name, last_name, avatar_url") // ✅ include names
+            .eq("id", s.user_id)
+            .maybeSingle();
+          return { ...s, profiles: p || undefined };
+        })
+      );
+
+      if (!cancelled) setSpliks(spliksWithProfiles);
+    } catch (e) {
+      console.error("Error fetching videos:", e);
+      if (!cancelled) toast.error("Failed to load videos");
+    }
+  };
+
+  // ✅ Liked tab now uses hype_reactions
+  const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
+    try {
+      setLikedLoading(true);
+
+      const { data: likesRows, error: likesErr } = await supabase
+        .from("hype_reactions")
+        .select("splik_id, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (likesErr) throw likesErr;
+
+      if (!likesRows?.length) {
+        if (!cancelled) setLikedSpliks([]);
         return;
       }
 
-      setActiveThreadMsgs((data as Msg[]) || []);
+      const ids = likesRows.map((r) => r.splik_id);
 
-      // Mark as read
-      const toMark = (data || [])
-        .filter((m: Msg) => m.recipient_id === me && !m.read_at)
-        .map((m: Msg) => m.id);
-      if (toMark.length) {
-        await supabase.from("messages").update({ read_at: new Date().toISOString() }).in("id", toMark);
-        setUnreadCount(0);
+      const { data: splikRows, error: spliksErr } = await supabase
+        .from("spliks")
+        .select("*")
+        .in("id", ids);
+
+      if (spliksErr) throw spliksErr;
+
+      const withProfiles = await Promise.all(
+        (splikRows || []).map(async (s) => {
+          const { data: p } = await supabase
+            .from("profiles")
+            .select("username, display_name, first_name, last_name, avatar_url") // ✅ include names
+            .eq("id", s.user_id)
+            .maybeSingle();
+          return { ...s, profiles: p || undefined };
+        })
+      );
+
+      const orderIndex: Record<string, number> = {};
+      likesRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
+      withProfiles.sort((a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0));
+
+      if (!cancelled) setLikedSpliks(withProfiles);
+    } catch (e) {
+      console.error("Error fetching liked videos:", e);
+      if (!cancelled) toast.error("Failed to load liked videos");
+    } finally {
+      if (!cancelled) setLikedLoading(false);
+    }
+  };
+
+  // Deep link: ?video=<id>
+  useEffect(() => {
+    const deepId = searchParams.get("video");
+    if (!deepId || !spliks.length) return;
+
+    let cancelled = false;
+    let tries = 0;
+    const maxTries = 14;
+
+    const tryPlayUnmuted = (vid: HTMLVideoElement) => {
+      try {
+        vid.muted = false;
+        const p = vid.play();
+        if (p && typeof (p as any).catch === "function") {
+          (p as Promise<void>).catch(() => {
+            vid.muted = true;
+            vid.play().catch(() => {});
+          });
+        }
+      } catch {}
+    };
+
+    const attempt = () => {
+      if (cancelled) return;
+      const selectors = [
+        `[data-splik-id="${deepId}"]`,
+        `#splik-${deepId}`,
+        `[data-video-id="${deepId}"]`,
+        `[data-id="${deepId}"]`,
+      ];
+      let host: HTMLElement | null = null;
+      for (const s of selectors) {
+        const el = document.querySelector<HTMLElement>(s);
+        if (el) { host = el; break; }
       }
-
-      setTimeout(() => scrollThreadToBottom(false), 0);
-    };
-
-    loadActiveThread();
-  }, [activeThreadKey, me, otherId]);
-
-  // Presence + typing
-  useEffect(() => {
-    if (!activeThreadKey || !me || !otherId) return;
-
-    const ch = supabase
-      .channel(`dm-${activeThreadKey}`, { config: { presence: { key: me } } })
-      .on("presence", { event: "sync" }, () => {
-        const state = ch.presenceState();
-        setOtherOnline(Object.prototype.hasOwnProperty.call(state, otherId as string));
-      })
-      .on("presence", { event: "join" }, ({ key }) => key === otherId && setOtherOnline(true))
-      .on("presence", { event: "leave" }, ({ key }) => key === otherId && setOtherOnline(false))
-      .on("broadcast", { event: "typing" }, (payload) => {
-        const { userId, typing } = payload.payload as { userId: string; typing: boolean };
-        if (userId === otherId) setOtherTyping(Boolean(typing));
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") await ch.track({ at: Date.now() });
-      });
-
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [activeThreadKey, me, otherId]);
-
-  // Scroll tracking for auto-jump
-  const handleScroll = () => {
-    const el = messagesRef.current;
-    if (!el) return;
-    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-    setIsScrolledUp(!isAtBottom);
-  };
-
-  useEffect(() => {
-    if (!isScrolledUp) {
-      scrollThreadToBottom(true);
-      setUnreadCount(0);
-    }
-  }, [activeThreadMsgs.length, isScrolledUp]);
-
-  // Typing indicator broadcast
-  useEffect(() => {
-    if (!me || !otherId || !activeThreadKey) return;
-    const ch = supabase.channel(`dm-${activeThreadKey}`);
-    const sendTyping = (typing: boolean) =>
-      ch.send({ type: "broadcast", event: "typing", payload: { userId: me, typing } });
-    const start = setTimeout(() => text && sendTyping(true), 120);
-    const stop = setTimeout(() => sendTyping(false), 900);
-    return () => {
-      clearTimeout(start);
-      clearTimeout(stop);
-      supabase.removeChannel(ch);
-    };
-  }, [text, me, otherId, activeThreadKey]);
-
-  // Build threads for left list (with synthetic row for brand-new chat)
-  const threads = useMemo<ThreadRow[]>(() => {
-    if (!me) return [];
-    const map: Record<string, ThreadRow> = {};
-
-    for (const m of allMessages) {
-      const partnerId = m.sender_id === me ? m.recipient_id : m.sender_id;
-      if (!map[partnerId]) {
-        map[partnerId] = { partnerId, lastMessage: m, unread: 0, partner: profiles[partnerId] || null };
+      if (host) {
+        host.scrollIntoView({ behavior: "smooth", block: "center" });
+        const vid = host.querySelector("video") as HTMLVideoElement | null;
+        if (vid) setTimeout(() => tryPlayUnmuted(vid), 80);
+        return;
       }
-      if (!map[partnerId].lastMessage || m.created_at > map[partnerId].lastMessage!.created_at) {
-        map[partnerId].lastMessage = m;
-      }
-      if (m.recipient_id === me && !m.read_at) map[partnerId].unread += 1;
-      if (!map[partnerId].partner && profiles[partnerId]) map[partnerId].partner = profiles[partnerId];
-    }
-
-    let arr = Object.values(map);
-
-    // NEW: if we navigated directly to /messages/:otherId and no history exists,
-    // insert a synthetic thread so the person appears in the left list.
-    if (otherId && !arr.some((t) => t.partnerId === otherId)) {
-      arr.unshift({
-        partnerId: otherId,
-        lastMessage: null,
-        unread: 0,
-        partner: profiles[otherId] || null,
-      });
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      arr = arr.filter((t) => {
-        const name = humanName(t.partner);
-        return name.toLowerCase().includes(q) || t.lastMessage?.body?.toLowerCase().includes(q);
-      });
-    }
-
-    arr.sort((a, b) => (b.lastMessage?.created_at || "").localeCompare(a.lastMessage?.created_at || ""));
-    return arr;
-  }, [allMessages, profiles, searchQuery, me, otherId]);
-
-  // NEW: auto-focus the input when we land on /messages/:otherId
-  useEffect(() => {
-    if (otherId) setTimeout(() => inputRef.current?.focus(), 50);
-  }, [otherId]);
-
-  const send = async () => {
-    if (!me || !otherId || !text.trim()) return;
-    const body = text.trim();
-
-    const optimisticId =
-      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `tmp_${Date.now()}`;
-    const optimistic: Msg = {
-      id: optimisticId,
-      sender_id: me,
-      recipient_id: otherId,
-      body,
-      created_at: new Date().toISOString(),
-      thread_key: activeThreadKey!,
-      read_at: null,
+      if (tries++ < maxTries) setTimeout(attempt, 120);
     };
-    setActiveThreadMsgs((prev) => [...prev, optimistic]);
-    setText("");
-    setTimeout(() => scrollThreadToBottom(false), 0);
 
-    const { error } = await supabase.from("messages").insert({
-      sender_id: me,
-      recipient_id: otherId,
-      body,
-    });
+    attempt();
+    return () => { cancelled = true; };
+  }, [searchParams, spliks.length]);
 
-    if (error) {
-      setActiveThreadMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
-      toast.error(`Couldn't send message: ${error.message}`);
-      return;
-    }
+  const formatDate = (date: string) =>
+    new Date(date).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
-    const { data: latest } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("thread_key", activeThreadKey)
-      .order("created_at", { ascending: true });
-    if (latest) {
-      setActiveThreadMsgs(latest as Msg[]);
-      setTimeout(() => scrollThreadToBottom(false), 0);
-    }
-  };
-
-  const selectThread = (partnerId: string) => navigate(`/messages/${partnerId}`);
-  const addEmoji = (emoji: string) => {
-    setText((prev) => prev + emoji);
-    setShowEmojiPicker(false);
-    inputRef.current?.focus();
-  };
-  const formatTime = (iso: string) => {
-    const d = new Date(iso);
-    const now = new Date();
-    const diffHr = Math.abs(+now - +d) / 36e5;
-    if (diffHr < 24) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    if (diffHr < 168) return d.toLocaleDateString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
-    return d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  };
-  const formatWhen = (iso?: string) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMin = Math.round(diffMs / 60000);
-    if (diffMin < 1) return "now";
-    if (diffMin < 60) return `${diffMin}m`;
-    const diffHr = Math.round(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h`;
-    const diffDay = Math.round(diffHr / 24);
-    if (diffDay < 7) return `${diffDay}d`;
-    return d.toLocaleDateString();
-  };
-
-  const nameFor = (userId: string) => (userId === me ? "You" : humanName(profiles[userId]));
-  const otherProfile = profiles[otherId as string] || null;
-
-  if (me === null) {
+  if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-        <Header />
-        <div className="max-w-7xl mx-auto px-4 py-10 text-center">
-          <div className="animate-pulse"><div className="h-4 bg-slate-700 rounded w-32 mx-auto"></div></div>
+      <div className="min-h-screen bg-background">
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-        <Footer />
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      <Header />
-
-      <style>{`
-        .force-input {
-          color: #000000 !important;
-          background-color: #ffffff !important;
-          -webkit-text-fill-color: #000000 !important;
-          caret-color: #000000 !important;
-          border: 1px solid rgba(0,0,0,0.25) !important;
-          border-radius: 12px !important;
-          padding: 10px 12px !important;
-          height: 40px !important;
-          line-height: 20px !important;
-          outline: none !important;
-        }
-        .force-input:focus { box-shadow: 0 0 0 2px rgba(124,58,237,.35) !important; border-color: rgba(124,58,237,.75) !important; }
-        .force-input::placeholder { color: #6b7280 !important; -webkit-text-fill-color: #6b7280 !important; opacity: 1 !important; }
-      `}</style>
-
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex gap-4 h-[85vh]">
-          {/* Left Sidebar */}
-          <div className="w-80 bg-slate-800/80 backdrop-blur-sm rounded-2xl border border-slate-700/50 flex flex-col">
-            <div className="p-4 border-b border-slate-700/50">
-              <div className="flex items-center justify-between mb-4">
-                <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Mail className="h-5 w-5" />
-                  Messages
-                </h1>
-                <Button variant="outline" size="sm" onClick={() => navigate("/dashboard")}>
-                  Dashboard
-                </Button>
-              </div>
-
-              <div className="relative">
-                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search conversations..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="force-input w-full pl-9"
-                  autoComplete="off"
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto">
-              {loading ? (
-                <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading...
-                </div>
-              ) : threads.length === 0 ? (
-                <div className="p-8 text-center text-slate-400">
-                  <MessageSquare className="h-8 w-8 mx-auto mb-3 opacity-70" />
-                  No conversations yet
-                </div>
-              ) : (
-                threads.map((t) => {
-                  const name = humanName(t.partner);
-                  const avatar = t.partner?.avatar_url || null;
-                  const last = t.lastMessage?.body?.trim() || "New conversation";
-                  const when = t.lastMessage?.created_at ? formatWhen(t.lastMessage.created_at) : "";
-                  const isActive = otherId === t.partnerId;
-
-                  return (
-                    <div
-                      key={t.partnerId}
-                      onClick={() => selectThread(t.partnerId)}
-                      className={`flex items-center gap-3 p-4 hover:bg-slate-700/50 cursor-pointer transition-colors border-b border-slate-700/30 ${
-                        isActive ? "bg-slate-700/70" : ""
-                      }`}
-                    >
-                      {avatar ? (
-                        <img src={avatar} alt={name} className="w-12 h-12 rounded-full border border-slate-600" />
-                      ) : (
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 text-white flex items-center justify-center text-sm font-bold">
-                          {name.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-white truncate">{name}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-400">{when}</span>
-                            {t.unread > 0 && (
-                              <Badge variant="default" className="bg-purple-600 text-white">
-                                {t.unread > 99 ? "99+" : t.unread}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                        <div className="text-sm text-slate-400 truncate">{last}</div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* Right Side - Active Chat */}
-          <div className="flex-1 bg-slate-800/80 backdrop-blur-sm rounded-2xl border border-slate-700/50 flex flex-col">
-            {otherId ? (
-              <>
-                {/* Header */}
-                <div className="p-4 border-b border-slate-700/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        {otherProfile?.avatar_url ? (
-                          <img
-                            src={otherProfile.avatar_url}
-                            alt={nameFor(otherId as string)}
-                            className="w-10 h-10 rounded-full border-2 border-slate-600"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white font-semibold border-2 border-slate-600">
-                            {nameFor(otherId as string).charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        {otherOnline && (
-                          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-800"></div>
-                        )}
-                      </div>
-
-                      <div>
-                        <h2 className="text-white font-semibold text-lg">{nameFor(otherId as string)}</h2>
-                        <div className="flex items-center gap-2 text-sm">
-                          <Circle className={`w-2 h-2 fill-current ${otherOnline ? "text-green-500" : "text-slate-500"}`} />
-                          <span className="text-slate-400">
-                            {otherOnline ? "Online" : "Offline"}
-                            {otherTyping && <span className="ml-2 text-purple-400 animate-pulse">typing...</span>}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-slate-300 hover:text-white hover:bg-slate-700/50"
-                        onClick={() => setShowSearch(!showSearch)}
-                      >
-                        <Search className="w-4 h-4" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
-                        <Phone className="w-4 h-4" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
-                        <Video className="w-4 h-4" />
-                      </Button>
-                      <div className="flex gap-2 ml-2">
-                        <BlockButton otherUserId={otherId!} />
-                        <UnblockButton otherUserId={otherId!} />
-                      </div>
-                      <Button variant="ghost" size="sm" className="text-slate-300 hover:text-white hover:bg-slate-700/50">
-                        <MoreVertical className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  {showSearch && (
-                    <div className="mt-4 pt-4 border-t border-slate-700/50">
-                      <input
-                        type="text"
-                        placeholder="Search in conversation..."
-                        className="force-input w-full"
-                        autoComplete="off"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Thread */}
-                <div
-                  ref={messagesRef}
-                  onScroll={handleScroll}
-                  className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
-                  style={{ overscrollBehaviorY: "contain" }}
-                >
-                  {activeThreadMsgs.length === 0 && (
-                    <div className="text-center text-slate-400 mt-4">
-                      No messages yet — say hi 👋
-                    </div>
-                  )}
-
-                  {activeThreadMsgs.map((m, index) => {
-                    const mine = m.sender_id === me;
-                    const prevMsg = index > 0 ? activeThreadMsgs[index - 1] : null;
-                    const showAvatar = !mine && (!prevMsg || prevMsg.sender_id !== m.sender_id);
-                    const content = (m.body ?? "").trim();
-                    const isConsecutive = prevMsg && prevMsg.sender_id === m.sender_id;
-
-                    return (
-                      <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"} group`}>
-                        <div className={`flex items-end gap-2 max-w-[80%] ${mine ? "flex-row-reverse" : "flex-row"}`}>
-                          {!mine && (
-                            <div className={`w-6 h-6 flex-shrink-0 ${showAvatar ? "" : "invisible"}`}>
-                              {showAvatar &&
-                                (otherProfile?.avatar_url ? (
-                                  <img src={otherProfile.avatar_url} alt={nameFor(m.sender_id)} className="w-6 h-6 rounded-full" />
-                                ) : (
-                                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-white text-xs font-semibold">
-                                    {nameFor(m.sender_id).charAt(0).toUpperCase()}
-                                  </div>
-                                ))}
-                            </div>
-                          )}
-
-                          <div className="flex flex-col">
-                            <div
-                              className={[
-                                "relative group px-4 py-2 text-sm leading-relaxed break-words shadow-lg",
-                                "transition-all duration-200 hover:shadow-xl",
-                                mine
-                                  ? `bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-purple-500/25 ${
-                                      isConsecutive ? "rounded-2xl rounded-br-md" : "rounded-2xl rounded-br-sm"
-                                    }`
-                                  : `bg-slate-700/80 text-slate-100 shadow-slate-900/50 ${
-                                      isConsecutive ? "rounded-2xl rounded-bl-md" : "rounded-2xl rounded-bl-sm"
-                                    }`,
-                              ].join(" ")}
-                            >
-                              {content.length ? (
-                                <span className="whitespace-pre-wrap">{content}</span>
-                              ) : (
-                                <span className="opacity-60 italic text-xs">(empty message)</span>
-                              )}
-                            </div>
-
-                            <div
-                              className={[
-                                "flex items-center gap-1 mt-1 text-[10px] text-slate-500",
-                                mine ? "justify-end" : "justify-start",
-                              ].join(" ")}
-                            >
-                              <span>{formatTime(m.created_at)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {otherTyping && (
-                    <div className="flex justify-start">
-                      <div className="bg-slate-700/80 rounded-2xl rounded-bl-sm px-4 py-2 shadow-lg">
-                        <div className="flex space-x-1">
-                          <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-                          <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Composer */}
-                <div className="p-4 border-t border-slate-700/50">
-                  {showEmojiPicker && (
-                    <div className="mb-3 p-3 bg-slate-700/80 rounded-xl border border-slate-600/50">
-                      <div className="grid grid-cols-6 gap-2">
-                        {commonEmojis.map((emoji) => (
-                          <Button
-                            key={emoji}
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0 hover:bg-slate-600/50 text-lg"
-                            onClick={() => addEmoji(emoji)}
-                          >
-                            {emoji}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-end gap-2">
-                    <Button variant="ghost" size="sm" className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0">
-                      <Paperclip className="w-4 h-4" />
-                    </Button>
-
-                    <div className="flex-1 relative">
-                      <input
-                        ref={inputRef}
-                        type="text"
-                        placeholder="Type a message..."
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            send();
-                          }
-                        }}
-                        className="force-input w-full"
-                        autoComplete="off"
-                        autoCorrect="on"
-                        spellCheck
-                      />
-                    </div>
-
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-slate-400 hover:text-white hover:bg-slate-700/50 h-10 w-10 p-0"
-                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    >
-                      <Smile className="w-4 h-4" />
-                    </Button>
-
-                    <Button
-                      onClick={send}
-                      disabled={!text.trim()}
-                      className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl h-10 w-10 p-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl transition-all duration-200"
-                    >
-                      <Send className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-400">
-                <div className="text-center">
-                  <MessageSquare className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                  <h3 className="text-xl font-semibold mb-2">Select a conversation</h3>
-                  <p className="text-sm">Choose a conversation from the sidebar to start messaging</p>
-                </div>
-              </div>
-            )}
-          </div>
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
+          <h2 className="text-2xl font-semibold mb-4">Profile not found</h2>
+          <p className="text-muted-foreground mb-6">
+            The profile you're looking for doesn't exist or may have been removed.
+          </p>
+          <Button onClick={() => navigate("/")}>Go Home</Button>
         </div>
       </div>
+    );
+  }
 
-      <Footer />
+  // ✅ Strong fallback: display_name → first+last → username → "User"
+  const fullName =
+    [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  const nameOrUsername =
+    profile.display_name || fullName || profile.username || "User";
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Card className="mb-8 p-6">
+          <div className="flex flex-col md:flex-row gap-6">
+            <Avatar className="h-32 w-32">
+              <AvatarImage src={profile.avatar_url || ""} />
+              <AvatarFallback className="text-3xl">
+                {nameOrUsername.charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+
+            <div className="flex-1">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h1 className="text-3xl font-bold">{nameOrUsername}</h1>
+                  {profile.username && (
+                    <p className="text-muted-foreground">@{profile.username}</p>
+                  )}
+                </div>
+
+                {currentUserId !== profile.id && (
+                  <FollowButton
+                    profileId={profile.id}
+                    username={profile.username || ""}
+                    className="ml-4"
+                  />
+                )}
+              </div>
+
+              {profile.bio && <p className="mb-4">{profile.bio}</p>}
+
+              {currentUserId !== profile.id && (
+                <div className="mb-4">
+                  <Button
+                    variant="secondary"
+                    className="flex items-center gap-2"
+                    onClick={() => navigate(`/messages/${profile.id}`)}
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    Message
+                  </Button>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-4">
+                {profile.city && (
+                  <div className="flex items-center gap-1">
+                    <MapPin className="h-4 w-4" />
+                    {profile.city}
+                  </div>
+                )}
+                <div className="flex items-center gap-1">
+                  <Calendar className="h-4 w-4" />
+                  Joined {formatDate(profile.created_at)}
+                </div>
+              </div>
+
+              <div className="flex gap-8">
+                <div className="text-center min-w-[80px]">
+                  <p className="text-2xl font-bold">{profile.spliks_count || 0}</p>
+                  <p className="text-sm text-muted-foreground">Videos</p>
+                </div>
+                <button
+                  onClick={() => setShowFollowersList(true)}
+                  className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
+                >
+                  <p className="text-2xl font-bold">
+                    {profile.followers_private && currentUserId !== profile.id
+                      ? 0
+                      : profile.followers_count || 0}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Followers</p>
+                </button>
+                <button
+                  onClick={() => setShowFollowingList(true)}
+                  className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
+                >
+                  <p className="text-2xl font-bold">
+                    {profile.following_private && currentUserId !== profile.id
+                      ? 0
+                      : profile.following_count || 0}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Following</p>
+                </button>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Tabs defaultValue="videos" className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="videos">Videos</TabsTrigger>
+            <TabsTrigger value="about">About</TabsTrigger>
+            <TabsTrigger value="liked">Liked</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="videos" className="mt-6">
+            {spliks.length > 0 ? (
+              <VideoGrid
+                spliks={spliks}
+                showCreatorInfo={false}
+                onDeleteComment={
+                  currentUserId === profile.id
+                    ? async (commentId) => {
+                        const { error } = await supabase
+                          .from("comments")
+                          .delete()
+                          .eq("id", commentId);
+                        if (!error) toast.success("Comment deleted");
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <Card className="p-12 text-center">
+                <Film className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No videos yet</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="about" className="mt-6">
+            <Card className="p-6">
+              <h3 className="text-lg font-semibold mb-4">
+                About {nameOrUsername}
+              </h3>
+              <div className="space-y-4">
+                {profile.bio && (
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Bio</p>
+                    <p>{profile.bio}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Stats</p>
+                  <div className="flex gap-4">
+                    <Badge variant="secondary">
+                      <Film className="mr-1 h-3 w-3" />
+                      {profile.spliks_count} Videos
+                    </Badge>
+                    <Badge variant="secondary">
+                      <Users className="mr-1 h-3 w-3" />
+                      {profile.followers_count} Followers
+                    </Badge>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Member Since</p>
+                  <p>{formatDate(profile.created_at)}</p>
+                </div>
+              </div>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="liked" className="mt-6">
+            {likedLoading ? (
+              <Card className="p-12 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+                <p className="text-muted-foreground mt-3">Loading liked videos…</p>
+              </Card>
+            ) : likedSpliks.length > 0 ? (
+              <VideoGrid
+                spliks={likedSpliks}
+                showCreatorInfo={true}
+                onDeleteComment={
+                  currentUserId === profile.id
+                    ? async (commentId) => {
+                        const { error } = await supabase
+                          .from("comments")
+                          .delete()
+                          .eq("id", commentId);
+                        if (!error) toast.success("Comment deleted");
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <Card className="p-12 text-center">
+                <Heart className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No liked videos yet</p>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      <FollowersList
+        profileId={profile.id}
+        isOpen={showFollowersList}
+        onClose={() => setShowFollowersList(false)}
+        type="followers"
+        count={profile.followers_count}
+        isPrivate={profile.followers_private || false}
+        isOwnProfile={currentUserId === profile.id}
+      />
+
+      <FollowersList
+        profileId={profile.id}
+        isOpen={showFollowingList}
+        onClose={() => setShowFollowingList(false)}
+        type="following"
+        count={profile.following_count}
+        isPrivate={profile.following_private || false}
+        isOwnProfile={currentUserId === profile.id}
+      />
     </div>
   );
 }
