@@ -17,9 +17,8 @@ import AppLayout from "@/components/layout/AppLayout";
 
 // Pages
 import Splash from "./pages/Splash";
-// import Index from "./pages/Index"; // ⬅️ remove: old Home, no longer used
 import About from "./pages/About";
-import Explore from "./pages/Explore"; // ⬅️ this is your current “Discover” page
+import Explore from "./pages/Explore";
 import Food from "./pages/Food";
 import ForBrands from "./pages/business/ForBrands";
 import ForCreators from "./pages/business/ForCreators";
@@ -60,20 +59,16 @@ import CombinedMessages from "./pages/CombinedMessages";
 import MessagesInbox from "./pages/MessagesInbox";
 import MessageThread from "./pages/MessageThread";
 
-// NEW: Daily Prayers & Testimonies
+// Daily Prayers
 import PrayersPage from "./pages/Prayers";
 import PrayerDetailPage from "./pages/PrayerDetail";
 import PrayersTagPage from "./pages/PrayersTag";
 import PrayersSearchPage from "./pages/PrayersSearch";
-import AmenButton from "@/components/prayers/AmenButton";
 
-// 🔥 NEW: Vibes (text-only posts)
-import Vibes from "./pages/Vibes";
+// ✅ NEW: Pulse (replaces Vibes)
+import Pulse from "./pages/Pulse";
 
-// 404
 import NotFound from "./pages/NotFound";
-
-// Upload modal context
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
 const queryClient = new QueryClient();
@@ -164,10 +159,8 @@ const App = () => (
 
             {/* Everything else uses the global layout */}
             <Route element={<AppLayout />}>
-              {/* NEW: Use Discover/Explore as the Home page */}
+              {/* Home */}
               <Route path="/home" element={<Explore />} />
-
-              {/* Redirect old /explore links to /home */}
               <Route path="/explore" element={<Navigate to="/home" replace />} />
 
               <Route path="/about" element={<About />} />
@@ -186,9 +179,6 @@ const App = () => (
               <Route path="/safety" element={<Safety />} />
               <Route path="/accessibility" element={<Accessibility />} />
 
-              {/* Redirects */}
-              <Route path="/prompts" element={<Navigate to="/food" replace />} />
-
               {/* Dashboard */}
               <Route path="/dashboard" element={<CreatorDashboard />} />
               <Route path="/dashboard/favorites" element={<Favorites />} />
@@ -200,18 +190,20 @@ const App = () => (
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
 
-              {/* ✅ Messaging */}
+              {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
               <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
 
-              {/* Daily Prayers and Testimonies */}
+              {/* Prayers */}
               <Route path="/prayers" element={<PrayersPage />} />
               <Route path="/prayers/search" element={<PrayersSearchPage />} />
               <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
               <Route path="/prayers/:id" element={<PrayerDetailPage />} />
 
-              {/* 🔥 NEW: Vibes (text-only posts) */}
-              <Route path="/vibes" element={<Vibes />} />
+              {/* ✅ Pulse replaces Vibes */}
+              <Route path="/pulse" element={<Pulse />} />
+              {/* Old links go here */}
+              <Route path="/vibes" element={<Navigate to="/pulse" replace />} />
 
               {/* 404 */}
               <Route path="*" element={<NotFound />} />
