@@ -1,4 +1,3 @@
-// src/components/layout/MobileMenu.tsx
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -123,16 +122,16 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             Discover
           </Link>
 
-          {/* NEW: Vibes (text-only posts) */}
+          {/* ✅ Thoughts (instead of Vibes) */}
           <Link
-            to="/vibes"
+            to="/thoughts"
             onClick={(e) => {
               e.preventDefault();
-              go("/vibes");
+              go("/thoughts");
             }}
             className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
           >
-            ✍️ Vibes
+            💭 Thoughts
           </Link>
 
           <Link
@@ -146,7 +145,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             Food
           </Link>
 
-          {/* NEW: Daily Prayers */}
+          {/* Daily Prayers */}
           <Link
             to="/prayers"
             onClick={(e) => {
