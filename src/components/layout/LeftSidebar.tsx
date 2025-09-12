@@ -4,11 +4,9 @@ import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
   Home,
-  Zap,
   Compass,
   Utensils,
   Clapperboard,
-  Search,
   User,
   HelpCircle,
   Info,
@@ -23,10 +21,9 @@ type NavItem = {
 
 const NAV_MAIN: NavItem[] = [
   { to: "/home", label: "Home", icon: Home, exact: true },
-  // ✅ Replaces old /vibes with /pulse
-  { to: "/pulse", label: "Pulse", icon: Zap },
   { to: "/food", label: "Food", icon: Utensils },
-  { to: "/search", label: "Search", icon: Search },
+  // (Search removed)
+  // (Pulse removed to avoid broken link)
 ];
 
 const NAV_EXPLORE: NavItem[] = [
