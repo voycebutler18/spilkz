@@ -1,4 +1,4 @@
-
+// src/pages/Vibes.tsx (or VibesPage.tsx if that's your filename)
 import * as React from "react";
 import VibeComposer from "@/components/vibes/VibeComposer";
 import VibeCard, { Vibe } from "@/components/vibes/VibeCard";
@@ -25,15 +25,62 @@ export default function VibesPage() {
     setLoading(false);
   }, []);
 
+  // ✅ If the composer ever gives us the new row, append immediately; otherwise refresh.
+  const handlePosted = React.useCallback(
+    (maybeRow?: Partial<Vibe>) => {
+      if (maybeRow && (maybeRow as any).id) {
+        const next = maybeRow as Vibe;
+        setRows((prev) => (prev.some((v) => v.id === next.id) ? prev : [next, ...prev]));
+      } else {
+        fetchVibes();
+      }
+    },
+    [fetchVibes]
+  );
+
   React.useEffect(() => {
     fetchVibes();
 
-    // live inserts
+    // ✅ Realtime: append new insert immediately (with profile), no full refetch
     const ch = supabase
       .channel("live-vibes")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "vibes" }, fetchVibes)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "vibes" },
+        async (payload) => {
+          const r = payload.new as {
+            id: string;
+            user_id: string;
+            content: string;
+            mood?: string | null;
+            created_at: string;
+          };
+
+          // hydrate profile so the card can render names/avatars right away
+          const { data: prof } = await supabase
+            .from("profiles")
+            .select("id, username, display_name, avatar_url")
+            .eq("id", r.user_id)
+            .maybeSingle();
+
+          const newVibe: Vibe = {
+            id: r.id,
+            user_id: r.user_id,
+            content: r.content,
+            mood: r.mood ?? null,
+            created_at: r.created_at,
+            // @ts-ignore (VibeCard expects this shape)
+            profile: prof ?? null,
+          };
+
+          setRows((prev) => (prev.some((v) => v.id === newVibe.id) ? prev : [newVibe, ...prev]));
+        }
+      )
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
   }, [fetchVibes]);
 
   return (
@@ -48,7 +95,8 @@ export default function VibesPage() {
           </p>
         </div>
 
-        <VibeComposer onPosted={fetchVibes} />
+        {/* ⬇️ was: onPosted={fetchVibes} — now a wrapper that still calls fetch if needed */}
+        <VibeComposer onPosted={handlePosted} />
 
         {loading ? (
           <div className="py-12 text-center text-muted-foreground">Loading vibes…</div>
@@ -56,7 +104,9 @@ export default function VibesPage() {
           <div className="py-12 text-center text-muted-foreground">No vibes yet. Be the first!</div>
         ) : (
           <div className="grid gap-4">
-            {rows.map((v) => <VibeCard key={v.id} vibe={v} />)}
+            {rows.map((v) => (
+              <VibeCard key={v.id} vibe={v} />
+            ))}
           </div>
         )}
       </div>
