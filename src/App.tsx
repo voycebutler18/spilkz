@@ -65,8 +65,7 @@ import PrayerDetailPage from "./pages/PrayerDetail";
 import PrayersTagPage from "./pages/PrayersTag";
 import PrayersSearchPage from "./pages/PrayersSearch";
 
-// ✅ NEW: Pulse (replaces Vibes)
-import Pulse from "./pages/Pulse";
+// ❌ Pulse/Vibes removed
 
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
@@ -200,10 +199,7 @@ const App = () => (
               <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
               <Route path="/prayers/:id" element={<PrayerDetailPage />} />
 
-              {/* ✅ Pulse replaces Vibes */}
-              <Route path="/pulse" element={<Pulse />} />
-              {/* Old links go here */}
-              <Route path="/vibes" element={<Navigate to="/pulse" replace />} />
+              {/* ❌ Pulse & Vibes routes removed */}
 
               {/* 404 */}
               <Route path="*" element={<NotFound />} />
