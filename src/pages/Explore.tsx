@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Loader2, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Dialog,
@@ -23,6 +23,8 @@ import { Textarea } from "@/components/ui/textarea";
    Config
 ────────────────────────────────────────────────────────────────────────── */
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
+const VIDEO_PATH = (id: string) => `/video/${id}`;
+const PRAYERS_PATH = `/prayers`;
 
 /* ──────────────────────────────────────────────────────────────────────────
    Helpers
@@ -76,7 +78,7 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Splikz Photos rail + viewer (with delete for owner)
+   Mixed Activity Rail (Photos + Videos + Quotes)
 ────────────────────────────────────────────────────────────────────────── */
 type RailProfile = {
   id: string;
@@ -86,13 +88,15 @@ type RailProfile = {
   last_name?: string | null;
   avatar_url?: string | null;
 };
-type PhotoItem = {
-  id: string;
+
+type RailItem = {
+  id: string;            // from view: text
   user_id: string;
-  photo_url: string;
+  media_url: string | null; // image or video thumb; null for quotes
+  description: string | null;
+  location: string | null;
   created_at: string;
-  description?: string | null;
-  location?: string | null;
+  type: "photo" | "video" | "quote";
   profile?: RailProfile | null;
 };
 
@@ -114,7 +118,7 @@ const pathFromPublicUrl = (url: string) => {
   return null;
 };
 
-function RightPhotoRail({
+function RightActivityRail({
   title = "Splikz Photos",
   maxListHeight = "calc(100vh - 220px)",
   limit = 60,
@@ -128,12 +132,13 @@ function RightPhotoRail({
   currentUserId?: string | null;
 }) {
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<PhotoItem[]>([]);
+  const [items, setItems] = useState<RailItem[]>([]);
   const [viewerOpen, setViewerOpen] = useState(false);
-  const [active, setActive] = useState<PhotoItem | null>(null);
+  const [active, setActive] = useState<RailItem | null>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
-  const openViewer = (ph: PhotoItem) => {
+  const openPhotoViewer = (ph: RailItem) => {
     setActive(ph);
     setViewerOpen(true);
   };
@@ -144,8 +149,8 @@ function RightPhotoRail({
   const removeLocally = (id: string) =>
     setItems((prev) => prev.filter((p) => p.id !== id));
 
-  const deleteActive = async () => {
-    if (!active || !currentUserId) return;
+  const deleteActivePhoto = async () => {
+    if (!active || active.type !== "photo" || !currentUserId) return;
     if (active.user_id !== currentUserId) return;
     try {
       const { error } = await supabase
@@ -155,7 +160,7 @@ function RightPhotoRail({
         .eq("user_id", currentUserId);
       if (error) throw error;
 
-      const path = pathFromPublicUrl(active.photo_url);
+      const path = active.media_url ? pathFromPublicUrl(active.media_url) : null;
       if (path) await supabase.storage.from(PHOTOS_BUCKET).remove([path]);
 
       removeLocally(active.id);
@@ -177,22 +182,17 @@ function RightPhotoRail({
     const load = async () => {
       setLoading(true);
       try {
+        // ⬇️ One query against the unified view
         const { data, error } = await supabase
-          .from("vibe_photos")
+          .from("right_rail_feed")
           .select("*")
           .order("created_at", { ascending: false })
           .limit(limit);
         if (error) throw error;
 
-        const rows = (data || []).map((r: any) => ({
-          id: String(r.id),
-          user_id: String(r.user_id),
-          photo_url: String(r.photo_url),
-          created_at: r.created_at || new Date().toISOString(),
-          description: r.description ?? r.caption ?? null,
-          location: r.location ?? null,
-        })) as PhotoItem[];
+        const rows = (data || []) as RailItem[];
 
+        // hydrate profiles
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         if (userIds.length) {
           const { data: profs } = await supabase
@@ -208,7 +208,7 @@ function RightPhotoRail({
 
         if (!cancelled) setItems(rows);
       } catch (e) {
-        console.error("RightPhotoRail load error:", e);
+        console.error("RightActivityRail load error:", e);
         if (!cancelled) setItems([]);
       } finally {
         if (!cancelled) setLoading(false);
@@ -217,15 +217,24 @@ function RightPhotoRail({
 
     load();
 
+    // ⬇️ 3 realtime hooks to refresh the rail
     const ch = supabase
-      .channel("rail-vibe-photos")
+      .channel("rail-mixed")
       .on(
-        "postgres_changes",
         { event: "INSERT", schema: "public", table: "vibe_photos" },
+        () => load()
+      )
+      .on(
+        { event: "INSERT", schema: "public", table: "spliks" },
+        () => load()
+      )
+      .on(
+        { event: "INSERT", schema: "public", table: "quotes" },
         () => load()
       )
       .subscribe();
 
+    // Optimistic insert when our own photo upload finishes
     const onOptimistic = async (e: Event) => {
       // @ts-ignore
       const { user_id, photo_url, description, location } = e.detail || {};
@@ -242,10 +251,11 @@ function RightPhotoRail({
           {
             id: `local-${Date.now()}`,
             user_id,
-            photo_url,
-            created_at: new Date().toISOString(),
+            media_url: photo_url,
             description: description || null,
             location: location || null,
+            created_at: new Date().toISOString(),
+            type: "photo",
             profile: (p as RailProfile) || null,
           },
           ...prev,
@@ -269,6 +279,12 @@ function RightPhotoRail({
       cancelled = true;
     };
   }, [limit, reloadToken]);
+
+  const onTileClick = (item: RailItem) => {
+    if (item.type === "photo") return openPhotoViewer(item);
+    if (item.type === "video") return navigate(VIDEO_PATH(item.id));
+    if (item.type === "quote") return navigate(PRAYERS_PATH);
+  };
 
   return (
     <aside className="space-y-4">
@@ -294,27 +310,72 @@ function RightPhotoRail({
           )}
           {!loading && items.length === 0 && (
             <div className="py-10 text-center text-muted-foreground text-sm">
-              No photos yet
+              No items yet
             </div>
           )}
 
-          {items.map((ph) => {
-            const person = ph.profile;
+          {items.map((it) => {
+            const person = it.profile;
             const name = displayName(person);
             const slug = slugFor(person);
+
+            // QUOTE card
+            if (it.type === "quote") {
+              return (
+                <button
+                  key={`q-${it.id}`}
+                  onClick={() => onTileClick(it)}
+                  className="w-full rounded-xl border border-border/40 bg-muted/30 p-3 text-left hover:bg-muted/50 transition"
+                  title="Open prayer page"
+                >
+                  <div className="text-sm text-foreground/95 whitespace-pre-wrap break-words line-clamp-5">
+                    {it.description}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <Link
+                      to={slug ? `/creator/${slug}` : "#"}
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 w-7 h-7 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
+                      title={name}
+                    >
+                      {person?.avatar_url ? (
+                        <img
+                          src={person.avatar_url}
+                          alt={name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-xs font-semibold">
+                          {name?.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+                    </Link>
+                    <p className="text-xs text-muted-foreground">{name}</p>
+                  </div>
+                </button>
+              );
+            }
+
+            // VIDEO or PHOTO square tile
             return (
               <button
-                key={ph.id}
-                onClick={() => openViewer(ph)}
+                key={`${it.type}-${it.id}`}
+                onClick={() => onTileClick(it)}
                 className="relative aspect-square bg-muted/40 rounded-xl border border-border/40 overflow-hidden group text-left"
-                title="Open photo"
+                title={it.type === "video" ? "Open video" : "Open photo"}
               >
-                <img
-                  src={ph.photo_url}
-                  alt={name}
-                  loading="lazy"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
+                {it.media_url ? (
+                  <img
+                    src={it.media_url}
+                    alt={name}
+                    loading="lazy"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">
+                    {it.type.toUpperCase()}
+                  </div>
+                )}
 
                 {/* Bottom caption row (avatar + name + desc) */}
                 <div className="absolute inset-x-0 bottom-0 px-2 pb-2 pt-10 bg-gradient-to-t from-black/60 via-black/10 to-transparent">
@@ -341,9 +402,9 @@ function RightPhotoRail({
                       <p className="text-xs text-white/95 font-medium truncate">
                         {name}
                       </p>
-                      {ph.description && (
+                      {it.description && (
                         <p className="text-[11px] leading-tight text-white/90 line-clamp-2 break-words">
-                          {ph.description}
+                          {it.description}
                         </p>
                       )}
                     </div>
@@ -355,10 +416,10 @@ function RightPhotoRail({
         </div>
       </div>
 
-      {/* Photo Viewer */}
+      {/* Photo Viewer (only for photos) */}
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
         <DialogContent className="sm:max-w-3xl p-0 overflow-hidden">
-          {!!active && (
+          {!!active && active.type === "photo" && (
             <div className="relative">
               <div className="absolute top-2 right-2 z-10 flex gap-2">
                 {currentUserId && active.user_id === currentUserId && (
@@ -366,7 +427,7 @@ function RightPhotoRail({
                     variant="destructive"
                     size="icon"
                     className="h-9 w-9 rounded-full"
-                    onClick={deleteActive}
+                    onClick={deleteActivePhoto}
                     title="Delete photo"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -376,18 +437,20 @@ function RightPhotoRail({
                   variant="secondary"
                   size="icon"
                   className="h-9 w-9 rounded-full"
-                  onClick={() => setViewerOpen(false)}
+                  onClick={closeViewer}
                   title="Close"
                 >
                   <X className="h-4 w-4" />
                 </Button>
               </div>
 
-              <img
-                src={active.photo_url}
-                alt={displayName(active.profile)}
-                className="w-full max-h-[75vh] object-contain bg-black"
-              />
+              {active.media_url ? (
+                <img
+                  src={active.media_url}
+                  alt={displayName(active.profile)}
+                  className="w-full max-h-[75vh] object-contain bg-black"
+                />
+              ) : null}
 
               <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
                 <div className="flex items-end gap-3">
@@ -444,7 +507,7 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed (no Nearby) + Splikz Photos ONLY
+   PAGE: Home feed + Mixed right rail
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -516,6 +579,7 @@ const Explore = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  // autoplay
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
@@ -649,47 +713,17 @@ const Explore = () => {
 
   useAutoplayIn(feedRef, [feedSpliks]);
 
-  const handleShare = async (splikId: string) => {
-    const url = `${window.location.origin}/video/${splikId}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "Check out this Splik!", url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        toast({ title: "Link copied!", description: "Copied to clipboard" });
-      }
-    } catch {
-      toast({
-        title: "Failed to share",
-        description: "Please try again",
-        variant: "destructive",
-      });
-    }
-  };
-
   const uploadPhoto = async () => {
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Log in to upload a photo",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Log in to upload a photo", variant: "destructive" });
       return;
     }
     if (!file) {
-      toast({
-        title: "No file selected",
-        description: "Choose a photo first",
-        variant: "destructive",
-      });
+      toast({ title: "No file selected", description: "Choose a photo first", variant: "destructive" });
       return;
     }
     if (!photoDescription.trim()) {
-      toast({
-        title: "Add a description",
-        description: "Please enter a brief description",
-        variant: "destructive",
-      });
+      toast({ title: "Add a description", description: "Please enter a brief description", variant: "destructive" });
       return;
     }
     try {
@@ -732,10 +766,7 @@ const Explore = () => {
       );
       setReloadToken((n) => n + 1);
 
-      toast({
-        title: "Photo posted!",
-        description: "Your photo is live in Splikz Photos",
-      });
+      toast({ title: "Photo posted!", description: "Your photo is live in Splikz Photos" });
       setFile(null);
       setPhotoDescription("");
       setPhotoLocation("");
@@ -789,10 +820,10 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* GRID: Desktop side-by-side; Mobile stacked */}
+      {/* GRID */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* LEFT / TOP: HOME FEED */}
+          {/* LEFT: video feed */}
           <div className="lg:col-span-9 space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -824,9 +855,7 @@ const Explore = () => {
                     onShare={() => {
                       const url = `${window.location.origin}/video/${s.id}`;
                       if (navigator.share)
-                        navigator
-                          .share({ title: "Check out this Splik!", url })
-                          .catch(() => {});
+                        navigator.share({ title: "Check out this Splik!", url }).catch(() => {});
                       else
                         navigator.clipboard
                           .writeText(url)
@@ -843,30 +872,26 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): ONLY the Photos rail */}
+          {/* RIGHT: mixed activity rail */}
           <div className="lg:col-span-3 hidden lg:block">
-            <RightPhotoRail
-              title="Splikz Photos"
+            <RightActivityRail
+              title="Activity"
               currentUserId={user?.id}
               reloadToken={reloadToken}
             />
           </div>
         </div>
 
-        {/* MOBILE: Photos rail full-width below feed */}
+        {/* MOBILE: same rail below the feed */}
         <div className="mt-10 lg:hidden">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl font-semibold">Splikz Photos</h2>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setUploadOpen(true)}
-            >
+            <h2 className="text-xl font-semibold">Activity</h2>
+            <Button size="sm" variant="secondary" onClick={() => setUploadOpen(true)}>
               <Camera className="h-4 w-4 mr-1" /> Upload
             </Button>
           </div>
-          <RightPhotoRail
-            title="Latest photos"
+          <RightActivityRail
+            title="Latest"
             maxListHeight="60vh"
             reloadToken={reloadToken}
             currentUserId={user?.id}
