@@ -1,3 +1,4 @@
+// src/components/layout/LeftSidebar.tsx
 import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,6 +32,9 @@ const LeftSidebar: React.FC = () => {
   // helper for active highlight
   const isActive = (path: string) =>
     location.pathname === path || location.pathname.startsWith(path + "/");
+
+  // 🔒 Hide Messages link for now; toggle to true to bring it back.
+  const SHOW_MESSAGES = false;
 
   return (
     <aside
@@ -152,15 +156,19 @@ const LeftSidebar: React.FC = () => {
               >
                 My Favorites
               </Link>
-              <Link
-                to="/messages"
-                className={cn(
-                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-                  isActive("/messages") && "bg-white/10 font-medium"
-                )}
-              >
-                Messages
-              </Link>
+
+              {/* Messages link hidden while SHOW_MESSAGES is false */}
+              {SHOW_MESSAGES && (
+                <Link
+                  to="/messages"
+                  className={cn(
+                    "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                    isActive("/messages") && "bg-white/10 font-medium"
+                  )}
+                >
+                  Messages
+                </Link>
+              )}
             </nav>
           </>
         )}
