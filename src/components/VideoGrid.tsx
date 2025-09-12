@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FollowButton } from "@/components/FollowButton";
+import FollowButton from "@/components/FollowButton"; // ✅ add follow button
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
@@ -64,12 +64,10 @@ export function VideoGrid({
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
 
-  // Central place for counts we render
   const [videoStats, setVideoStats] = useState<{
     [id: string]: { views: number; likes: number; comments: number };
   }>({});
 
-  // Comments modal state
   const [showComments, setShowComments] = useState<string | null>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState("");
@@ -82,7 +80,6 @@ export function VideoGrid({
     `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   );
 
-  // keep reference to the live comments channel to clean it up
   const commentsChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(
     null
   );
@@ -94,7 +91,6 @@ export function VideoGrid({
   }, []);
 
   useEffect(() => {
-    // seed stats for each card
     const stats: any = {};
     spliks.forEach((s) => {
       stats[s.id] = {
@@ -106,7 +102,6 @@ export function VideoGrid({
     setVideoStats(stats);
     checkLikedStatus();
 
-    // keep in sync with spliks table updates (likes/comments/views)
     const channel = supabase
       .channel("video-grid-updates")
       .on(
@@ -158,7 +153,6 @@ export function VideoGrid({
       video.play();
       setPlayingVideo(splikId);
 
-      // view RPC (kept; we just don't show views anymore)
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -257,7 +251,6 @@ export function VideoGrid({
     }
   };
 
-  // keep the modal live while it's open
   useEffect(() => {
     if (commentsChannelRef.current) {
       try {
@@ -344,7 +337,6 @@ export function VideoGrid({
       });
       if (error) throw error;
 
-      // optimistic bump so the counter moves immediately
       setVideoStats((prev) => ({
         ...prev,
         [splikId]: {
@@ -467,6 +459,7 @@ export function VideoGrid({
                     profileId={splik.user_id}
                     username={splik.profiles.username}
                     size="sm"
+                    variant="outline"
                   />
                 </div>
               )}
@@ -484,15 +477,24 @@ export function VideoGrid({
                   </p>
                 )}
 
-                {/* Counts row (views removed) */}
+                {/* Counts row (no views) */}
                 <div className="flex items-center justify-end text-xs font-medium">
                   <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
                     {formatTime(splik.created_at)}
                   </span>
                 </div>
 
-                {/* Action buttons */}
+                {/* Action buttons — now includes Follow */}
                 <div className="flex items-center gap-2 pt-2">
+                  {/* ✅ Follow on every video */}
+                  <FollowButton
+                    profileId={splik.user_id}
+                    username={splik.profiles?.username}
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-200 dark:hover:bg-purple-950 dark:hover:text-purple-400 transition-all duration-200"
+                  />
+
                   <Button
                     size="sm"
                     variant={likedVideos.has(splik.id) ? "default" : "outline"}
@@ -533,9 +535,21 @@ export function VideoGrid({
                   >
                     <Share2 className="h-4 w-4" />
                   </Button>
+
+                  {isOwner && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        onDeletedSplik?.(splik.id)
+                      }
+                      className="hidden"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
 
-                {/* Owner-only: delete */}
                 {isOwner && (
                   <div className="pt-2">
                     <DeleteSplikButton
@@ -552,7 +566,7 @@ export function VideoGrid({
         })}
       </div>
 
-      {/* Comments Dialog (live) */}
+      {/* Comments Dialog */}
       <Dialog open={!!showComments} onOpenChange={() => setShowComments(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border-0 shadow-2xl">
           <DialogHeader className="pb-4 border-b border-gray-200 dark:border-gray-700">
@@ -562,7 +576,6 @@ export function VideoGrid({
           </DialogHeader>
 
           <div className="space-y-6">
-            {/* Create comment */}
             <div className="flex gap-3 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
               <Textarea
                 placeholder="Share your thoughts..."
@@ -579,7 +592,6 @@ export function VideoGrid({
               </Button>
             </div>
 
-            {/* Comments list */}
             <ScrollArea className="h-[400px] px-2">
               {loadingComments ? (
                 <div className="text-center py-8">
