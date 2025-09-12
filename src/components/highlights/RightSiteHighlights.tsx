@@ -35,6 +35,16 @@ const BUCKET_FOR_KIND: Record<string, string> = {
 const publicUrl = (bucket: string, path: string) =>
   supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 
+// build a cheap “signature” so we only set state when data really changed
+function signature(items: LocalItem[]) {
+  return items
+    .map(
+      (i) =>
+        `${i.kind}|${i.ref_table}|${i.ref_id}|${i.created_at}|${i.image_path ?? ""}|${i.text_preview ?? ""}|${i.mood ?? ""}`
+    )
+    .join("§");
+}
+
 export default function RightSiteHighlights({
   includeKinds = ["thought_post", "thought_image"],
   limit = 120,
@@ -45,6 +55,7 @@ export default function RightSiteHighlights({
   const navigate = useNavigate();
 
   const [items, setItems] = React.useState<LocalItem[]>([]);
+  const itemsSigRef = React.useRef<string>("");
   const [profiles, setProfiles] = React.useState<Record<string, Profile>>({});
   const [user, setUser] = React.useState<any>(null);
 
@@ -70,226 +81,236 @@ export default function RightSiteHighlights({
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  React.useEffect(() => {
-    let alive = true;
+  // debounce + latest-request guard
+  const refreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestReq = React.useRef(0);
+  const scheduleRefresh = React.useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      void refreshData();
+    }, 300);
+  }, []);
 
-    const loadFromHighlights = async () => {
-      const { data, error } = await supabase
-        .from("site_highlights_active")
-        .select("*")
-        .in("kind", includeKinds as any)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-      if (error) throw error;
-      if (!alive) return;
-      await hydrate((data as Highlight[]) ?? []);
-    };
+  const applyIfChanged = React.useCallback((next: LocalItem[]) => {
+    const sig = signature(next);
+    if (sig !== itemsSigRef.current) {
+      itemsSigRef.current = sig;
+      setItems(next);
+    }
+  }, []);
 
-    const fallbackFromThoughts = async () => {
-      const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // data loaders
+  const hydrate = React.useCallback(
+    async (raw: Highlight[]) => {
+      // base items (do NOT setItems yet — avoid mid-hydration paint)
+      let locals: LocalItem[] = raw.map((r) => ({ ...r }));
 
-      // recent photos
-      const { data: photos } = await supabase
-        .from("thoughts_images")
-        .select("id, post_id, path, created_at")
-        .gt("created_at", sinceISO)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-
-      // map photo -> post.owner (user_id)
-      const photoPostIds = Array.from(new Set((photos ?? []).map((p: any) => p.post_id)));
-      let ownerByPost: Record<string, string | null> = {};
-      if (photoPostIds.length) {
-        const { data: photoPosts } = await supabase
-          .from("thoughts_posts")
-          .select("id, user_id")
-          .in("id", photoPostIds);
-        (photoPosts ?? []).forEach((pp: any) => {
-          ownerByPost[pp.id] = pp.user_id ?? null;
-        });
+      // for image items, map to post + owner
+      const imageIds = locals
+        .filter((i) => i.kind.endsWith("_image"))
+        .map((i) => i.ref_id);
+      let postMap: Record<string, { post_id: string; owner_id: string | null }> = {};
+      if (imageIds.length) {
+        const { data: imgRows } = await supabase
+          .from("thoughts_images")
+          .select("id, post_id")
+          .in("id", imageIds);
+        const postIds = (imgRows ?? []).map((r) => r.post_id);
+        if (postIds.length) {
+          const { data: posts } = await supabase
+            .from("thoughts_posts")
+            .select("id, user_id")
+            .in("id", postIds);
+          const ownerByPost: Record<string, string | null> = {};
+          (posts ?? []).forEach((p) => (ownerByPost[p.id] = p.user_id));
+          (imgRows ?? []).forEach(
+            (r) =>
+              (postMap[r.id] = {
+                post_id: r.post_id,
+                owner_id: ownerByPost[r.post_id] ?? null,
+              })
+          );
+        }
       }
 
-      // recent text posts
-      const { data: posts } = await supabase
-        .from("thoughts_posts")
-        .select("id, user_id, text_content, mood, created_at")
-        .gt("created_at", sinceISO)
-        .order("created_at", { ascending: false })
-        .limit(limit);
+      // ensure owner_id exists on images (fallback to user_id if present)
+      locals = locals.map((i) =>
+        i.kind.endsWith("_image")
+          ? {
+              ...i,
+              post_id: postMap[i.ref_id]?.post_id,
+              owner_id: postMap[i.ref_id]?.owner_id ?? i.user_id ?? null,
+            }
+          : i
+      );
 
-      const photoItems: LocalItem[] = (photos ?? []).map((p: any) => ({
-        id: p.id,
-        user_id: null, // use owner_id below for images
-        kind: "thought_image",
-        route: `/thoughts/photos/${p.id}`,
-        ref_table: "thoughts_images",
-        ref_id: p.id,
-        image_path: p.path,
-        text_preview: null,
-        mood: null,
-        created_at: p.created_at,
-        expires_at: new Date(Date.parse(p.created_at) + 86400000).toISOString(),
-        post_id: p.post_id,
-        owner_id: ownerByPost[p.post_id] ?? null, // ✅ ensure creator on photos
+      // gather owner profiles
+      const userIds = Array.from(
+        new Set(locals.map((i) => i.owner_id || i.user_id).filter(Boolean) as string[])
+      );
+      if (userIds.length) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, username, display_name, avatar_url")
+          .in("id", userIds);
+        const map: Record<string, Profile> = {};
+        (profs ?? []).forEach((p) => (map[p.id] = p as Profile));
+        setProfiles((prev) => ({ ...prev, ...map }));
+      }
+
+      // hydrate hype counts once we know post_ids
+      const postIds = Array.from(
+        new Set(locals.map((i) => i.post_id).filter(Boolean) as string[])
+      );
+      if (postIds.length) {
+        const { data: reacts } = await supabase
+          .from("thoughts_reactions")
+          .select("id, post_id, user_id, type")
+          .in("post_id", postIds);
+
+        const counts: Record<string, number> = {};
+        const mine: Record<string, string | null> = {};
+
+        (reacts ?? []).forEach((r: any) => {
+          if (r.type === "like") counts[r.post_id] = (counts[r.post_id] || 0) + 1;
+          if (user?.id && r.user_id === user.id && r.type === "like")
+            mine[r.post_id] = r.id;
+        });
+
+        setHypeCounts(counts);
+        setMyHypeId(mine);
+      }
+
+      // finally apply — single paint
+      applyIfChanged(locals);
+    },
+    [applyIfChanged, user?.id]
+  );
+
+  const loadFromHighlights = React.useCallback(async () => {
+    const { data, error } = await supabase
+      .from("site_highlights_active")
+      .select("*")
+      .in("kind", includeKinds as any)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    await hydrate((data as Highlight[]) ?? []);
+  }, [includeKinds, limit, hydrate]);
+
+  const fallbackFromThoughts = React.useCallback(async () => {
+    const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    // recent photos
+    const { data: photos } = await supabase
+      .from("thoughts_images")
+      .select("id, post_id, path, created_at")
+      .gt("created_at", sinceISO)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    // map photo -> post.owner (user_id)
+    const photoPostIds = Array.from(new Set((photos ?? []).map((p: any) => p.post_id)));
+    let ownerByPost: Record<string, string | null> = {};
+    if (photoPostIds.length) {
+      const { data: photoPosts } = await supabase
+        .from("thoughts_posts")
+        .select("id, user_id")
+        .in("id", photoPostIds);
+      (photoPosts ?? []).forEach((pp: any) => {
+        ownerByPost[pp.id] = pp.user_id ?? null;
+      });
+    }
+
+    // recent text posts
+    const { data: posts } = await supabase
+      .from("thoughts_posts")
+      .select("id, user_id, text_content, mood, created_at")
+      .gt("created_at", sinceISO)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    const photoItems: LocalItem[] = (photos ?? []).map((p: any) => ({
+      id: p.id,
+      user_id: null, // owner via owner_id
+      kind: "thought_image",
+      route: `/thoughts/photos/${p.id}`,
+      ref_table: "thoughts_images",
+      ref_id: p.id,
+      image_path: p.path,
+      text_preview: null,
+      mood: null,
+      created_at: p.created_at,
+      expires_at: new Date(Date.parse(p.created_at) + 86400000).toISOString(),
+      post_id: p.post_id,
+      owner_id: ownerByPost[p.post_id] ?? null, // ensure creator
+    }));
+
+    const postItems: LocalItem[] = (posts ?? [])
+      .filter((t: any) => (t.text_content ?? "").trim().length > 0)
+      .map((t: any) => ({
+        id: t.id,
+        user_id: t.user_id,
+        kind: "thought_post",
+        route: `/thoughts`,
+        ref_table: "thoughts_posts",
+        ref_id: t.id,
+        image_path: null,
+        text_preview: (t.text_content ?? "").slice(0, 160),
+        mood: t.mood ?? null,
+        created_at: t.created_at,
+        expires_at: new Date(Date.parse(t.created_at) + 86400000).toISOString(),
+        post_id: t.id,
+        owner_id: t.user_id,
       }));
 
-      const postItems: LocalItem[] = (posts ?? [])
-        .filter((t: any) => (t.text_content ?? "").trim().length > 0)
-        .map((t: any) => ({
-          id: t.id,
-          user_id: t.user_id,
-          kind: "thought_post",
-          route: `/thoughts`,
-          ref_table: "thoughts_posts",
-          ref_id: t.id,
-          image_path: null,
-          text_preview: (t.text_content ?? "").slice(0, 160),
-          mood: t.mood ?? null,
-          created_at: t.created_at,
-          expires_at: new Date(Date.parse(t.created_at) + 86400000).toISOString(),
-          post_id: t.id,
-          owner_id: t.user_id,
-        }));
+    await hydrate(
+      [...photoItems, ...postItems]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .slice(0, limit)
+    );
+  }, [limit, hydrate]);
 
-      await hydrate(
-        [...photoItems, ...postItems]
-          .sort((a, b) => b.created_at.localeCompare(a.created_at))
-          .slice(0, limit)
-      );
-    };
-
-    (async () => {
-      try {
-        await loadFromHighlights();
-      } catch {
-        await fallbackFromThoughts();
+  const refreshData = React.useCallback(async () => {
+    const req = ++latestReq.current;
+    try {
+      await loadFromHighlights();
+    } catch {
+      await fallbackFromThoughts();
+    } finally {
+      // only apply results from the latest request; hydrate already respects this via applyIfChanged
+      if (req !== latestReq.current) {
+        // stale refresh — ignore
       }
-    })();
+    }
+  }, [loadFromHighlights, fallbackFromThoughts]);
 
-    // 🔁 realtime refresh for both highlight and fallback sources
-    const channel = supabase
+  // initial load
+  React.useEffect(() => {
+    void refreshData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeKinds.join("|"), limit]);
+
+  // realtime: listen, but coalesce with debounce
+  React.useEffect(() => {
+    const ch = supabase
       .channel("rail_highlights")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "site_highlights" },
-        () => {
-          (async () => {
-            try {
-              await loadFromHighlights();
-            } catch {
-              await fallbackFromThoughts();
-            }
-          })();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "thoughts_images" },
-        () => {
-          (async () => {
-            try {
-              await loadFromHighlights();
-            } catch {
-              await fallbackFromThoughts();
-            }
-          })();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "thoughts_posts" },
-        () => {
-          (async () => {
-            try {
-              await loadFromHighlights();
-            } catch {
-              await fallbackFromThoughts();
-            }
-          })();
-        }
-      )
+      // highlights table — INSERT/DELETE are enough
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "site_highlights" }, scheduleRefresh)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "site_highlights" }, scheduleRefresh)
+      // images — insert/delete change the rail; we don't need UPDATE noise
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "thoughts_images" }, scheduleRefresh)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "thoughts_images" }, scheduleRefresh)
+      // posts — new post (INSERT) or soft delete (UPDATE) should refresh
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "thoughts_posts" }, scheduleRefresh)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "thoughts_posts" }, scheduleRefresh)
       .subscribe();
 
     return () => {
-      alive = false;
-      supabase.removeChannel(channel);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      supabase.removeChannel(ch);
     };
-  }, [includeKinds, limit]);
-
-  async function hydrate(raw: Highlight[]) {
-    // base items
-    let locals: LocalItem[] = raw.map((r) => ({ ...r }));
-    setItems(locals);
-
-    // for image items, map to post + owner
-    const imageIds = locals
-      .filter((i) => i.kind.endsWith("_image"))
-      .map((i) => i.ref_id);
-    let postMap: Record<string, { post_id: string; owner_id: string | null }> = {};
-    if (imageIds.length) {
-      const { data: imgRows } = await supabase
-        .from("thoughts_images")
-        .select("id, post_id")
-        .in("id", imageIds);
-      const postIds = (imgRows ?? []).map((r) => r.post_id);
-      const { data: posts } = await supabase
-        .from("thoughts_posts")
-        .select("id, user_id")
-        .in("id", postIds);
-      const ownerByPost: Record<string, string | null> = {};
-      (posts ?? []).forEach((p) => (ownerByPost[p.id] = p.user_id));
-      (imgRows ?? []).forEach(
-        (r) => (postMap[r.id] = { post_id: r.post_id, owner_id: ownerByPost[r.post_id] ?? null })
-      );
-    }
-
-    // ensure owner_id exists on images (fallback to user_id if present)
-    locals = locals.map((i) =>
-      i.kind.endsWith("_image")
-        ? {
-            ...i,
-            post_id: postMap[i.ref_id]?.post_id,
-            owner_id: postMap[i.ref_id]?.owner_id ?? i.user_id ?? null,
-          }
-        : i
-    );
-
-    // gather owner profiles
-    const userIds = Array.from(
-      new Set(locals.map((i) => i.owner_id || i.user_id).filter(Boolean) as string[])
-    );
-    if (userIds.length) {
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, avatar_url")
-        .in("id", userIds);
-      const map: Record<string, Profile> = {};
-      (profs ?? []).forEach((p) => (map[p.id] = p as Profile));
-      setProfiles(map);
-    }
-
-    setItems(locals);
-
-    // hydrate hype counts
-    const postIds = Array.from(new Set(locals.map((i) => i.post_id).filter(Boolean) as string[]));
-    if (postIds.length) {
-      const { data: reacts } = await supabase
-        .from("thoughts_reactions")
-        .select("id, post_id, user_id, type")
-        .in("post_id", postIds);
-
-      const counts: Record<string, number> = {};
-      const mine: Record<string, string | null> = {};
-
-      (reacts ?? []).forEach((r: any) => {
-        if (r.type === "like") counts[r.post_id] = (counts[r.post_id] || 0) + 1;
-        if (user?.id && r.user_id === user.id && r.type === "like") mine[r.post_id] = r.id;
-      });
-
-      setHypeCounts(counts);
-      setMyHypeId(mine);
-    }
-  }
+  }, [scheduleRefresh]);
 
   // open / close / nav
   const openAtId = (id: string) => {
@@ -329,7 +350,7 @@ export default function RightSiteHighlights({
     }
   }
 
-  // ✅ unified delete helper (used by rail thumbnail + lightbox)
+  // unified delete helper (rail thumbnail + lightbox)
   async function deletePhotoById(imageId: string, ownerId?: string | null) {
     if (!user?.id) return;
     if (ownerId && ownerId !== user.id) return;
@@ -347,10 +368,13 @@ export default function RightSiteHighlights({
       .remove([img.path]);
 
     await supabase.from("thoughts_images").delete().eq("id", imageId);
-    await supabase.from("site_highlights").delete().match({ ref_table: "thoughts_images", ref_id: imageId });
+    await supabase
+      .from("site_highlights")
+      .delete()
+      .match({ ref_table: "thoughts_images", ref_id: imageId });
 
     // update UI
-    setItems((prev) => prev.filter((i) => !(i.kind === "thought_image" && i.id === imageId)));
+    applyIfChanged(items.filter((i) => !(i.kind === "thought_image" && i.id === imageId)));
     setLightIdx(null);
   }
 
@@ -404,7 +428,7 @@ export default function RightSiteHighlights({
                         aria-label="Delete photo"
                         onClick={(e) => {
                           e.stopPropagation();
-                          deletePhotoById(h.id, owner);
+                          void deletePhotoById(h.id, owner);
                         }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -506,7 +530,7 @@ export default function RightSiteHighlights({
               className="absolute top-3 right-16 sm:top-4 sm:right-20 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
               onClick={(e) => {
                 e.stopPropagation();
-                deletePhotoById(current.id, current.owner_id);
+                void deletePhotoById(current.id, current.owner_id);
               }}
               title="Delete photo"
               aria-label="Delete photo"
@@ -556,7 +580,7 @@ export default function RightSiteHighlights({
               }`}
               onClick={(e) => {
                 e.stopPropagation();
-                toggleHype(current.post_id);
+                void toggleHype(current.post_id);
               }}
             >
               <Heart
