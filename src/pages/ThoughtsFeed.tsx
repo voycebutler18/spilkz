@@ -269,7 +269,7 @@ export default function ThoughtsFeed() {
     setText(""); setMood(""); setFiles([]); setPosting(false);
   }
 
-  // image delete (owner only) — also remove right-rail highlight row
+  // HARD delete a single photo (owner only) — also remove right-rail highlight row
   async function deletePhoto(imageId: string, postId: string) {
     if (!user?.id) return;
     // get path + post owner
@@ -310,30 +310,36 @@ export default function ThoughtsFeed() {
     }
   }
 
-  // delete/report post (soft-delete) — also remove right-rail entries for this post & its photos
-  async function softDeletePost(postId: string) {
+  // HARD DELETE the whole post (owner only) — remove post, its images (storage + rows), reactions, comments, and highlights
+  async function hardDeletePost(postId: string) {
     const p = posts.find(x => x.id === postId);
     if (!user?.id || !p || p.user_id !== user.id) return;
 
-    // 1) soft-delete post
-    await supabase.from("thoughts_posts").update({ deleted_at: new Date().toISOString() }).eq("id", postId);
+    // fetch images for storage cleanup
+    const { data: imgs } = await supabase.from("thoughts_images").select("id, path").eq("post_id", postId);
+    const imgPaths = (imgs ?? []).map((r: any) => r.path);
+    const imgIds   = (imgs ?? []).map((r: any) => r.id);
 
-    // 2) remove rail entries for the post
+    // remove storage
+    if (imgPaths.length) await supabase.storage.from(BUCKET).remove(imgPaths);
+
+    // remove image rows
+    if (imgIds.length) await supabase.from("thoughts_images").delete().in("id", imgIds);
+
+    // purge highlights (post + its images)
     await supabase.from("site_highlights").delete().match({ ref_table: "thoughts_posts", ref_id: postId });
+    if (imgIds.length) await supabase.from("site_highlights").delete().in("ref_id", imgIds).eq("ref_table", "thoughts_images");
 
-    // 3) also remove any photo highlight rows for images that belong to this post
-    try {
-      const { data: imgs } = await supabase.from("thoughts_images").select("id").eq("post_id", postId);
-      const imgIds = (imgs ?? []).map((r: any) => r.id);
-      if (imgIds.length) {
-        await supabase.from("site_highlights").delete().in("ref_id", imgIds).eq("ref_table", "thoughts_images");
-      }
-    } catch {
-      // ignore if table/view not present
-    }
+    // remove reactions/comments (best effort)
+    await supabase.from("thoughts_reactions").delete().eq("post_id", postId);
+    await supabase.from("thoughts_comments").delete().eq("post_id", postId);
 
-    // 4) update UI
+    // finally remove the post row
+    await supabase.from("thoughts_posts").delete().eq("id", postId);
+
+    // update UI
     setPosts(prev => prev.filter(x => x.id !== postId));
+    setImagesByPost(prev => { const cp = { ...prev }; delete cp[postId]; return cp; });
     setMenuPostId(null);
   }
 
@@ -381,6 +387,17 @@ export default function ThoughtsFeed() {
     () => setLightboxIndex(i => (i! + 1) % allPhotos.length),
     closeLightbox
   );
+
+  // Ensure creator profile is loaded for the current lightbox photo
+  useEffect(() => {
+    if (!lightboxOpen || lightboxIndex == null) return;
+    const pid = allPhotos[lightboxIndex].postId;
+    const post = posts.find(p => p.id === pid);
+    const uid = post?.user_id;
+    if (uid && !profiles[uid]) {
+      void hydrateProfiles([uid]);
+    }
+  }, [lightboxOpen, lightboxIndex, allPhotos, posts, profiles]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950">
@@ -513,7 +530,7 @@ export default function ThoughtsFeed() {
                           {user?.id === p.user_id && (
                             <button
                               className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-neutral-800"
-                              onClick={() => softDeletePost(p.id)}
+                              onClick={() => hardDeletePost(p.id)}
                             >
                               Delete post
                             </button>
@@ -624,6 +641,33 @@ export default function ThoughtsFeed() {
       {/* LIGHTBOX (for route /thoughts/photos/:photoId) */}
       {lightboxOpen && lightboxIndex !== null && (
         <div className="fixed inset-0 bg-black/95 z-50 grid place-items-center p-2 sm:p-4" onClick={closeLightbox}>
+          {/* creator header in lightbox */}
+          {(() => {
+            const pid = allPhotos[lightboxIndex].postId;
+            const post = posts.find(p => p.id === pid);
+            const uid = post?.user_id || "";
+            const prof = uid ? profiles[uid] : undefined;
+            const name = prof?.username || prof?.display_name || "User";
+            const avatar = prof?.avatar_url || "";
+            return (
+              <div className="absolute top-2 left-2 sm:top-4 sm:left-4 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                <button
+                  className="h-10 w-10 rounded-full overflow-hidden ring-2 ring-white/20"
+                  onClick={() => navigate(`/creator/${prof?.username || uid}`)}
+                  aria-label="Open creator"
+                >
+                  {avatar ? <img src={avatar} alt="" className="h-full w-full object-cover" /> : <div className="h-full w-full bg-white/20" />}
+                </button>
+                <button
+                  className="text-white/90 font-medium hover:underline"
+                  onClick={() => navigate(`/creator/${prof?.username || uid}`)}
+                >
+                  {name}
+                </button>
+              </div>
+            );
+          })()}
+
           <button
             className="absolute top-2 right-2 sm:top-4 sm:right-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70"
             onClick={closeLightbox}
@@ -631,6 +675,23 @@ export default function ThoughtsFeed() {
           >
             <X className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
+
+          {/* owner can delete the current photo from lightbox */}
+          {(() => {
+            const pid = allPhotos[lightboxIndex].postId;
+            const post = posts.find(p => p.id === pid);
+            const isOwner = !!post && post.user_id === user?.id;
+            return isOwner ? (
+              <button
+                className="absolute top-2 right-14 sm:top-4 sm:right-20 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70"
+                onClick={(e) => { e.stopPropagation(); void deletePhoto(allPhotos[lightboxIndex].id, pid); }}
+                aria-label="Delete photo"
+                title="Delete photo"
+              >
+                <Trash2 className="h-5 w-5 sm:h-6 sm:w-6" />
+              </button>
+            ) : null;
+          })()}
 
           <button
             className="absolute left-2 sm:left-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70"
