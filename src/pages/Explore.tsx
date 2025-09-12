@@ -118,7 +118,7 @@ const displayName = (p?: RailProfile | null) => {
 const slugFor = (p?: RailProfile | null) => (p?.username ? p.username : p?.id || "");
 
 function RightPhotoRail({
-  title = "Photo Reels",
+  title = "Splikz Photos",  // was "Photo Rail"
   maxListHeight = "calc(100vh - 220px)",
   limit = 60,
 }: {
@@ -820,7 +820,7 @@ const Explore = () => {
 
           {/* RIGHT SIDEBAR: Vertical photo rail (photos only) */}
           <div className="lg:col-span-3">
-            <RightPhotoRail title="Photo Reels" />
+            <RightPhotoRail title="Splikz Photos" />  {/* was "Photo Rail" */}
           </div>
         </div>
       </div>
