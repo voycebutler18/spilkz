@@ -22,6 +22,9 @@ type Profile = {
   avatar_url?: string | null;
 };
 
+// 🔒 Simple flag: hide Messages tab for now
+const SHOW_MESSAGES = false;
+
 const Header: React.FC = () => {
   const [user, setUser] = React.useState<any>(null);
   const [profile, setProfile] = React.useState<Profile | null>(null);
@@ -135,7 +138,8 @@ const Header: React.FC = () => {
             </Button>
           )}
 
-          {user && (
+          {/* Messages tab — hidden while SHOW_MESSAGES is false */}
+          {user && SHOW_MESSAGES && (
             <Button
               variant="ghost"
               size="sm"
