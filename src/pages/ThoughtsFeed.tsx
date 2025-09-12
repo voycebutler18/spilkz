@@ -5,7 +5,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   X, Image, Smile, ChevronLeft, ChevronRight,
-  Heart, Flag, Trash2, MessageCircle, Share, MoreHorizontal
+  Heart, Trash2, MessageCircle, Share, MoreHorizontal
 } from "lucide-react";
 
 /* Works even if shadcn/ui isn't present */
@@ -269,7 +269,7 @@ export default function ThoughtsFeed() {
     setText(""); setMood(""); setFiles([]); setPosting(false);
   }
 
-  // image delete (owner only)
+  // image delete (owner only) — also remove right-rail highlight row
   async function deletePhoto(imageId: string, postId: string) {
     if (!user?.id) return;
     // get path + post owner
@@ -310,14 +310,33 @@ export default function ThoughtsFeed() {
     }
   }
 
-  // delete/report post (soft-delete)
+  // delete/report post (soft-delete) — also remove right-rail entries for this post & its photos
   async function softDeletePost(postId: string) {
     const p = posts.find(x => x.id === postId);
     if (!user?.id || !p || p.user_id !== user.id) return;
+
+    // 1) soft-delete post
     await supabase.from("thoughts_posts").update({ deleted_at: new Date().toISOString() }).eq("id", postId);
+
+    // 2) remove rail entries for the post
+    await supabase.from("site_highlights").delete().match({ ref_table: "thoughts_posts", ref_id: postId });
+
+    // 3) also remove any photo highlight rows for images that belong to this post
+    try {
+      const { data: imgs } = await supabase.from("thoughts_images").select("id").eq("post_id", postId);
+      const imgIds = (imgs ?? []).map((r: any) => r.id);
+      if (imgIds.length) {
+        await supabase.from("site_highlights").delete().in("ref_id", imgIds).eq("ref_table", "thoughts_images");
+      }
+    } catch {
+      // ignore if table/view not present
+    }
+
+    // 4) update UI
     setPosts(prev => prev.filter(x => x.id !== postId));
     setMenuPostId(null);
   }
+
   async function toggleReportPost(postId: string) {
     if (!user?.id) { alert("Please log in to report."); return; }
     const { data: exists } = await supabase
@@ -645,7 +664,7 @@ export default function ThoughtsFeed() {
   );
 }
 
-/* Comments thread (unchanged) */
+/* Comments thread */
 function CommentsThread({ postId, currentUserId }: { postId: string; currentUserId?: string }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
