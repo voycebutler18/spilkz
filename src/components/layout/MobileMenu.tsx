@@ -1,3 +1,4 @@
+// src/components/layout/MobileMenu.tsx
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -17,6 +18,10 @@ interface MobileMenuProps {
 }
 
 const DASHBOARD_PATH = "/dashboard";
+
+// 🔒 Hide Messages link in the mobile menu for now.
+// Set to true later to re-enable.
+const SHOW_MESSAGES = false;
 
 const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
   const [isAuthed, setIsAuthed] = useState(false);
@@ -215,16 +220,20 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
               >
                 My Favorites
               </Link>
-              <Link
-                to="/messages"
-                onClick={(e) => {
-                  e.preventDefault();
-                  go("/messages");
-                }}
-                className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-              >
-                Messages
-              </Link>
+
+              {/* Messages is hidden while SHOW_MESSAGES is false */}
+              {SHOW_MESSAGES && (
+                <Link
+                  to="/messages"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    go("/messages");
+                  }}
+                  className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+                >
+                  Messages
+                </Link>
+              )}
 
               <button
                 onClick={handleSignOut}
