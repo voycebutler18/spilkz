@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
+// ⬇️ Removed Header/Footer imports
+// import Header from "@/components/layout/Header";
+// import Footer from "@/components/layout/Footer";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
@@ -350,11 +351,11 @@ export default function CreatorProfile() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <Header />
+        {/* Header removed – AppLayout provides it */}
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-        <Footer />
+        {/* Footer removed – AppLayout provides it */}
       </div>
     );
   }
@@ -362,7 +363,6 @@ export default function CreatorProfile() {
   if (!profile) {
     return (
       <div className="min-h-screen bg-background">
-        <Header />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
           <h2 className="text-2xl font-semibold mb-4">Profile not found</h2>
           <p className="text-muted-foreground mb-6">
@@ -370,7 +370,6 @@ export default function CreatorProfile() {
           </p>
           <Button onClick={() => navigate("/")}>Go Home</Button>
         </div>
-        <Footer />
       </div>
     );
   }
@@ -379,7 +378,7 @@ export default function CreatorProfile() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header />
+      {/* Header removed – AppLayout provides it */}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Card className="mb-8 p-6">
@@ -586,7 +585,7 @@ export default function CreatorProfile() {
         isOwnProfile={currentUserId === profile.id}
       />
 
-      <Footer />
+      {/* Footer removed – AppLayout provides it */}
     </div>
   );
 }
