@@ -169,6 +169,7 @@ const App = () => (
               <Route path="/thoughts" element={<ThoughtsFeed />} />
               {/* Optional alias */}
               {/* <Route path="/feed" element={<Navigate to="/thoughts" replace />} /> */}
+              <Route path="/thoughts/photos/:photoId" element={<ThoughtsFeed />} />
 
               <Route path="/about" element={<About />} />
               <Route path="/food" element={<Food />} />
@@ -196,7 +197,6 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
-              <Route path="/thoughts/photos/:photoId" element={<ThoughtsFeed />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
