@@ -1,25 +1,23 @@
 // src/pages/Explore.tsx
 import { useState, useEffect, useRef } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  TrendingUp, Users, MapPin, Flame, Music, Smile, Sparkles, Trophy, Loader2, RefreshCw, Camera,
-} from "lucide-react";
+import { Camera, Loader2, MapPin, RefreshCw, Sparkles } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
-import FollowButton from "@/components/FollowButton";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  createDiscoveryFeed, applySessionRotation, forceNewRotation, type SplikWithScore,
-} from "@/lib/feed";
 
-// NEW: mobile sheet for the right rail
+// upload dialog
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 /* ──────────────────────────────────────────────────────────────────────────
    Helpers
@@ -72,17 +70,11 @@ type Splik = {
   profile?: Profile;
 };
 
-const categories = [
-  { id: "funny", label: "Funny", icon: Smile, color: "text-yellow-500" },
-  { id: "dance", label: "Dance", icon: Music, color: "text-purple-500" },
-  { id: "calm", label: "Calm", icon: Sparkles, color: "text-blue-500" },
-  { id: "wow", label: "Wow", icon: Flame, color: "text-orange-500" },
-  { id: "sports", label: "Sports", icon: Trophy, color: "text-green-500" },
-];
-
 /* ──────────────────────────────────────────────────────────────────────────
-   RIGHT-SIDE VERTICAL PHOTO RAIL (photos only; no video posts)
-   Reads from public.vibe_photos and hydrates uploader profiles
+   RIGHT-SIDE / INLINE PHOTO RAIL
+   Reads from public.vibe_photos and hydrates uploader profiles.
+   Shows vertical scroll and creator avatar → /creator/:slug
+   Also listens for a 'vibe-photo-uploaded' event for instant optimistic insert.
 ────────────────────────────────────────────────────────────────────────── */
 type RailProfile = {
   id: string;
@@ -111,10 +103,13 @@ function RightPhotoRail({
   title = "Splikz Photos",
   maxListHeight = "calc(100vh - 220px)",
   limit = 60,
+  reloadToken = 0,
 }: {
   title?: string;
   maxListHeight?: string | number;
   limit?: number;
+  /** bump this to force reload */
+  reloadToken?: number;
 }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PhotoItem[]>([]);
@@ -139,6 +134,7 @@ function RightPhotoRail({
           created_at: r.created_at || new Date().toISOString(),
         })) as PhotoItem[];
 
+        // hydrate profiles
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         if (userIds.length) {
           const { data: profs } = await supabase
@@ -161,6 +157,7 @@ function RightPhotoRail({
 
     load();
 
+    // realtime inserts
     const ch = supabase
       .channel("rail-vibe-photos")
       .on(
@@ -170,11 +167,42 @@ function RightPhotoRail({
       )
       .subscribe();
 
+    // optimistic insert when our own upload finishes
+    const onOptimistic = async (e: Event) => {
+      // @ts-ignore
+      const { user_id, photo_url } = e.detail || {};
+      if (!user_id || !photo_url) return;
+
+      try {
+        const { data: p } = await supabase
+          .from("profiles")
+          .select("id, username, display_name, first_name, last_name, avatar_url")
+          .eq("id", user_id)
+          .maybeSingle();
+
+        setItems((prev) => [
+          {
+            id: `local-${Date.now()}`,
+            user_id,
+            photo_url,
+            created_at: new Date().toISOString(),
+            profile: (p as RailProfile) || null,
+          },
+          ...prev,
+        ]);
+      } catch {}
+    };
+
+    window.addEventListener("vibe-photo-uploaded", onOptimistic as EventListener);
+
     return () => {
-      try { supabase.removeChannel(ch); } catch {}
+      try {
+        supabase.removeChannel(ch);
+      } catch {}
+      window.removeEventListener("vibe-photo-uploaded", onOptimistic as EventListener);
       cancelled = true;
     };
-  }, [limit]);
+  }, [limit, reloadToken]);
 
   return (
     <aside className="space-y-4">
@@ -211,6 +239,7 @@ function RightPhotoRail({
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
 
+                {/* creator avatar → profile with ALL content */}
                 <Link
                   to={slug ? `/creator/${slug}` : "#"}
                   className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
@@ -247,22 +276,26 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   EXPLORE PAGE (video discovery on the left, photos rail on right)
+   HOME (Nearby + Photos + Upload)
+   Desktop: left=nearby feed, right=photo rail (scrolls).
+   Mobile: same order but stacked; photo rail is FULL-WIDTH section beneath feed.
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [trendingSpliks, setTrendingSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
-  const [risingCreators, setRisingCreators] = useState<Profile[]>([]);
   const [nearbySpliks, setNearbySpliks] = useState<(Splik & { profile?: Profile })[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loadingNearby, setLoadingNearby] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [locationPermission, setLocationPermission] =
     useState<"granted" | "denied" | "prompt">("prompt");
-  const [railOpen, setRailOpen] = useState(false); // mobile sheet open
-  const { toast } = useToast();
 
-  const trendingFeedRef = useRef<HTMLDivElement | null>(null);
+  // upload dialog
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+
+  // allow forcing the photo rail to reload
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const { toast } = useToast();
   const nearbyFeedRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -273,102 +306,9 @@ const Explore = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // (unchanged) trending / nearby logic omitted here for brevity — keep as-is
-  // … copy your existing fetchTrendingData, fetchNearbySpliks, autoplay helpers, etc.
-
-  /* === START of existing functions (unchanged) === */
-  const fetchTrendingData = async (showRefreshToast = false, forceNewShuffle = false) => {
+  const fetchNearbySpliks = async () => {
     try {
-      showRefreshToast ? setRefreshing(true) : setLoading(true);
-      if (forceNewShuffle) forceNewRotation();
-
-      const { data: allSpliks, error: spliksError } = await supabase
-        .from("spliks")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (spliksError) throw spliksError;
-
-      if (allSpliks && allSpliks.length) {
-        const rotated = createDiscoveryFeed(allSpliks as SplikWithScore[], {
-          userId: user?.id,
-          category: selectedCategory,
-          feedType: "discovery",
-          maxResults: 40,
-        });
-
-        const withProfiles: (Splik & { profile?: Profile })[] = await Promise.all(
-          rotated.slice(0, 30).map(async (s: any) => {
-            const { data: p } = await supabase
-              .from("profiles")
-              .select("*")
-              .eq("id", s.user_id)
-              .maybeSingle();
-            return { ...(s as Splik), profile: (p as Profile) || undefined };
-          })
-        );
-
-        setTrendingSpliks(withProfiles);
-        preconnect(withProfiles[0]?.video_url);
-        warmFirstVideoMeta(withProfiles[0]?.video_url);
-      } else {
-        setTrendingSpliks([]);
-      }
-
-      const { data: allCreators } = await supabase
-        .from("profiles")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(60);
-
-      if (allCreators) {
-        const rotatedCreators = applySessionRotation(
-          allCreators.map((c) => ({
-            ...c,
-            likes_count: c.followers_count || 0,
-            comments_count: 0,
-            boost_score: 0,
-            tag: "",
-            user_id: c.id,
-          })) as SplikWithScore[],
-          { userId: user?.id, feedType: "discovery", maxResults: 15 }
-        );
-        setRisingCreators(rotatedCreators.slice(0, 12) as any);
-      } else {
-        setRisingCreators([]);
-      }
-
-      if (showRefreshToast) {
-        toast({
-          title: forceNewShuffle ? "Discovery reshuffled!" : "Discovery refreshed!",
-          description: forceNewShuffle
-            ? "Showing you a completely new mix"
-            : "Updated with the latest trending content",
-        });
-      }
-    } catch (e) {
-      console.error("Trending load error:", e);
-      toast({
-        title: "Error",
-        description: "Failed to load trending content",
-        variant: "destructive",
-      });
-      setTrendingSpliks([]);
-      setRisingCreators([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchTrendingData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, selectedCategory]);
-
-  const fetchNearbySpliks = async (forceNewShuffle = false) => {
-    try {
-      if (forceNewShuffle) forceNewRotation();
+      setLoadingNearby(true);
 
       const { data: spliksData } = await supabase
         .from("spliks")
@@ -377,14 +317,8 @@ const Explore = () => {
         .limit(100);
 
       if (spliksData) {
-        const rotated = applySessionRotation(spliksData as SplikWithScore[], {
-          userId: user?.id,
-          feedType: "nearby",
-          maxResults: 30,
-        });
-
         const withProfiles = await Promise.all(
-          rotated.map(async (s: any) => {
+          spliksData.map(async (s: any) => {
             const { data: p } = await supabase
               .from("profiles")
               .select("*")
@@ -402,10 +336,12 @@ const Explore = () => {
     } catch (e) {
       console.error("Nearby load error:", e);
       setNearbySpliks([]);
+    } finally {
+      setLoadingNearby(false);
     }
   };
 
-  // autoplay helpers (unchanged) …
+  // autoplay for the nearby list
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
@@ -529,9 +465,12 @@ const Explore = () => {
     }, deps);
   };
 
-  useAutoplayIn(trendingFeedRef, [trendingSpliks, selectedCategory]);
   useAutoplayIn(nearbyFeedRef, [nearbySpliks, locationPermission]);
-  /* === END of existing functions (unchanged) === */
+
+  useEffect(() => {
+    fetchNearbySpliks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const handleShare = async (splikId: string) => {
     const url = `${window.location.origin}/video/${splikId}`;
@@ -547,6 +486,58 @@ const Explore = () => {
     }
   };
 
+  // ── Upload Photo (Storage bucket → insert into vibe_photos) + optimistic insert
+  const uploadPhoto = async () => {
+    if (!user) {
+      toast({ title: "Sign in required", description: "Log in to upload a photo", variant: "destructive" });
+      return;
+    }
+    if (!file) {
+      toast({ title: "No file selected", description: "Choose a photo first", variant: "destructive" });
+      return;
+    }
+    try {
+      setUploading(true);
+
+      const bucket = "vibe_photos"; // change if your bucket name differs
+      const path = `${user.id}/${Date.now()}-${file.name}`;
+
+      const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
+      if (upErr) throw upErr;
+
+      const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
+      const photo_url = pub?.publicUrl;
+      if (!photo_url) throw new Error("Failed to resolve public URL");
+
+      const { error: insertErr } = await supabase
+        .from("vibe_photos")
+        .insert({ user_id: user.id, photo_url });
+      if (insertErr) throw insertErr;
+
+      // optimistic: notify rails immediately
+      window.dispatchEvent(new CustomEvent("vibe-photo-uploaded", { detail: { user_id: user.id, photo_url } }));
+
+      // optional hard reload for safety
+      setReloadToken((n) => n + 1);
+
+      toast({ title: "Photo posted!", description: "Your photo is live in Splikz Photos" });
+      setFile(null);
+      setUploadOpen(false);
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: "Upload failed",
+        description: e?.message || "Please try a different image",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       {/* header */}
@@ -554,251 +545,143 @@ const Explore = () => {
         <div className="container">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl md:text-4xl font-bold mb-2">Discover</h1>
+              {/* Discover → Home */}
+              <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
               <p className="text-muted-foreground">
-                Find trending splikz and rising creators • New shuffle each refresh
+                Watch nearby splikz • Post a photo • See the latest Splikz Photos
               </p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => fetchTrendingData(true, false)} disabled={refreshing}>
-                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              <Button variant="outline" size="sm" onClick={fetchNearbySpliks} disabled={loadingNearby}>
+                <RefreshCw className={`h-4 w-4 ${loadingNearby ? "animate-spin" : ""}`} />
                 Update
               </Button>
-              <Button size="sm" onClick={() => fetchTrendingData(true, true)} disabled={refreshing}>
-                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                Shuffle
+              <Button size="sm" onClick={() => setUploadOpen(true)}>
+                <Camera className="h-4 w-4" />
+                Upload Photo
               </Button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* grid */}
+      {/* grid: desktop mirrors mobile (stacked) */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* left: videos */}
-          <div className="lg:col-span-9">
-            <Tabs defaultValue="trending" className="space-y-6">
-              <TabsList className="grid w-full max-w-md grid-cols-3">
-                <TabsTrigger value="trending" className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4" /> Trending
-                </TabsTrigger>
-                <TabsTrigger value="rising" className="flex items-center gap-2">
-                  <Users className="h-4 w-4" /> Rising
-                </TabsTrigger>
-                <TabsTrigger value="nearby" className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4" /> Nearby
-                </TabsTrigger>
-              </TabsList>
-
-              {/* categories */}
-              <div className="flex flex-wrap gap-2">
-                {categories.map((c) => {
-                  const Icon = c.icon;
-                  return (
-                    <Badge
-                      key={c.id}
-                      variant={selectedCategory === c.id ? "default" : "outline"}
-                      className="cursor-pointer py-2 px-3 text-sm"
-                      onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}
-                    >
-                      <Icon className={`h-4 w-4 mr-1 ${c.color}`} />
-                      {c.label}
-                    </Badge>
-                  );
-                })}
+          {/* left (desktop) / top (mobile): NEARBY */}
+          <div className="lg:col-span-9 space-y-6">
+            {locationPermission !== "granted" ? (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <MapPin className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">Enable Location</h3>
+                  <p className="text-muted-foreground mb-4">
+                    Discover splikz from creators in your city (location is never precise)
+                  </p>
+                  <Button
+                    onClick={() => {
+                      if (!("geolocation" in navigator)) {
+                        toast({
+                          title: "Location not supported",
+                          description: "Your browser doesn't support location services",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      navigator.geolocation.getCurrentPosition(
+                        async () => {
+                          setLocationPermission("granted");
+                          await fetchNearbySpliks();
+                          toast({ title: "Location enabled", description: "Showing creators near you" });
+                        },
+                        () => {
+                          setLocationPermission("denied");
+                          toast({
+                            title: "Location access denied",
+                            description: "Enable location to see nearby content",
+                            variant: "destructive",
+                          });
+                        }
+                      );
+                    }}
+                  >
+                    Enable Location
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : loadingNearby ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Loading nearby videos…</p>
               </div>
-
-              {/* TRENDING */}
-              <TabsContent value="trending" className="space-y-6">
-                {loading ? (
-                  <div className="flex flex-col items-center justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-                    <p className="text-sm text-muted-foreground">Discovering trending content...</p>
+            ) : nearbySpliks.length === 0 ? (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No Nearby Splikz</h3>
+                  <p className="text-muted-foreground mb-4">No videos near you yet</p>
+                  <div className="flex gap-2 justify-center">
+                    <Button onClick={fetchNearbySpliks} variant="outline">
+                      Get Latest
+                    </Button>
                   </div>
-                ) : trendingSpliks.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">No Trending Splikz</h3>
-                      <p className="text-muted-foreground mb-4">Try shuffling again.</p>
-                      <div className="flex gap-2 justify-center">
-                        <Button onClick={() => fetchTrendingData(true, false)} variant="outline" disabled={refreshing}>
-                          Get Latest
-                        </Button>
-                        <Button onClick={() => fetchTrendingData(true, true)} disabled={refreshing}>
-                          Shuffle Discovery
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <>
-                    <div className="text-center text-sm text-muted-foreground mb-4">
-                      Showing {trendingSpliks.length} trending videos
-                      {selectedCategory && (
-                        <span className="ml-1">
-                          in {categories.find((c) => c.id === selectedCategory)?.label}
-                        </span>
-                      )}
-                    </div>
-                    <div ref={trendingFeedRef} className="space-y-8">
-                      {trendingSpliks
-                        .filter((s) =>
-                          !selectedCategory ? true : (s as any).tag?.toLowerCase().includes(selectedCategory)
-                        )
-                        .map((s) => (
-                          <SplikCard
-                            key={s.id}
-                            splik={s}
-                            onReact={() => {}}
-                            onShare={() => handleShare(s.id)}
-                          />
-                        ))}
-                    </div>
-                  </>
-                )}
-              </TabsContent>
-
-              {/* RISING */}
-              <TabsContent value="rising" className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-8">
-                  {risingCreators.map((creator, i) => (
-                    <Card key={creator.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-                      <CardContent className="p-4">
-                        <Link to={`/creator/${creator.username || creator.id}`} className="block mb-3">
-                          <div className="flex items-center space-x-3">
-                            <div className="relative">
-                              <img
-                                src={
-                                  creator.avatar_url ||
-                                  `https://api.dicebear.com/7.x/avataaars/svg?seed=${
-                                    creator.username || creator.id
-                                  }`
-                                }
-                                alt={creator.display_name || creator.username || "User"}
-                                className="h-12 w-12 rounded-full ring-2 ring-primary/20"
-                              />
-                              <Badge className="absolute -bottom-1 -right-1 h-5 w-5 p-0 flex items-center justify-center">
-                                {i + 1}
-                              </Badge>
-                            </div>
-                            <div className="flex-1">
-                              <p className="font-semibold hover:text-primary transition-colors">
-                                {creator.display_name || creator.username || "Unknown"}
-                              </p>
-                              <p className="text-sm text-muted-foreground">@{creator.username || "unknown"}</p>
-                            </div>
-                          </div>
-                        </Link>
-                        <div className="flex items-center justify-between">
-                          <Badge variant="secondary">{creator.followers_count || 0} followers</Badge>
-                          <FollowButton profileId={creator.id} username={creator.username || undefined} size="sm" />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </TabsContent>
-
-              {/* NEARBY */}
-              <TabsContent value="nearby" className="space-y-6">
-                {locationPermission !== "granted" ? (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <MapPin className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">Enable Location</h3>
-                      <p className="text-muted-foreground mb-4">
-                        Discover spliks from creators in your city (location is never precise)
-                      </p>
-                      <Button
-                        onClick={() => {
-                          if (!("geolocation" in navigator)) {
-                            toast({
-                              title: "Location not supported",
-                              description: "Your browser doesn't support location services",
-                              variant: "destructive",
-                            });
-                            return;
-                          }
-                          navigator.geolocation.getCurrentPosition(
-                            async () => {
-                              setLocationPermission("granted");
-                              await fetchNearbySpliks();
-                              toast({ title: "Location enabled", description: "Showing creators near you" });
-                            },
-                            () => {
-                              setLocationPermission("denied");
-                              toast({
-                                title: "Location access denied",
-                                description: "Enable location to see nearby content",
-                                variant: "destructive",
-                              });
-                            }
-                          );
-                        }}
-                      >
-                        Enable Location
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ) : nearbySpliks.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <MapPin className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">No Nearby Splikz</h3>
-                      <p className="text-muted-foreground mb-4">No videos near you yet</p>
-                      <div className="flex gap-2 justify-center">
-                        <Button onClick={() => fetchNearbySpliks(false)} variant="outline">
-                          Get Latest
-                        </Button>
-                        <Button onClick={() => fetchNearbySpliks(true)}>Shuffle Nearby</Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div ref={nearbyFeedRef} className="space-y-8">
-                    {nearbySpliks.map((s) => (
-                      <SplikCard key={s.id} splik={s} onReact={() => {}} onShare={() => handleShare(s.id)} />
-                    ))}
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
+                </CardContent>
+              </Card>
+            ) : (
+              <div ref={nearbyFeedRef} className="space-y-8">
+                {nearbySpliks.map((s) => (
+                  <SplikCard key={s.id} splik={s} onReact={() => {}} onShare={() => handleShare(s.id)} />
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* right: photo rail (desktop) */}
+          {/* right (desktop only): Photo rail */}
           <div className="lg:col-span-3 hidden lg:block">
             <RightPhotoRail title="Splikz Photos" />
           </div>
         </div>
+
+        {/* MOBILE INLINE PHOTO RAIL (full width, same scroll) */}
+        <div className="mt-10 lg:hidden">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xl font-semibold">Splikz Photos</h2>
+            <Button size="sm" variant="secondary" onClick={() => setUploadOpen(true)}>
+              <Camera className="h-4 w-4 mr-1" /> Upload
+            </Button>
+          </div>
+          <RightPhotoRail title="Latest photos" maxListHeight="60vh" reloadToken={reloadToken} />
+        </div>
       </div>
 
-      {/* Mobile FAB → opens the photo rail in a right sheet */}
-      <button
-        aria-label="Open photos"
-        onClick={() => setRailOpen(true)}
-        className="lg:hidden fixed z-40 right-4 bottom-24 rounded-full px-4 py-3 shadow-lg
-                   bg-primary text-primary-foreground font-medium active:scale-[0.98] transition"
-      >
-        <span className="inline-flex items-center gap-2">
-          <Camera className="h-5 w-5" /> Photos
-        </span>
-      </button>
-
-      <Sheet open={railOpen} onOpenChange={setRailOpen}>
-        <SheetContent side="right" className="lg:hidden w-[92vw] sm:w-[420px] p-0">
-          <SheetHeader className="p-4 border-b">
-            <SheetTitle className="flex items-center gap-2">
-              <Camera className="h-5 w-5" />
-              Splikz Photos
-            </SheetTitle>
-          </SheetHeader>
-          <div className="p-4">
-            <RightPhotoRail title="Splikz Photos" maxListHeight="65vh" />
+      {/* Upload Photo dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Upload a photo</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="file">Choose image</Label>
+              <Input
+                id="file"
+                type="file"
+                accept="image/*"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
+            </div>
           </div>
-        </SheetContent>
-      </Sheet>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadOpen(false)} disabled={uploading}>
+              Cancel
+            </Button>
+            <Button onClick={uploadPhoto} disabled={uploading}>
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Camera className="h-4 w-4 mr-2" />}
+              Post Photo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
