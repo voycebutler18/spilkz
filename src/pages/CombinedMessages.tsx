@@ -27,9 +27,9 @@ type ProfileLite = {
   id: string;
   username: string | null;
   display_name: string | null;
-  full_name?: string | null;     // ✅ added
-  first_name?: string | null;    // ✅ added
-  last_name?: string | null;     // ✅ added
+  full_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   avatar_url?: string | null;
 };
 
@@ -66,7 +66,6 @@ export default function CombinedMessages() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // ✅ consistent display-name helper
   const humanName = (p?: ProfileLite | null) => {
     const full = [p?.first_name, p?.last_name].filter(Boolean).join(" ").trim();
     return (
@@ -126,7 +125,7 @@ export default function CombinedMessages() {
       if (partnerIds.length) {
         const { data: ps } = await supabase
           .from("profiles")
-          .select("id,username,display_name,full_name,first_name,last_name,avatar_url") // ✅ include all
+          .select("id,username,display_name,full_name,first_name,last_name,avatar_url")
           .in("id", partnerIds);
         const map: Record<string, ProfileLite> = {};
         (ps || []).forEach((p: any) => (map[p.id] = p));
@@ -186,14 +185,14 @@ export default function CombinedMessages() {
     };
   }, [me, activeThreadKey]);
 
-  // ✅ Ensure the selected partner profile is loaded even if no prior messages exist
+  // Ensure the selected partner profile is loaded even if no prior messages exist
   useEffect(() => {
     (async () => {
       if (!otherId) return;
       if (profiles[otherId as string]) return;
       const { data } = await supabase
         .from("profiles")
-        .select("id,username,display_name,full_name,first_name,last_name,avatar_url") // ✅ include all
+        .select("id,username,display_name,full_name,first_name,last_name,avatar_url")
         .eq("id", otherId as string)
         .maybeSingle();
       if (data) {
@@ -202,7 +201,7 @@ export default function CombinedMessages() {
     })();
   }, [otherId, profiles]);
 
-  // Load active thread history
+  // Load active thread history (if any)
   useEffect(() => {
     if (!activeThreadKey || !me || !otherId) {
       setActiveThreadMsgs([]);
@@ -278,7 +277,7 @@ export default function CombinedMessages() {
     }
   }, [activeThreadMsgs.length, isScrolledUp]);
 
-  // Typing indicator
+  // Typing indicator broadcast
   useEffect(() => {
     if (!me || !otherId || !activeThreadKey) return;
     const ch = supabase.channel(`dm-${activeThreadKey}`);
@@ -293,7 +292,7 @@ export default function CombinedMessages() {
     };
   }, [text, me, otherId, activeThreadKey]);
 
-  // Build threads for left list
+  // Build threads for left list (with synthetic entry for brand-new chat)
   const threads = useMemo<ThreadRow[]>(() => {
     if (!me) return [];
     const map: Record<string, ThreadRow> = {};
@@ -311,6 +310,18 @@ export default function CombinedMessages() {
     }
 
     let arr = Object.values(map);
+
+    // ✅ If we navigated directly to /messages/:otherId and no messages exist yet,
+    // insert a synthetic thread row so it shows up selected immediately.
+    if (otherId && !arr.some((t) => t.partnerId === otherId)) {
+      arr.unshift({
+        partnerId: otherId,
+        lastMessage: null,
+        unread: 0,
+        partner: profiles[otherId] || null,
+      });
+    }
+
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       arr = arr.filter((t) => {
@@ -321,7 +332,12 @@ export default function CombinedMessages() {
 
     arr.sort((a, b) => (b.lastMessage?.created_at || "").localeCompare(a.lastMessage?.created_at || ""));
     return arr;
-  }, [allMessages, profiles, searchQuery, me]);
+  }, [allMessages, profiles, searchQuery, me, otherId]);
+
+  // ✅ Auto-focus the composer when we land on /messages/:otherId
+  useEffect(() => {
+    if (otherId) setTimeout(() => inputRef.current?.focus(), 50);
+  }, [otherId]);
 
   const send = async () => {
     if (!me || !otherId || !text.trim()) return;
@@ -471,10 +487,10 @@ export default function CombinedMessages() {
                 </div>
               ) : (
                 threads.map((t) => {
-                  const name = humanName(t.partner); // ✅
+                  const name = humanName(t.partner);
                   const avatar = t.partner?.avatar_url || null;
-                  const last = t.lastMessage?.body?.trim() || "";
-                  const when = formatWhen(t.lastMessage?.created_at);
+                  const last = t.lastMessage?.body?.trim() || "New conversation";
+                  const when = t.lastMessage?.created_at ? formatWhen(t.lastMessage.created_at) : "";
                   const isActive = otherId === t.partnerId;
 
                   return (
@@ -505,7 +521,7 @@ export default function CombinedMessages() {
                             )}
                           </div>
                         </div>
-                        <div className="text-sm text-slate-400 truncate">{last || "(no message)"}</div>
+                        <div className="text-sm text-slate-400 truncate">{last}</div>
                       </div>
                     </div>
                   );
@@ -595,6 +611,12 @@ export default function CombinedMessages() {
                   className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
                   style={{ overscrollBehaviorY: "contain" }}
                 >
+                  {activeThreadMsgs.length === 0 && (
+                    <div className="text-center text-slate-400 mt-4">
+                      No messages yet — say hi 👋
+                    </div>
+                  )}
+
                   {activeThreadMsgs.map((m, index) => {
                     const mine = m.sender_id === me;
                     const prevMsg = index > 0 ? activeThreadMsgs[index - 1] : null;
