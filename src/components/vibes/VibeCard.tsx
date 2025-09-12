@@ -1,8 +1,9 @@
+// src/components/vibes/VibeCard.tsx
 import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { Avatar } from "@/components/ui/avatar";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { formatDistanceToNow } from "date-fns";
 import { Flame } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -78,7 +79,7 @@ export default function VibeCard({ vibe }: Props) {
         setHasHyped(true);
         setHypeCount((n) => n + 1);
       }
-    } catch (e) {
+    } catch {
       toast({ title: "Couldn't update hype", variant: "destructive" });
     }
   };
@@ -88,12 +89,21 @@ export default function VibeCard({ vibe }: Props) {
     vibe.profile?.username ||
     "User";
 
+  const creatorHref = `/creator/${vibe.profile?.username || vibe.user_id}`;
+  const initial = (name?.trim()?.charAt(0) || "?").toUpperCase();
+
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <Link to={`/creator/${vibe.profile?.username || vibe.user_id}`} className="flex items-center gap-3">
+        <Link to={creatorHref} className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
-            {/* If you have AvatarImage/AvatarFallback, you can show avatar_url here */}
+            <AvatarImage
+              src={vibe.profile?.avatar_url || undefined}
+              alt={name}
+            />
+            <AvatarFallback className="font-semibold">
+              {initial}
+            </AvatarFallback>
           </Avatar>
           <div className="leading-tight">
             <p className="font-semibold">{name}</p>
