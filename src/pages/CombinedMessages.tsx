@@ -4,23 +4,13 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { BlockButton, UnblockButton } from "@/components/DM/BlockButtons";
 import { toast } from "sonner";
 import {
-  Send,
-  Paperclip,
-  Smile,
-  MoreVertical,
-  Phone,
-  Video,
-  Search,
-  Circle,
-  Mail,
-  MessageSquare,
-  Loader2,
+  Send, Paperclip, Smile, MoreVertical, Phone, Video, Search, Circle,
+  Mail, MessageSquare, Loader2,
 } from "lucide-react";
 
 type Msg = {
@@ -37,6 +27,9 @@ type ProfileLite = {
   id: string;
   username: string | null;
   display_name: string | null;
+  full_name?: string | null;     // ✅ added
+  first_name?: string | null;    // ✅ added
+  last_name?: string | null;     // ✅ added
   avatar_url?: string | null;
 };
 
@@ -73,6 +66,18 @@ export default function CombinedMessages() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
+  // ✅ consistent display-name helper
+  const humanName = (p?: ProfileLite | null) => {
+    const full = [p?.first_name, p?.last_name].filter(Boolean).join(" ").trim();
+    return (
+      p?.display_name?.trim() ||
+      p?.full_name?.trim() ||
+      (full || undefined) ||
+      p?.username?.trim() ||
+      "User"
+    );
+  };
+
   const scrollThreadToBottom = (smooth = true) => {
     const el = messagesRef.current;
     if (!el) return;
@@ -80,7 +85,7 @@ export default function CombinedMessages() {
     else el.scrollTop = el.scrollHeight;
   };
 
-  const commonEmojis = ["😀", "😂", "❤️", "👍", "👎", "😢", "😮", "😡", "🎉", "🔥", "💯", "😊"];
+  const commonEmojis = ["😀","😂","❤️","👍","👎","😢","😮","😡","🎉","🔥","💯","😊"];
 
   // Who am I?
   useEffect(() => {
@@ -121,7 +126,7 @@ export default function CombinedMessages() {
       if (partnerIds.length) {
         const { data: ps } = await supabase
           .from("profiles")
-          .select("id,username,display_name,avatar_url")
+          .select("id,username,display_name,full_name,first_name,last_name,avatar_url") // ✅ include all
           .in("id", partnerIds);
         const map: Record<string, ProfileLite> = {};
         (ps || []).forEach((p: any) => (map[p.id] = p));
@@ -188,7 +193,7 @@ export default function CombinedMessages() {
       if (profiles[otherId as string]) return;
       const { data } = await supabase
         .from("profiles")
-        .select("id,username,display_name,avatar_url")
+        .select("id,username,display_name,full_name,first_name,last_name,avatar_url") // ✅ include all
         .eq("id", otherId as string)
         .maybeSingle();
       if (data) {
@@ -302,17 +307,15 @@ export default function CombinedMessages() {
         map[partnerId].lastMessage = m;
       }
       if (m.recipient_id === me && !m.read_at) map[partnerId].unread += 1;
-      if (!map[partnerId].partner && profiles[partnerId]) {
-        map[partnerId].partner = profiles[partnerId];
-      }
+      if (!map[partnerId].partner && profiles[partnerId]) map[partnerId].partner = profiles[partnerId];
     }
 
     let arr = Object.values(map);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       arr = arr.filter((t) => {
-        const name = t.partner?.display_name || t.partner?.username || t.partnerId;
-        return name?.toLowerCase().includes(q) || t.lastMessage?.body?.toLowerCase().includes(q);
+        const name = humanName(t.partner);
+        return name.toLowerCase().includes(q) || t.lastMessage?.body?.toLowerCase().includes(q);
       });
     }
 
@@ -363,23 +366,19 @@ export default function CombinedMessages() {
   };
 
   const selectThread = (partnerId: string) => navigate(`/messages/${partnerId}`);
-
   const addEmoji = (emoji: string) => {
     setText((prev) => prev + emoji);
     setShowEmojiPicker(false);
     inputRef.current?.focus();
   };
-
   const formatTime = (iso: string) => {
     const d = new Date(iso);
     const now = new Date();
     const diffHr = Math.abs(+now - +d) / 36e5;
     if (diffHr < 24) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    if (diffHr < 168)
-      return d.toLocaleDateString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    if (diffHr < 168) return d.toLocaleDateString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
     return d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
-
   const formatWhen = (iso?: string) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -395,12 +394,7 @@ export default function CombinedMessages() {
     return d.toLocaleDateString();
   };
 
-  const nameFor = (userId: string) => {
-    if (userId === me) return "You";
-    const profile = profiles[userId];
-    return profile?.display_name || profile?.username || "User";
-  };
-
+  const nameFor = (userId: string) => (userId === me ? "You" : humanName(profiles[userId]));
   const otherProfile = profiles[otherId as string] || null;
 
   if (me === null) {
@@ -408,9 +402,7 @@ export default function CombinedMessages() {
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
         <Header />
         <div className="max-w-7xl mx-auto px-4 py-10 text-center">
-          <div className="animate-pulse">
-            <div className="h-4 bg-slate-700 rounded w-32 mx-auto"></div>
-          </div>
+          <div className="animate-pulse"><div className="h-4 bg-slate-700 rounded w-32 mx-auto"></div></div>
         </div>
         <Footer />
       </div>
@@ -479,7 +471,7 @@ export default function CombinedMessages() {
                 </div>
               ) : (
                 threads.map((t) => {
-                  const name = t.partner?.display_name || t.partner?.username || "User";
+                  const name = humanName(t.partner); // ✅
                   const avatar = t.partner?.avatar_url || null;
                   const last = t.lastMessage?.body?.trim() || "";
                   const when = formatWhen(t.lastMessage?.created_at);
