@@ -12,7 +12,6 @@ import {
   MessageCircle,
   Share2,
   Trash2,
-  Eye,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,13 +24,15 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import FollowButton from "@/components/FollowButton"; // ✅ default import (fix)
+import FollowButton from "@/components/FollowButton";
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
-  username: string;
-  display_name: string;
-  avatar_url?: string;
+  username: string | null;
+  display_name: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  avatar_url?: string | null;
 }
 
 interface Splik {
@@ -65,9 +66,9 @@ export function VideoGrid({
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
 
-  // Central place for counts we render
+  // Central place for counts we render (removed views)
   const [videoStats, setVideoStats] = useState<{
-    [id: string]: { views: number; likes: number; comments: number };
+    [id: string]: { likes: number; comments: number };
   }>({});
 
   // Comments modal state
@@ -95,11 +96,10 @@ export function VideoGrid({
   }, []);
 
   useEffect(() => {
-    // seed stats for each card
+    // seed stats for each card (removed views)
     const stats: any = {};
     spliks.forEach((s) => {
       stats[s.id] = {
-        views: s.views || 0,
         likes: s.likes_count || 0,
         comments: s.comments_count || 0,
       };
@@ -107,7 +107,7 @@ export function VideoGrid({
     setVideoStats(stats);
     checkLikedStatus();
 
-    // keep in sync with spliks table updates (likes/comments/views)
+    // keep in sync with spliks table updates (likes/comments only)
     const channel = supabase
       .channel("video-grid-updates")
       .on(
@@ -118,7 +118,6 @@ export function VideoGrid({
           setVideoStats((prev) => ({
             ...prev,
             [n.id]: {
-              views: n.views || 0,
               likes: n.likes_count || 0,
               comments: n.comments_count || 0,
             },
@@ -159,28 +158,15 @@ export function VideoGrid({
       video.play();
       setPlayingVideo(splikId);
 
-      // view RPC (keep your existing function)
+      // Still track views in backend but don't show them
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const result = await supabase.rpc("increment_view_with_session", {
+      await supabase.rpc("increment_view_with_session", {
         p_splik_id: splikId,
         p_session_id: sessionIdRef.current,
         p_viewer_id: user?.id || null,
       });
-
-      if (result.data) {
-        const viewData = result.data as any;
-        if (viewData.new_view && viewData.view_count) {
-          setVideoStats((prev) => ({
-            ...prev,
-            [splikId]: {
-              ...prev[splikId],
-              views: viewData.view_count,
-            },
-          }));
-        }
-      }
     }
   };
 
@@ -242,6 +228,8 @@ export function VideoGrid({
           profiles!comments_user_id_fkey (
             username,
             display_name,
+            first_name,
+            last_name,
             avatar_url
           )
         `
@@ -258,7 +246,7 @@ export function VideoGrid({
     }
   };
 
-  // 🔴 live comments while open
+  // live comments while open
   useEffect(() => {
     if (commentsChannelRef.current) {
       try {
@@ -377,11 +365,22 @@ export function VideoGrid({
     return "Just now";
   };
 
+  // helper to build a reliable display name for any profile
+  const nameOf = (p?: Profile) => {
+    if (!p) return "User";
+    const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
+    return p.display_name || full || p.username || "User";
+  };
+
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-4">
         {spliks.map((splik) => {
           const isOwner = currentUserId === splik.user_id;
+          const creator = splik.profiles;
+          const creatorName = nameOf(creator);
+          const creatorHref = `/creator/${creator?.username || splik.user_id}`;
+
           return (
             <Card
               key={splik.id}
@@ -401,15 +400,6 @@ export function VideoGrid({
                   playsInline
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
-
-                {/* Views badge (remove if you don't want it) */}
-                <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-2 rounded-full border border-white/20 shadow-lg">
-                  <Eye className="h-3.5 w-3.5 text-white" />
-                  <span className="text-white font-bold text-xs tracking-wide">
-                    {(videoStats[splik.id]?.views || splik.views || 0).toLocaleString()}
-                  </span>
-                  <div className="w-2 h-2 bg-gradient-to-r from-red-500 to-pink-500 rounded-full animate-pulse shadow-lg" />
-                </div>
 
                 {/* Play/Pause overlay */}
                 <div
@@ -448,34 +438,35 @@ export function VideoGrid({
               </div>
 
               {/* Creator row */}
-              {showCreatorInfo && splik.profiles && (
+              {showCreatorInfo && creator && (
                 <div className="flex items-center justify-between p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
                   <Link
-                    to={`/creator/${splik.profiles.username}`}
+                    to={creatorHref}
                     className="flex items-center gap-3 hover:bg-gray-100/80 dark:hover:bg-gray-800/50 transition-colors rounded-xl flex-1 p-2 -m-2"
                   >
                     <div className="relative">
                       <Avatar className="h-12 w-12 ring-2 ring-white dark:ring-gray-700 shadow-lg">
-                        <AvatarImage src={splik.profiles.avatar_url} />
+                        <AvatarImage src={creator?.avatar_url || undefined} />
                         <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white font-bold">
-                          {splik.profiles.display_name?.charAt(0) ||
-                            splik.profiles.username?.charAt(0)}
+                          {creatorName.charAt(0)}
                         </AvatarFallback>
                       </Avatar>
                       <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 shadow-sm" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-sm text-gray-900 dark:text-white truncate">
-                        {splik.profiles.display_name || splik.profiles.username}
+                        {creatorName}
                       </p>
-                      <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                        @{splik.profiles.username}
-                      </p>
+                      {creator?.username && (
+                        <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                          @{creator.username}
+                        </p>
+                      )}
                     </div>
                   </Link>
                   <FollowButton
                     profileId={splik.user_id}
-                    username={splik.profiles.username}
+                    username={creator?.username || undefined}
                     size="sm"
                   />
                 </div>
@@ -494,24 +485,18 @@ export function VideoGrid({
                   </p>
                 )}
 
-                {/* Counts row */}
-                <div className="flex items-center justify-between text-xs font-medium">
-                  <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
-                    <Eye className="h-3 w-3" />
-                    <span>
-                      {(videoStats[splik.id]?.views || 0).toLocaleString()} views
-                    </span>
-                  </div>
+                {/* Time only (no views) */}
+                <div className="flex items-center justify-end text-xs font-medium">
                   <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
                     {formatTime(splik.created_at)}
                   </span>
                 </div>
 
-                {/* Action buttons — FOLLOW added here so it shows even when showCreatorInfo=false */}
+                {/* Action buttons */}
                 <div className="flex items-center gap-2 pt-2">
                   <FollowButton
                     profileId={splik.user_id}
-                    username={splik.profiles?.username}
+                    username={creator?.username || undefined}
                     size="sm"
                     variant="outline"
                     className="flex-1"
@@ -624,45 +609,48 @@ export function VideoGrid({
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {comments.map((comment) => (
-                    <div
-                      key={comment.id}
-                      className="flex gap-3 p-4 bg-white dark:bg-gray-800/30 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 dark:border-gray-700/50"
-                    >
-                      <Avatar className="h-10 w-10 ring-2 ring-gray-200 dark:ring-gray-700 flex-shrink-0">
-                        <AvatarImage src={comment.profiles?.avatar_url} />
-                        <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white font-bold text-sm">
-                          {comment.profiles?.display_name?.charAt(0) || "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="font-bold text-sm text-gray-900 dark:text-white">
-                              {comment.profiles?.display_name ||
-                                comment.profiles?.username}
-                            </p>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                              {formatTime(comment.created_at)}
-                            </p>
+                  {comments.map((comment) => {
+                    const p: Profile | undefined = comment.profiles;
+                    const commenter = nameOf(p);
+                    return (
+                      <div
+                        key={comment.id}
+                        className="flex gap-3 p-4 bg-white dark:bg-gray-800/30 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 dark:border-gray-700/50"
+                      >
+                        <Avatar className="h-10 w-10 ring-2 ring-gray-200 dark:ring-gray-700 flex-shrink-0">
+                          <AvatarImage src={p?.avatar_url || undefined} />
+                          <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white font-bold text-sm">
+                            {commenter.charAt(0)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <p className="font-bold text-sm text-gray-900 dark:text-white">
+                                {commenter}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                {formatTime(comment.created_at)}
+                              </p>
+                            </div>
+                            {onDeleteComment && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => onDeleteComment(comment.id)}
+                                className="opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 transition-all duration-200 h-8 w-8 p-0"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
                           </div>
-                          {onDeleteComment && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => onDeleteComment(comment.id)}
-                              className="opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 transition-all duration-200 h-8 w-8 p-0"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          )}
+                          <p className="text-sm text-gray-800 dark:text-gray-200 mt-2 leading-relaxed">
+                            {comment.content}
+                          </p>
                         </div>
-                        <p className="text-sm text-gray-800 dark:text-gray-200 mt-2 leading-relaxed">
-                          {comment.content}
-                        </p>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
