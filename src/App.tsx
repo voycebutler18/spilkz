@@ -70,6 +70,9 @@ import PrayersSearchPage from "./pages/PrayersSearch";
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
+/* ✅ NEW: Thoughts page (text + mood + photo rail) */
+import ThoughtsFeed from "./pages/ThoughtsFeed";
+
 const queryClient = new QueryClient();
 
 function UploadRoute() {
@@ -161,6 +164,11 @@ const App = () => (
               {/* Home */}
               <Route path="/home" element={<Explore />} />
               <Route path="/explore" element={<Navigate to="/home" replace />} />
+
+              {/* ✅ NEW: Thoughts feed (isolated from video feeds) */}
+              <Route path="/thoughts" element={<ThoughtsFeed />} />
+              {/* Optional alias */}
+              {/* <Route path="/feed" element={<Navigate to="/thoughts" replace />} /> */}
 
               <Route path="/about" element={<About />} />
               <Route path="/food" element={<Food />} />
