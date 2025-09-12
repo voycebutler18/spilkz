@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FollowButton } from "@/components/FollowButton";
+import FollowButton from "@/components/FollowButton"; // ✅ default import (fix)
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
@@ -402,7 +402,7 @@ export function VideoGrid({
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
 
-                {/* Views badge (keep/remove as you like) */}
+                {/* Views badge (remove if you don't want it) */}
                 <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-2 rounded-full border border-white/20 shadow-lg">
                   <Eye className="h-3.5 w-3.5 text-white" />
                   <span className="text-white font-bold text-xs tracking-wide">
