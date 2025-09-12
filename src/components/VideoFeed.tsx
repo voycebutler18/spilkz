@@ -17,8 +17,6 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-
-// Prewarmed feed from Splash
 import { useFeedStore } from "@/store/feedStore";
 
 /* ---------------- types ---------------- */
@@ -124,10 +122,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
   const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
 
+  // NEW: fade-in control — true when first frame is painted
+  const [frameReady, setFrameReady] = useState<Record<number, boolean>>({});
+
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  // pull any prewarmed feed the Splash page left in the store/session
+  // prewarmed feed
   const { feed: storeFeed } = useFeedStore();
 
   // 🔸 Batch preloading state
@@ -146,24 +147,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       const pauseState: Record<number, boolean> = {};
       const touch = isTouchDevice();
       ordered.forEach((_, index) => {
-        // 🔸 default to muted on touch devices for reliable autoplay
-        mutedState[index] = touch ? true : false;
+        mutedState[index] = touch ? true : false; // mobile default muted
         pauseState[index] = true;
       });
       setMuted(mutedState);
       setShowPauseButton(pauseState);
+      setFrameReady({}); // reset ready map
 
-      // force DOM reorder + scroll top
       setOrderEpoch((e) => e + 1);
       containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
     };
 
     const hydrateFromCacheIfPossible = (): Splik[] | null => {
-      // 1) Zustand store (set by Splash)
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
         return normalizeSpliks(storeFeed as Splik[]);
       }
-      // 2) session cache (set by Splash)
       try {
         const raw = sessionStorage.getItem("feed:cached");
         if (raw) {
@@ -192,13 +190,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       const cached = hydrateFromCacheIfPossible();
       if (cached && !cancelled) {
         setSpliks(cached);
-        setLoading(false); // critical: no initial spinner if cache exists
+        setLoading(false);
         primeUI(cached);
         backgroundRefresh();
         return;
       }
 
-      // No cache? do the network fetch
       setLoading(true);
       try {
         const { data, error } = await supabase
@@ -231,7 +228,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, storeFeed]);
 
   /* ---------- favorites realtime for this user ---------- */
@@ -284,7 +280,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const startIdx = batchIndex * BATCH_SIZE;
     const endIdx = Math.min(startIdx + BATCH_SIZE, spliks.length);
 
-    // Mark batch as (to be) loaded
     setLoadedBatches((prev) => {
       const ns = new Set(prev);
       ns.add(batchIndex);
@@ -345,12 +340,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const handleScroll = () => {
       const scrollTop = container.scrollTop;
       const containerHeight = container.clientHeight;
-
-      // Each section is 100svh (snap), so index ~ scrollTop / height
       const currentVideoIndex = Math.floor(scrollTop / containerHeight);
       const currentBatch = Math.floor(currentVideoIndex / BATCH_SIZE);
-
-      // Preload next batch when 75% through this batch
       const batchProgress = (currentVideoIndex % BATCH_SIZE) / BATCH_SIZE;
       if (batchProgress > 0.75) {
         const nextBatch = currentBatch + 1;
@@ -361,16 +352,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
 
     container.addEventListener("scroll", handleScroll, { passive: true });
-    // Preload first batch immediately
     preloadVideoBatch(0);
 
     return () => {
       container.removeEventListener("scroll", handleScroll);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spliks.length, loadedBatches, preloadingVideos]);
 
-  /* ========== Autoplay with flicker fixes (kept) ========== */
+  /* ========== Autoplay with flicker fixes + fade-in ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -400,24 +389,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
           muteOtherVideos(index);
 
-          // Mobile vs desktop preload mode
           video.setAttribute("playsinline", "true");
           // @ts-expect-error - iOS attr
           video.setAttribute("webkit-playsinline", "true");
           video.disablePictureInPicture = true;
           video.preload = isTouchDevice() ? "auto" : "metadata";
           video.crossOrigin = "anonymous";
+          video.muted = isTouchDevice() ? true : (muted[index] ?? false);
 
-          // Default mute on touch devices to satisfy autoplay
-          if (isTouchDevice()) {
-            video.muted = true;
-          } else {
-            video.muted = muted[index] ?? false;
-          }
+          // Only show video after a frame is painted
+          setFrameReady((prev) => ({ ...prev, [index]: false }));
 
-          // Seek slightly off 0 to avoid black frame flicker
+          const armSeekedOnce = () => {
+            const onSeeked = () => {
+              setFrameReady((prev) => ({ ...prev, [index]: true }));
+            };
+            video.addEventListener("seeked", onSeeked, { once: true });
+          };
+
           try {
             if (video.readyState >= 2 && video.currentTime === 0) {
+              armSeekedOnce();
               video.currentTime = resetAt;
             }
           } catch {}
@@ -425,6 +417,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const onTimeUpdate = () => {
             if (video.currentTime - startAt >= 3) {
               try {
+                armSeekedOnce();
                 video.currentTime = resetAt;
               } catch {}
             }
@@ -439,7 +432,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             setIsPlaying((prev) => ({ ...prev, [index]: true }));
             setShowPauseButton((prev) => ({ ...prev, [index]: true }));
           } catch {
-            // Try again muted if needed (some Android browsers)
             if (!video.muted) {
               video.muted = true;
               try {
@@ -449,13 +441,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 setIsPlaying((prev) => ({ ...prev, [index]: true }));
                 setShowPauseButton((prev) => ({ ...prev, [index]: true }));
               } catch {
-                // Show first frame at least
                 try {
+                  armSeekedOnce();
                   video.currentTime = resetAt;
                 } catch {}
               }
             } else {
               try {
+                armSeekedOnce();
                 video.currentTime = resetAt;
               } catch {}
             }
@@ -518,10 +511,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     } else {
       muteOtherVideos(index);
       try {
-        if (video.readyState >= 2 && video.currentTime === 0) video.currentTime = resetAt;
+        if (video.readyState >= 2 && video.currentTime === 0) {
+          setFrameReady((prev) => ({ ...prev, [index]: false }));
+          video.currentTime = resetAt;
+        }
       } catch {}
       video.muted = muted[index] ?? isTouchDevice();
-      video.play().catch(console.error);
+      video
+        .play()
+        .then(() => setFrameReady((prev) => ({ ...prev, [index]: true })))
+        .catch(console.error);
       setIsPlaying((prev) => ({ ...prev, [index]: true }));
       setShowPauseButton((prev) => ({ ...prev, [index]: true }));
     }
@@ -575,7 +574,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   /* ------------------------------ UI ------------------------------ */
   if (loading && spliks.length === 0) {
-    // Only show this if there was truly nothing cached
     return (
       <div className="flex justify-center items-center min-h-[40vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -594,6 +592,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const shouldShowPauseButton = showPauseButton[i] ?? true;
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
+          const ready = frameReady[i] ?? false;
 
           return (
             <section
@@ -626,6 +625,21 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 {/* video */}
                 <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
                   <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
+
+                  {/* Poster overlay stays until the first real frame is painted */}
+                  {s.thumbnail_url && (
+                    <img
+                      src={s.thumbnail_url}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+                      style={{
+                        opacity: ready ? 0 : 1,
+                        transition: "opacity 120ms linear",
+                        willChange: "opacity",
+                      }}
+                    />
+                  )}
+
                   <video
                     ref={(el) => {
                       videoRefs.current[i] = el;
@@ -636,7 +650,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         el.disablePictureInPicture = true;
                         el.preload = isTouchDevice() ? "auto" : "metadata";
                         el.crossOrigin = "anonymous";
-                        // default mute on touch; keep state on desktop
                         el.muted = muted[i] ?? isTouchDevice();
                       }
                     }}
@@ -647,23 +660,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     preload={isTouchDevice() ? "auto" : "metadata"}
                     muted={muted[i] ?? isTouchDevice()}
                     onLoadedData={() => {
-                      // Safe seek when we have current data (prevents black frame)
                       const v = videoRefs.current[i];
                       const startAt = Number(spliks[i]?.trim_start ?? 0);
                       const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
                       if (v && v.readyState >= 2 && v.currentTime === 0) {
+                        setFrameReady((p) => ({ ...p, [i]: false }));
+                        const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
+                        v.addEventListener("seeked", onSeeked, { once: true });
                         try {
                           v.currentTime = resetAt;
                         } catch {}
                       }
                     }}
                     onLoadedMetadata={() => {
-                      // Desktop can safely seek on metadata
                       if (!isTouchDevice()) {
                         const v = videoRefs.current[i];
                         const startAt = Number(spliks[i]?.trim_start ?? 0);
                         const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
                         if (v && v.currentTime === 0) {
+                          setFrameReady((p) => ({ ...p, [i]: false }));
+                          const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
+                          v.addEventListener("seeked", onSeeked, { once: true });
                           try {
                             v.currentTime = resetAt;
                           } catch {}
@@ -671,20 +688,31 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       }
                     }}
                     onCanPlayThrough={() => {
-                      // Mobile: fully buffered, now safe to seek
                       if (isTouchDevice()) {
                         const v = videoRefs.current[i];
                         const startAt = Number(spliks[i]?.trim_start ?? 0);
                         const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
                         if (v && v.currentTime === 0) {
+                          setFrameReady((p) => ({ ...p, [i]: false }));
+                          const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
+                          v.addEventListener("seeked", onSeeked, { once: true });
                           try {
                             v.currentTime = resetAt;
                           } catch {}
                         }
                       }
                     }}
+                    onPlay={() => setFrameReady((p) => ({ ...p, [i]: true }))}
                     onError={(e) => console.warn("video error", s.id, e)}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      backgroundColor: "transparent", // video itself transparent; container is black
+                      opacity: ready ? 1 : 0,
+                      transition: "opacity 120ms linear",
+                      willChange: "opacity",
+                    }}
                   />
 
                   {/* Center play/pause controls */}
