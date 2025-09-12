@@ -87,12 +87,29 @@ export default function RightSiteHighlights({
 
     const fallbackFromThoughts = async () => {
       const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+      // recent photos
       const { data: photos } = await supabase
         .from("thoughts_images")
         .select("id, post_id, path, created_at")
         .gt("created_at", sinceISO)
         .order("created_at", { ascending: false })
         .limit(limit);
+
+      // map photo -> post.owner (user_id)
+      const photoPostIds = Array.from(new Set((photos ?? []).map((p: any) => p.post_id)));
+      let ownerByPost: Record<string, string | null> = {};
+      if (photoPostIds.length) {
+        const { data: photoPosts } = await supabase
+          .from("thoughts_posts")
+          .select("id, user_id")
+          .in("id", photoPostIds);
+        (photoPosts ?? []).forEach((pp: any) => {
+          ownerByPost[pp.id] = pp.user_id ?? null;
+        });
+      }
+
+      // recent text posts
       const { data: posts } = await supabase
         .from("thoughts_posts")
         .select("id, user_id, text_content, mood, created_at")
@@ -102,7 +119,7 @@ export default function RightSiteHighlights({
 
       const photoItems: LocalItem[] = (photos ?? []).map((p: any) => ({
         id: p.id,
-        user_id: null,
+        user_id: null, // use owner_id below for images
         kind: "thought_image",
         route: `/thoughts/photos/${p.id}`,
         ref_table: "thoughts_images",
@@ -113,6 +130,7 @@ export default function RightSiteHighlights({
         created_at: p.created_at,
         expires_at: new Date(Date.parse(p.created_at) + 86400000).toISOString(),
         post_id: p.post_id,
+        owner_id: ownerByPost[p.post_id] ?? null, // ✅ ensure creator on photos
       }));
 
       const postItems: LocalItem[] = (posts ?? [])
@@ -515,7 +533,7 @@ export default function RightSiteHighlights({
               current.image_path!
             )}
             alt=""
-            className="max-h:[80vh] sm:max-h-[85vh] max-w-[92vw] object-contain rounded-xl shadow-2xl"
+            className="max-h-[85vh] max-w-[92vw] object-contain rounded-xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
 
