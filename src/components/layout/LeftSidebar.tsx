@@ -1,182 +1,118 @@
 // src/components/layout/LeftSidebar.tsx
 import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  Home,
+  Zap,
+  Compass,
+  Utensils,
+  Clapperboard,
+  Search,
+  User,
+  HelpCircle,
+  Info,
+} from "lucide-react";
 
-const LeftSidebar: React.FC = () => {
-  const [user, setUser] = React.useState<any>(null);
-  const location = useLocation();
+type NavItem = {
+  to: string;
+  label: string;
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  exact?: boolean;
+};
 
-  React.useEffect(() => {
-    let mounted = true;
+const NAV_MAIN: NavItem[] = [
+  { to: "/home", label: "Home", icon: Home, exact: true },
+  // ✅ Replaces old /vibes with /pulse
+  { to: "/pulse", label: "Pulse", icon: Zap },
+  { to: "/food", label: "Food", icon: Utensils },
+  { to: "/search", label: "Search", icon: Search },
+];
 
-    const load = async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!mounted) return;
-      setUser(data.user ?? null);
-    };
-    load();
+const NAV_EXPLORE: NavItem[] = [
+  { to: "/splik/featured", label: "Featured", icon: Clapperboard },
+  { to: "/profile/me", label: "My Profile", icon: User },
+];
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
-    });
+const NAV_SUPPORT: NavItem[] = [
+  { to: "/help", label: "Help Center", icon: HelpCircle },
+  { to: "/about", label: "About", icon: Info },
+];
 
-    return () => {
-      mounted = false;
-      sub?.subscription?.unsubscribe();
-    };
-  }, []);
+function useIsActive() {
+  const { pathname } = useLocation();
+  return React.useCallback(
+    (to: string, exact?: boolean) =>
+      exact ? pathname === to : pathname === to || pathname.startsWith(to),
+    [pathname]
+  );
+}
 
-  // helper for active highlight
-  const isActive = (path: string) =>
-    location.pathname === path || location.pathname.startsWith(path + "/");
+function Section({
+  title,
+  items,
+}: {
+  title?: string;
+  items: NavItem[];
+}) {
+  const isActive = useIsActive();
+  return (
+    <div className="space-y-1">
+      {title ? (
+        <div className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </div>
+      ) : null}
+      <nav className="px-2">
+        {items.map(({ to, label, icon: Icon, exact }) => {
+          const active = isActive(to, exact);
+          return (
+            <Link
+              key={to}
+              to={to}
+              className={cn(
+                "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",
+                "hover:bg-accent hover:text-accent-foreground",
+                active && "bg-accent text-accent-foreground"
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              <span className="truncate">{label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
 
-  // 🔒 Hide Messages link for now; toggle to true to bring it back.
-  const SHOW_MESSAGES = false;
-
+export default function LeftSidebar() {
   return (
     <aside
-      className="
-        hidden md:flex
-        sticky top-14
-        h-[calc(100svh-56px)] w-[260px]
-        flex-shrink-0
-        border-r border-border/60
-        bg-background/40 backdrop-blur-sm
-        overflow-y-auto overscroll-contain
-      "
-      aria-label="Left navigation"
+      className={cn(
+        "hidden lg:flex lg:flex-col",
+        "w-64 shrink-0 border-r border-border/60 bg-background/80 backdrop-blur"
+      )}
     >
-      <div className="w-full px-3 py-3">
-        {/* Browse */}
-        <div className="border-b border-border/60 pb-3 text-[11px] uppercase tracking-wide text-muted-foreground">
-          Browse
-        </div>
+      {/* App brand / logo area */}
+      <div className="px-4 py-4 border-b border-border/60">
+        <Link to="/home" className="inline-flex items-center gap-2">
+          <Compass className="h-5 w-5 text-primary" />
+          <span className="text-base font-semibold">Splikz</span>
+        </Link>
+      </div>
 
-        <nav className="mt-3 space-y-1">
-          {/* RENAMED: Discover -> Home */}
-          <Link
-            to="/home"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/home") && "bg-white/10 font-medium"
-            )}
-          >
-            Home
-          </Link>
+      {/* Nav */}
+      <div className="flex-1 overflow-y-auto py-3 space-y-4">
+        <Section items={NAV_MAIN} />
+        <Section title="Explore" items={NAV_EXPLORE} />
+        <Section title="Support" items={NAV_SUPPORT} />
+      </div>
 
-          {/* NEW: Vibes (text-only posts) */}
-          <Link
-            to="/vibes"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/vibes") && "bg-white/10 font-medium"
-            )}
-          >
-            ✍️ Vibes
-          </Link>
-
-          <Link
-            to="/food"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/food") && "bg-white/10 font-medium"
-            )}
-          >
-            Food
-          </Link>
-
-          {/* NEW: Daily Prayers */}
-          <Link
-            to="/prayers"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/prayers") && "bg-white/10 font-medium"
-            )}
-          >
-            🙏 Daily Prayers
-          </Link>
-
-          {/* Splikz Dating (coming soon) — desktop/tablet only */}
-          <div
-            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 hover:bg-white/5 cursor-not-allowed select-none"
-            aria-disabled="true"
-            title="Splikz Dating is coming soon"
-          >
-            <span>Splikz Dating</span>
-            <Badge variant="secondary" className="text-[10px]">
-              Coming soon
-            </Badge>
-          </div>
-
-          <Link
-            to="/brands"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/brands") && "bg-white/10 font-medium"
-            )}
-          >
-            For Brands
-          </Link>
-          <Link
-            to="/help"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/help") && "bg-white/10 font-medium"
-            )}
-          >
-            Help
-          </Link>
-          <Link
-            to="/about"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/about") && "bg-white/10 font-medium"
-            )}
-          >
-            About
-          </Link>
-        </nav>
-
-        {/* Me */}
-        {user && (
-          <>
-            <div className="mt-5 text-[11px] uppercase tracking-wide text-muted-foreground">
-              Me
-            </div>
-            <nav className="mt-1 space-y-1">
-              <Link
-                to="/dashboard/favorites"
-                className={cn(
-                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-                  isActive("/dashboard/favorites") && "bg-white/10 font-medium"
-                )}
-              >
-                My Favorites
-              </Link>
-
-              {/* Messages link hidden while SHOW_MESSAGES is false */}
-              {SHOW_MESSAGES && (
-                <Link
-                  to="/messages"
-                  className={cn(
-                    "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-                    isActive("/messages") && "bg-white/10 font-medium"
-                  )}
-                >
-                  Messages
-                </Link>
-              )}
-            </nav>
-          </>
-        )}
-
-        <div className="pb-6" />
+      {/* Footer note or version */}
+      <div className="px-4 py-3 border-t border-border/60 text-xs text-muted-foreground">
+        © {new Date().getFullYear()} Splikz
       </div>
     </aside>
   );
-};
-
-export default LeftSidebar;
+}
