@@ -1,3 +1,4 @@
+
 // src/components/splik/SplikCard.tsx
 import * as React from "react";
 import { Link } from "react-router-dom";
@@ -95,18 +96,11 @@ export default function SplikCard({
       playAttempts++;
       
       try {
-        // Ensure video is ready
+        // Ensure video is loaded
         if (vid.readyState < 2) {
           vid.load();
-          // Wait for metadata to load
-          await new Promise((resolve) => {
-            const onLoadedMetadata = () => {
-              vid.removeEventListener('loadedmetadata', onLoadedMetadata);
-              resolve(void 0);
-            };
-            vid.addEventListener('loadedmetadata', onLoadedMetadata);
-            setTimeout(resolve, 500); // Timeout fallback
-          });
+          // Wait a bit for load
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
         
         // Force muted for autoplay compliance
@@ -119,15 +113,15 @@ export default function SplikCard({
       } catch (err) {
         // Enhanced fallback strategy
         try {
-          // Second attempt with slight delay
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Second attempt with explicit muted and slight delay
+          await new Promise(resolve => setTimeout(resolve, 50));
           vid.muted = true;
           vid.volume = 0;
           await vid.play();
           setIsPlaying(true);
           playAttempts = 0;
         } catch (secondErr) {
-          // Third attempt: reset current time and retry
+          // Third attempt: reset and retry
           try {
             vid.currentTime = 0;
             vid.muted = true;
@@ -216,7 +210,6 @@ export default function SplikCard({
       el.removeEventListener("touchend", onTap);
       vid.removeEventListener("loadeddata", onLoaded);
       vid.removeEventListener("canplay", onCanPlay);
-      vid.removeEventListener("volumechange", onVolumeChange);
       vid.removeEventListener("stalled", () => tryPlay());
       vid.removeEventListener("waiting", () => tryPlay());
       pause();
