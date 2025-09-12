@@ -12,7 +12,6 @@ import {
   MessageCircle,
   Share2,
   Trash2,
-  Eye,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,14 +24,14 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import FollowButton from "@/components/FollowButton"; // ✅ default import (fix)
+import FollowButton from "@/components/FollowButton";
 import DeleteSplikButton from "@/components/dashboard/DeleteSplikButton";
 
 interface Profile {
   username: string | null;
   display_name: string | null;
-  first_name?: string | null;   // ✅ allow first/last name
-  last_name?: string | null;    // ✅
+  first_name?: string | null;
+  last_name?: string | null;
   avatar_url?: string | null;
 }
 
@@ -67,9 +66,9 @@ export function VideoGrid({
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
 
-  // Central place for counts we render
+  // Central place for counts we render (removed views)
   const [videoStats, setVideoStats] = useState<{
-    [id: string]: { views: number; likes: number; comments: number };
+    [id: string]: { likes: number; comments: number };
   }>({});
 
   // Comments modal state
@@ -97,11 +96,10 @@ export function VideoGrid({
   }, []);
 
   useEffect(() => {
-    // seed stats for each card
+    // seed stats for each card (removed views)
     const stats: any = {};
     spliks.forEach((s) => {
       stats[s.id] = {
-        views: s.views || 0,
         likes: s.likes_count || 0,
         comments: s.comments_count || 0,
       };
@@ -109,7 +107,7 @@ export function VideoGrid({
     setVideoStats(stats);
     checkLikedStatus();
 
-    // keep in sync with spliks table updates (likes/comments/views)
+    // keep in sync with spliks table updates (likes/comments only)
     const channel = supabase
       .channel("video-grid-updates")
       .on(
@@ -120,7 +118,6 @@ export function VideoGrid({
           setVideoStats((prev) => ({
             ...prev,
             [n.id]: {
-              views: n.views || 0,
               likes: n.likes_count || 0,
               comments: n.comments_count || 0,
             },
@@ -161,28 +158,15 @@ export function VideoGrid({
       video.play();
       setPlayingVideo(splikId);
 
-      // view RPC (keep your existing function)
+      // Still track views in backend but don't show them
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const result = await supabase.rpc("increment_view_with_session", {
+      await supabase.rpc("increment_view_with_session", {
         p_splik_id: splikId,
         p_session_id: sessionIdRef.current,
         p_viewer_id: user?.id || null,
       });
-
-      if (result.data) {
-        const viewData = result.data as any;
-        if (viewData.new_view && viewData.view_count) {
-          setVideoStats((prev) => ({
-            ...prev,
-            [splikId]: {
-              ...prev[splikId],
-              views: viewData.view_count,
-            },
-          }));
-        }
-      }
     }
   };
 
@@ -244,7 +228,7 @@ export function VideoGrid({
           profiles!comments_user_id_fkey (
             username,
             display_name,
-            first_name,        -- ✅ include first/last for fallback
+            first_name,
             last_name,
             avatar_url
           )
@@ -262,7 +246,7 @@ export function VideoGrid({
     }
   };
 
-  // 🔴 live comments while open
+  // live comments while open
   useEffect(() => {
     if (commentsChannelRef.current) {
       try {
@@ -395,7 +379,7 @@ export function VideoGrid({
           const isOwner = currentUserId === splik.user_id;
           const creator = splik.profiles;
           const creatorName = nameOf(creator);
-          const creatorHref = `/creator/${creator?.username || splik.user_id}`; // ✅ route to creator page
+          const creatorHref = `/creator/${creator?.username || splik.user_id}`;
 
           return (
             <Card
@@ -416,15 +400,6 @@ export function VideoGrid({
                   playsInline
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
-
-                {/* Views badge (remove if you don't want it) */}
-                <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-2 rounded-full border border-white/20 shadow-lg">
-                  <Eye className="h-3.5 w-3.5 text-white" />
-                  <span className="text-white font-bold text-xs tracking-wide">
-                    {(videoStats[splik.id]?.views || splik.views || 0).toLocaleString()}
-                  </span>
-                  <div className="w-2 h-2 bg-gradient-to-r from-red-500 to-pink-500 rounded-full animate-pulse shadow-lg" />
-                </div>
 
                 {/* Play/Pause overlay */}
                 <div
@@ -510,20 +485,14 @@ export function VideoGrid({
                   </p>
                 )}
 
-                {/* Counts row */}
-                <div className="flex items-center justify-between text-xs font-medium">
-                  <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
-                    <Eye className="h-3 w-3" />
-                    <span>
-                      {(videoStats[splik.id]?.views || 0).toLocaleString()} views
-                    </span>
-                  </div>
+                {/* Time only (no views) */}
+                <div className="flex items-center justify-end text-xs font-medium">
                   <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
                     {formatTime(splik.created_at)}
                   </span>
                 </div>
 
-                {/* Action buttons — FOLLOW added here so it shows even when showCreatorInfo=false */}
+                {/* Action buttons */}
                 <div className="flex items-center gap-2 pt-2">
                   <FollowButton
                     profileId={splik.user_id}
