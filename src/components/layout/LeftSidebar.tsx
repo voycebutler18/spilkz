@@ -38,7 +38,7 @@ const LeftSidebar: React.FC = () => {
       className="
         hidden md:flex
         sticky top-14
-        h:[calc(100svh-56px)] h-[calc(100svh-56px)] w-[260px]
+        h-[calc(100svh-56px)] w-[260px]
         flex-shrink-0
         border-r border-border/60
         bg-background/40 backdrop-blur-sm
@@ -53,7 +53,7 @@ const LeftSidebar: React.FC = () => {
         </div>
 
         <nav className="mt-3 space-y-1">
-          {/* RENAMED: Discover -> Home */}
+          {/* Home */}
           <Link
             to="/home"
             className={cn(
@@ -64,23 +64,7 @@ const LeftSidebar: React.FC = () => {
             Home
           </Link>
 
-          {/* ✅ NEW: Thoughts (text + mood feed with photo rail) */}
-          <Link
-            to="/thoughts"
-            className={cn(
-              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-              isActive("/thoughts") && "bg-white/10 font-medium"
-            )}
-            title="Share thoughts and browse the photo rail"
-          >
-            💭 Thoughts
-            <Badge
-              variant="secondary"
-              className="ml-2 align-middle text-[10px]"
-            >
-              New
-            </Badge>
-          </Link>
+          {/* Thoughts link removed */}
 
           <Link
             to="/food"
@@ -92,7 +76,7 @@ const LeftSidebar: React.FC = () => {
             Food
           </Link>
 
-          {/* NEW: Daily Prayers */}
+          {/* Daily Prayers */}
           <Link
             to="/prayers"
             className={cn(
