@@ -666,15 +666,6 @@ export default function Food() {
         }}
       >
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl">
-          {/* EXIT BUTTON (top-right) */}
-          <button
-            onClick={() => setNearbyOpen(false)}
-            className="absolute right-3 top-3 inline-flex items-center justify-center rounded-full p-2 text-white/80 hover:text-white hover:bg-white/10 transition"
-            aria-label="Close"
-            type="button"
-          >
-            <X className="h-5 w-5" />
-          </button>
 
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20"></div>
 
