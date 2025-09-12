@@ -95,11 +95,18 @@ export default function SplikCard({
       playAttempts++;
       
       try {
-        // Ensure video is loaded
+        // Ensure video is ready
         if (vid.readyState < 2) {
           vid.load();
-          // Wait a bit for load
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Wait for metadata to load
+          await new Promise((resolve) => {
+            const onLoadedMetadata = () => {
+              vid.removeEventListener('loadedmetadata', onLoadedMetadata);
+              resolve(void 0);
+            };
+            vid.addEventListener('loadedmetadata', onLoadedMetadata);
+            setTimeout(resolve, 500); // Timeout fallback
+          });
         }
         
         // Force muted for autoplay compliance
@@ -112,15 +119,15 @@ export default function SplikCard({
       } catch (err) {
         // Enhanced fallback strategy
         try {
-          // Second attempt with explicit muted and slight delay
-          await new Promise(resolve => setTimeout(resolve, 50));
+          // Second attempt with slight delay
+          await new Promise(resolve => setTimeout(resolve, 100));
           vid.muted = true;
           vid.volume = 0;
           await vid.play();
           setIsPlaying(true);
           playAttempts = 0;
         } catch (secondErr) {
-          // Third attempt: reset and retry
+          // Third attempt: reset current time and retry
           try {
             vid.currentTime = 0;
             vid.muted = true;
