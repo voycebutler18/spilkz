@@ -7,9 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-// ⬇️ Removed Header/Footer imports
-// import Header from "@/components/layout/Header";
-// import Footer from "@/components/layout/Footer";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
@@ -20,6 +17,8 @@ interface Profile {
   id: string;
   username: string | null;
   display_name: string | null;
+  first_name?: string | null;   // ✅ new
+  last_name?: string | null;    // ✅ new
   bio: string | null;
   avatar_url: string | null;
   city: string | null;
@@ -190,7 +189,6 @@ export default function CreatorProfile() {
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
-      // 🔁 listen to hype_reactions (NOT likes) to refresh the "Liked" tab
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "hype_reactions", filter: `user_id=eq.${profile.id}` },
@@ -232,7 +230,7 @@ export default function CreatorProfile() {
         (data || []).map(async (s) => {
           const { data: p } = await supabase
             .from("profiles")
-            .select("username, display_name, avatar_url")
+            .select("username, display_name, first_name, last_name, avatar_url") // ✅ include names
             .eq("id", s.user_id)
             .maybeSingle();
           return { ...s, profiles: p || undefined };
@@ -277,7 +275,7 @@ export default function CreatorProfile() {
         (splikRows || []).map(async (s) => {
           const { data: p } = await supabase
             .from("profiles")
-            .select("username, display_name, avatar_url")
+            .select("username, display_name, first_name, last_name, avatar_url") // ✅ include names
             .eq("id", s.user_id)
             .maybeSingle();
           return { ...s, profiles: p || undefined };
@@ -351,11 +349,9 @@ export default function CreatorProfile() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        {/* Header removed – AppLayout provides it */}
         <div className="flex items-center justify-center py-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-        {/* Footer removed – AppLayout provides it */}
       </div>
     );
   }
@@ -374,12 +370,14 @@ export default function CreatorProfile() {
     );
   }
 
-  const nameOrUsername = profile.display_name || profile.username || "User";
+  // ✅ Strong fallback: display_name → first+last → username → "User"
+  const fullName =
+    [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  const nameOrUsername =
+    profile.display_name || fullName || profile.username || "User";
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header removed – AppLayout provides it */}
-
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Card className="mb-8 p-6">
           <div className="flex flex-col md:flex-row gap-6">
@@ -584,8 +582,6 @@ export default function CreatorProfile() {
         isPrivate={profile.following_private || false}
         isOwnProfile={currentUserId === profile.id}
       />
-
-      {/* Footer removed – AppLayout provides it */}
     </div>
   );
 }
