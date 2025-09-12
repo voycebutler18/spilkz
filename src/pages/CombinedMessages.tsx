@@ -311,7 +311,7 @@ export default function CombinedMessages() {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       arr = arr.filter((t) => {
-        const name = t.partner?.display_name || t.partner?.username || t.partnerId;
+        const name = getDisplayName(t.partner);
         return name?.toLowerCase().includes(q) || t.lastMessage?.body?.toLowerCase().includes(q);
       });
     }
@@ -395,10 +395,20 @@ export default function CombinedMessages() {
     return d.toLocaleDateString();
   };
 
+  // Helper function to get display name for a user
+  const getDisplayName = (profile: ProfileLite | null, userId?: string) => {
+    if (!profile && !userId) return "User";
+    if (!profile && userId) {
+      // If we don't have profile data but have userId, try to get it from profiles
+      const p = profiles[userId];
+      return p?.display_name || p?.username || "User";
+    }
+    return profile?.display_name || profile?.username || "User";
+  };
+
   const nameFor = (userId: string) => {
     if (userId === me) return "You";
-    const profile = profiles[userId];
-    return profile?.display_name || profile?.username || "User";
+    return getDisplayName(profiles[userId], userId);
   };
 
   const otherProfile = profiles[otherId as string] || null;
@@ -479,7 +489,7 @@ export default function CombinedMessages() {
                 </div>
               ) : (
                 threads.map((t) => {
-                  const name = t.partner?.display_name || t.partner?.username || "User";
+                  const name = getDisplayName(t.partner, t.partnerId);
                   const avatar = t.partner?.avatar_url || null;
                   const last = t.lastMessage?.body?.trim() || "";
                   const when = formatWhen(t.lastMessage?.created_at);
