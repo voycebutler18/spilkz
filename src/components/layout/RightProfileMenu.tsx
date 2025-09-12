@@ -1,106 +1,59 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuLabel,
-} from "@/components/ui/dropdown-menu";
-import { User, Star, LayoutDashboard, LogOut } from "lucide-react";
+import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
+import VideoFeed from "@/components/ui/VideoFeed";
+import { useToast } from "@/components/ui/use-toast";
+import RightPhotoRail from "@/components/thoughts/RightPhotoRail"; // ⬅️ add
 
-type LiteProfile = { id: string; username: string | null; display_name: string | null; avatar_url: string | null };
-
-export default function RightProfileMenu() {
-  const [authed, setAuthed] = useState(false);
-  const [prof, setProf] = useState<LiteProfile | null>(null);
-  const navigate = useNavigate();
+export default function Index() {
+  const [user, setUser] = useState<any>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     let mounted = true;
-
-    const load = async () => {
-      const { data } = await supabase.auth.getUser();
-      const user = data.user;
-      setAuthed(!!user);
-      if (user) {
-        const { data: p } = await supabase
-          .from("profiles")
-          .select("id,username,display_name,avatar_url")
-          .eq("id", user.id)
-          .maybeSingle();
-        if (mounted) setProf((p as LiteProfile) || null);
-      }
-    };
-    load();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
-      setAuthed(!!s?.user);
-      if (!s?.user) setProf(null);
-      else load();
+    supabase.auth.getUser().then(({ data }) => mounted && setUser(data.user ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (mounted) setUser(session?.user ?? null);
     });
-
-    return () => sub?.subscription?.unsubscribe();
+    return () => { mounted = false; sub?.subscription.unsubscribe(); };
   }, []);
 
-  const profilePath =
-    prof?.username ? `/creator/${prof.username}` : prof?.id ? `/profile/${prof.id}` : "/login";
-
-  const go = (path: string) => navigate(path);
-
-  const onSignOut = async () => {
-    await supabase.auth.signOut();
-    navigate("/");
+  const openUpload = () => {
+    if (!user) {
+      toast({ title: "Sign in required", description: "Please sign in to upload videos", variant: "destructive" });
+      return;
+    }
+    setUploadOpen(true);
   };
 
-  if (!authed) {
-    return (
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => go("/login")}>Log in</Button>
-        <Button size="sm" onClick={() => go("/signup")}>Sign up</Button>
-      </div>
-    );
-  }
-
-  const initial = (prof?.display_name || prof?.username || "U").charAt(0).toUpperCase();
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        {/* avatar-like trigger; on mobile this replaces the extra hamburger */}
-        <Button variant="ghost" size="icon" className="rounded-full w-9 h-9">
-          {prof?.avatar_url ? (
-            <img src={prof.avatar_url} alt="me" className="w-9 h-9 rounded-full object-cover" />
-          ) : (
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-white/10 text-sm font-semibold">
-              {initial}
-            </span>
-          )}
-        </Button>
-      </DropdownMenuTrigger>
+    <div className="min-h-[100svh] bg-neutral-950 text-neutral-100">
+      {/* Header */}
+      <div className="max-w-[110rem] mx-auto px-3 sm:px-4 md:px-6 py-4 flex items-center justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">Home</h1>
+        <Button onClick={openUpload}>Upload</Button>
+      </div>
 
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel className="truncate">
-          {prof?.display_name || prof?.username || "Your account"}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => go(profilePath)}>
-          <User className="w-4 h-4 mr-2" /> Profile
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => go("/dashboard/favorites")}>
-          <Star className="w-4 h-4 mr-2" /> Favorites
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => go("/dashboard")}>
-          <LayoutDashboard className="w-4 h-4 mr-2" /> Creator Dashboard
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onSignOut}>
-          <LogOut className="w-4 h-4 mr-2" /> Sign out
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      {/* Grid: main + right rail (desktop), single column on mobile */}
+      <div className="max-w-[110rem] mx-auto px-3 sm:px-4 md:px-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-4 md:gap-6 pb-10">
+        <div>
+          <VideoFeed user={user} />
+        </div>
+        <RightPhotoRail /> {/* shows latest photos from Thoughts */}
+      </div>
+
+      {user && (
+        <VideoUploadModal
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          onUploadComplete={() => {
+            setUploadOpen(false);
+            toast({ title: "Upload successful!", description: "Your video is live in the feed." });
+          }}
+        />
+      )}
+    </div>
   );
 }
