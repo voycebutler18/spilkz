@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import FollowButton from "@/components/FollowButton"; // ✅ show Follow on every card
+import FollowButton from "@/components/FollowButton";
 
 type Profile = {
   id: string;
@@ -30,9 +30,7 @@ type Splik = {
 type Props = {
   splik: Splik;
   index?: number;
-  /** Parent can gate which ones attach a real src */
   shouldLoad?: boolean;
-  /** Parent can track which is "active" in viewport */
   onPrimaryVisible?: (index: number) => void;
   onSplik?: () => void;
   onReact?: () => void;
@@ -63,7 +61,9 @@ export default function SplikCard({
   const [isSaved, setIsSaved] = React.useState<boolean>(false);
   const [loadingCounts, setLoadingCounts] = React.useState(false);
 
-  // keep user in sync
+  // 🔹 Local profile fallback (in case feed didn't attach profile)
+  const [loadedProfile, setLoadedProfile] = React.useState<Profile | null>(null);
+
   React.useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
@@ -72,7 +72,24 @@ export default function SplikCard({
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // ——— Autoplay / visibility control (fixed & mobile-safe) ———
+  // If the card didn't receive a profile with username/display_name, fetch it once.
+  React.useEffect(() => {
+    if (splik.profile?.username || splik.profile?.display_name) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .eq("id", splik.user_id)
+        .maybeSingle<Profile>();
+      if (!cancelled && data) setLoadedProfile(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [splik.user_id, splik.profile?.username, splik.profile?.display_name]);
+
+  // ——— Autoplay / visibility control ———
   React.useEffect(() => {
     const el = cardRef.current;
     const vid = videoRef.current;
@@ -82,13 +99,12 @@ export default function SplikCard({
     let visible = false;
     let trying = false;
 
-    // Mobile-safe defaults
     vid.playsInline = true;
     (vid as any).webkitPlaysInline = true;
     vid.setAttribute("playsinline", "true");
     vid.setAttribute("webkit-playsinline", "true");
     vid.preload = "auto";
-    vid.muted = true; // start muted for autoplay compliance
+    vid.muted = true;
     setIsMuted(true);
 
     const pause = () => {
@@ -100,9 +116,7 @@ export default function SplikCard({
       if (destroyed || !visible || !shouldLoad) return;
       if (trying && !force) return;
       trying = true;
-
       try {
-        // Nudge iOS to paint the first frame (prevents black flicker)
         if (vid.readyState < 2 && vid.currentTime === 0) {
           try { vid.currentTime = 0.01; } catch {}
           await new Promise(r => setTimeout(r, 50));
@@ -110,7 +124,6 @@ export default function SplikCard({
         await vid.play();
         setIsPlaying(true);
       } catch {
-        // Fall back to manual controls if blocked
         vid.controls = true;
         setIsPlaying(false);
       } finally {
@@ -118,7 +131,6 @@ export default function SplikCard({
       }
     };
 
-    // Stable handler refs (so cleanup actually removes them)
     const handleLoadedData = () => {
       if (vid.currentTime === 0) {
         try { vid.currentTime = 0.01; } catch {}
@@ -170,28 +182,20 @@ export default function SplikCard({
     };
   }, [index, onPrimaryVisible, shouldLoad]);
 
-  // ——————————— Load hype count and user interaction state ———————————
+  // ——— Counts & user interactions ———
   React.useEffect(() => {
     let cancelled = false;
-
     const loadData = async () => {
       if (!splik?.id) return;
       setLoadingCounts(true);
-
       try {
-        // Get hype count
         const { count: hypeCountResult } = await supabase
           .from("hype_reactions")
           .select("*", { head: true, count: "exact" })
           .eq("splik_id", splik.id);
+        if (!cancelled && typeof hypeCountResult === "number") setHypeCount(hypeCountResult);
 
-        if (!cancelled && typeof hypeCountResult === "number") {
-          setHypeCount(hypeCountResult);
-        }
-
-        // Check user's interactions if logged in
         if (user?.id) {
-          // Hype
           const { data: hypeData } = await supabase
             .from("hype_reactions")
             .select("id")
@@ -200,7 +204,6 @@ export default function SplikCard({
             .maybeSingle();
           if (!cancelled) setHasHyped(!!hypeData);
 
-          // Save
           const { data: saveData } = await supabase
             .from("favorites")
             .select("id")
@@ -209,13 +212,12 @@ export default function SplikCard({
             .maybeSingle();
           if (!cancelled) setIsSaved(!!saveData);
         }
-      } catch (error) {
-        console.error("Error loading splik data:", error);
+      } catch (e) {
+        console.error("Error loading splik data:", e);
       } finally {
         if (!cancelled) setLoadingCounts(false);
       }
     };
-
     loadData();
     return () => { cancelled = true; };
   }, [splik?.id, user?.id]);
@@ -227,11 +229,7 @@ export default function SplikCard({
       setUser(data.user);
       return data.user;
     }
-    toast({
-      title: "Sign in required",
-      description: "Please log in to react or save.",
-      variant: "default",
-    });
+    toast({ title: "Sign in required", description: "Please log in to react or save." });
     throw new Error("auth_required");
   };
 
@@ -244,25 +242,18 @@ export default function SplikCard({
         .eq("splik_id", splik.id)
         .eq("user_id", u.id)
         .maybeSingle();
-
       if (existingHype?.id) {
         await supabase.from("hype_reactions").delete().eq("id", existingHype.id);
         setHasHyped(false);
-        setHypeCount((prev) => Math.max(0, prev - 1));
+        setHypeCount((n) => Math.max(0, n - 1));
       } else {
-        await supabase
-          .from("hype_reactions")
-          .insert({ splik_id: splik.id, user_id: u.id, amount: 1 });
+        await supabase.from("hype_reactions").insert({ splik_id: splik.id, user_id: u.id, amount: 1 });
         setHasHyped(true);
-        setHypeCount((prev) => prev + 1);
+        setHypeCount((n) => n + 1);
       }
-    } catch (error: any) {
-      if (error?.message !== "auth_required") {
-        toast({
-          title: "Couldn't update hype",
-          description: "Please try again",
-          variant: "destructive",
-        });
+    } catch (e: any) {
+      if (e?.message !== "auth_required") {
+        toast({ title: "Couldn't update hype", description: "Please try again", variant: "destructive" });
       }
     }
   };
@@ -276,26 +267,16 @@ export default function SplikCard({
         .eq("video_id", splik.id)
         .eq("user_id", u.id)
         .maybeSingle();
-
       if (existingSave?.id) {
         await supabase.from("favorites").delete().eq("id", existingSave.id);
         setIsSaved(false);
-        toast({ title: "Removed from favorites" });
       } else {
-        await supabase.from("favorites").insert({
-          video_id: splik.id,
-          user_id: u.id,
-        });
+        await supabase.from("favorites").insert({ video_id: splik.id, user_id: u.id });
         setIsSaved(true);
-        toast({ title: "Saved to favorites" });
       }
-    } catch (error: any) {
-      if (error?.message !== "auth_required") {
-        toast({
-          title: "Couldn't save",
-          description: "Please try again",
-          variant: "destructive",
-        });
+    } catch (e: any) {
+      if (e?.message !== "auth_required") {
+        toast({ title: "Couldn't save", description: "Please try again", variant: "destructive" });
       }
     }
   };
@@ -303,15 +284,11 @@ export default function SplikCard({
   const onToggleMute = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
     const v = videoRef.current;
     if (!v) return;
-
-    const nextMuted = !v.muted; // use the video's current state
+    const nextMuted = !v.muted;
     v.muted = nextMuted;
     setIsMuted(nextMuted);
-
-    // If unmuting, try to play if not already
     if (!nextMuted && !isPlaying) {
       v.play().catch(() => {
         v.muted = true;
@@ -320,10 +297,12 @@ export default function SplikCard({
     }
   };
 
-  // Build creator profile link
-  const creatorHref = splik?.profile?.username
-    ? `/profile/${splik.profile.id}`
-    : `/profile/${splik.user_id}`;
+  // ✅ Reliable creator info (attached or fetched)
+  const profile: Profile | null = splik.profile || loadedProfile || null;
+  const name = profile?.display_name || profile?.username || "User";
+  const avatarUrl =
+    profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${splik.user_id}`;
+  const creatorHref = `/creator/${profile?.username || splik.user_id}`;
 
   return (
     <div ref={cardRef} className="rounded-xl bg-card/60 ring-1 ring-border/60 overflow-hidden">
@@ -346,17 +325,11 @@ export default function SplikCard({
             e.stopPropagation();
             const v = videoRef.current;
             if (!v) return;
-
             if (isPlaying) {
               v.pause();
               setIsPlaying(false);
             } else {
-              v.play()
-                .then(() => setIsPlaying(true))
-                .catch(() => {
-                  // Enable controls as fallback
-                  v.controls = true;
-                });
+              v.play().then(() => setIsPlaying(true)).catch(() => (v.controls = true));
             }
           }}
           onPlay={() => setIsPlaying(true)}
@@ -365,13 +338,13 @@ export default function SplikCard({
           onError={() => {
             const v = videoRef.current;
             if (v) {
-              v.controls = true; // user can still try
+              v.controls = true;
               console.error("Video failed to load:", splik.video_url);
             }
           }}
         />
 
-        {/* Mute/Unmute button */}
+        {/* Mute/Unmute */}
         <button
           onClick={onToggleMute}
           className="absolute right-3 bottom-3 rounded-full bg-black/70 hover:bg-black/80 p-2 ring-1 ring-white/30 transition-colors"
@@ -385,46 +358,33 @@ export default function SplikCard({
       <div className="flex items-center gap-3 px-4 pt-3">
         <Link to={creatorHref} className="shrink-0 hover:opacity-80 transition-opacity">
           <img
-            src={
-              splik.profile?.avatar_url ||
-              `https://api.dicebear.com/7.x/avataaars/svg?seed=${splik.user_id}`
-            }
-            alt={splik.profile?.display_name || splik.profile?.username || "Creator"}
+            src={avatarUrl}
+            alt={name}
             className="h-9 w-9 rounded-full ring-2 ring-primary/20 object-cover"
           />
         </Link>
         <div className="min-w-0 flex-1">
-          <Link
-            to={creatorHref}
-            className="block font-medium hover:text-primary transition-colors truncate"
-          >
-            {splik.profile?.display_name || splik.profile?.username || "Creator"}
+          <Link to={creatorHref} className="block font-medium hover:text-primary transition-colors truncate">
+            {name}
           </Link>
-          {splik.title && (
-            <p className="text-sm text-muted-foreground truncate">{splik.title}</p>
-          )}
+          {splik.title && <p className="text-sm text-muted-foreground truncate">{splik.title}</p>}
         </div>
       </div>
 
       {/* Actions */}
       <div className="px-4 pb-4 pt-3">
         <div className="flex items-center gap-2">
-          {/* ✅ Follow (new) */}
           <FollowButton
             profileId={splik.user_id}
-            username={splik.profile?.username || undefined}
+            username={profile?.username || undefined}
             size="sm"
             variant="outline"
           />
 
-          {/* Hype */}
           <Button
             variant={hasHyped ? "default" : "outline"}
             size="sm"
-            className={cn(
-              "gap-2 transition-colors",
-              hasHyped && "bg-orange-500 hover:bg-orange-600 text-white"
-            )}
+            className={cn("gap-2 transition-colors", hasHyped && "bg-orange-500 hover:bg-orange-600 text-white")}
             onClick={toggleHype}
             disabled={loadingCounts}
           >
@@ -432,14 +392,7 @@ export default function SplikCard({
             {hypeCount}
           </Button>
 
-          {/* Save */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={toggleSave}
-            disabled={loadingCounts}
-          >
+          <Button variant="outline" size="sm" className="gap-2" onClick={toggleSave} disabled={loadingCounts}>
             {isSaved ? (
               <>
                 <BookmarkCheck className="h-4 w-4" />
@@ -453,7 +406,6 @@ export default function SplikCard({
             )}
           </Button>
 
-          {/* Share */}
           <div className="ml-auto">
             <Button variant="outline" size="sm" className="gap-2" onClick={onShare}>
               <Share2 className="h-4 w-4" />
@@ -462,10 +414,7 @@ export default function SplikCard({
           </div>
         </div>
 
-        {/* Description */}
-        {splik.description && (
-          <p className="mt-3 text-sm text-muted-foreground">{splik.description}</p>
-        )}
+        {splik.description && <p className="mt-3 text-sm text-muted-foreground">{splik.description}</p>}
       </div>
     </div>
   );
