@@ -1,4 +1,3 @@
-// src/pages/ThoughtsFeed.tsx
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -8,35 +7,24 @@ import {
   Heart, Flag, Trash2
 } from "lucide-react";
 
-/* -------- optional shadcn fallbacks so this file runs anywhere -------- */
-let Button:any, Card:any, Badge:any, Select:any, SelectTrigger:any, SelectContent:any, SelectItem:any, SelectValue:any, Textarea:any, Separator:any, Input:any;
+/* minimal fallbacks so this file works without shadcn */
+let Button:any, Card:any, Badge:any, Textarea:any, Input:any;
 try {
   ({ Button } = require("@/components/ui/button"));
   ({ Card } = require("@/components/ui/card"));
   ({ Badge } = require("@/components/ui/badge"));
-  ({ Select, SelectTrigger, SelectContent, SelectItem, SelectValue } = require("@/components/ui/select"));
   ({ Textarea } = require("@/components/ui/textarea"));
-  ({ Separator } = require("@/components/ui/separator"));
   ({ Input } = require("@/components/ui/input"));
 } catch {
-  Button = ({ className="", ...p }: any) => <button className={`px-4 py-2 rounded-xl bg-black text-white disabled:opacity-50 ${className}`} {...p} />;
-  Card = ({ className="", ...p }: any) => <div className={`rounded-2xl border border-zinc-200 bg-white shadow-sm ${className}`} {...p} />;
-  Badge = ({ className="", ...p }: any) => <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-zinc-100 ${className}`} {...p} />;
-  const Base = (Tag:any) => ({ className="", ...p }: any) => <Tag className={`w-full border rounded-xl px-4 py-3 ${className}`} {...p} />;
+  Button = ({ className="", ...p }: any) => <button className={`px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 ${className}`} {...p} />;
+  Card = ({ className="", ...p }: any) => <div className={`rounded-2xl border border-neutral-800 bg-neutral-900 shadow-sm ${className}`} {...p} />;
+  Badge = ({ className="", ...p }: any) => <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-neutral-800 text-neutral-200 ${className}`} {...p} />;
+  const Base = (Tag:any) => ({ className="", ...p }: any) => <Tag className={`w-full border border-neutral-800 bg-neutral-900 text-neutral-100 rounded-xl px-4 py-3 placeholder:text-neutral-500 ${className}`} {...p} />;
   Textarea = Base("textarea");
   Input = Base("input");
-  Select = ({ value, onValueChange, children }: any) => <div data-value={value}>{children(onValueChange)}</div>;
-  SelectTrigger = ({ className="", children, ...p }: any) => <div className={`w-full border rounded-xl px-4 py-3 cursor-pointer ${className}`} {...p}>{children}</div>;
-  SelectContent = ({ children }: any) => <div className="mt-2 border rounded-xl bg-white shadow-lg">{children}</div>;
-  SelectItem = ({ value, onClick, children }: any) => <div className="px-4 py-2.5 hover:bg-zinc-50 cursor-pointer" onClick={() => onClick?.(value)}>{children}</div>;
-  SelectValue = ({ placeholder }: any) => <span className="text-zinc-500">{placeholder}</span>;
-  Separator = ({ className="" }: any) => <div className={`h-px bg-zinc-200 ${className}`} />;
 }
-/* --------------------------------------------------------------------- */
 
-let useAuth: any;
-try { ({ useAuth } = require("@/hooks/useAuth")); } catch { useAuth = () => ({ user: undefined }); }
-
+/* ---- types ---- */
 type Mood =
   | "Happy" | "Grateful" | "Blessed" | "Chill" | "Focused" | "Motivated"
   | "Tired" | "Anxious" | "Frustrated" | "Excited" | "Proud" | "Loved";
@@ -61,14 +49,28 @@ const BUCKET = "thoughts-images";
 const PAGE_SIZE = 20;
 
 export default function ThoughtsFeed() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const { photoId } = useParams();
   const location = useLocation();
 
+  /* ---- FIXED AUTH: pull the current user from Supabase here ---- */
+  const [user, setUser] = useState<any>(null);
+  useEffect(() => {
+    let mounted = true;
+    const init = async () => {
+      const { data } = await supabase.auth.getUser();
+      if (mounted) setUser(data.user ?? null);
+    };
+    init();
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => sub?.subscription?.unsubscribe();
+  }, []);
+
   // Composer
   const [text, setText] = useState("");
-  const [mood, setMood] = useState<Mood | null>(null);
+  const [mood, setMood] = useState<Mood | "">("");
   const [files, setFiles] = useState<File[]>([]);
   const [posting, setPosting] = useState(false);
 
@@ -171,11 +173,12 @@ export default function ThoughtsFeed() {
 
   function onPickFiles(list: FileList | null) {
     if (!list) return;
-    setFiles(prev => [...prev, ...Array.from(list)]);
+    const maxEachMB = 10, maxCount = 10;
+    const arr = Array.from(list).slice(0, maxCount - files.length);
+    const safe = arr.filter(f => f.type.startsWith("image/") && f.size <= maxEachMB * 1024 * 1024);
+    setFiles(prev => [...prev, ...safe]);
   }
-  function removeFile(i: number) {
-    setFiles(prev => prev.filter((_, idx) => idx !== i));
-  }
+  function removeFile(i: number) { setFiles(prev => prev.filter((_, idx) => idx !== i)); }
 
   async function createPost() {
     if (!user?.id) { alert("Please log in to post."); return; }
@@ -184,7 +187,7 @@ export default function ThoughtsFeed() {
 
     const { data: post, error: postErr } = await supabase
       .from("thoughts_posts")
-      .insert({ user_id: user.id, text_content: text.trim(), mood: mood ?? null })
+      .insert({ user_id: user.id, text_content: text.trim(), mood: mood || null })
       .select("*").single();
     if (postErr || !post) { console.error(postErr); setPosting(false); return; }
 
@@ -209,7 +212,7 @@ export default function ThoughtsFeed() {
     setLikesCount(prev => ({ ...prev, [typed.id]: 0 }));
     setMyLikeId(prev => ({ ...prev, [typed.id]: null }));
 
-    setText(""); setMood(null); setFiles([]); setPosting(false);
+    setText(""); setMood(""); setFiles([]); setPosting(false);
   }
 
   // LIKE (toggle)
@@ -246,15 +249,11 @@ export default function ThoughtsFeed() {
     const { data: exists } = await supabase
       .from("thoughts_post_reports")
       .select("id").eq("post_id", postId).eq("user_id", user.id).maybeSingle();
-
-    if (exists) {
-      await supabase.from("thoughts_post_reports").delete().eq("id", exists.id);
-    } else {
-      await supabase.from("thoughts_post_reports").insert({ post_id: postId, user_id: user.id });
-    }
+    if (exists) await supabase.from("thoughts_post_reports").delete().eq("id", exists.id);
+    else await supabase.from("thoughts_post_reports").insert({ post_id: postId, user_id: user.id });
   }
 
-  // LIGHTBOX: open from URL param, or when clicking
+  // LIGHTBOX: open from URL param
   useEffect(() => {
     if (!photoId || allPhotos.length === 0) return;
     const idx = allPhotos.findIndex(p => p.id === photoId);
@@ -292,19 +291,30 @@ export default function ThoughtsFeed() {
   useLightboxSwipe(lightboxOpen, prevPhoto, nextPhoto, closeLightbox);
 
   return (
-    <div className="min-h-screen bg-zinc-50">
-      <div className="mx-auto max-w-[110rem] px-3 sm:px-4 md:px-6 py-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4 md:gap-6">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+      <div className="mx-auto max-w-[110rem] px-3 sm:px-4 md:px-6 py-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-4 md:gap-6">
 
         {/* MAIN */}
         <div className="space-y-4 md:space-y-5">
           {/* Composer */}
           <Card className="p-3 sm:p-4 md:p-5">
             <div className="flex items-start gap-3">
-              <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
+              <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-fuchsia-500 to-indigo-500" />
               <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 mb-2">
-                  <Smile className="h-4 w-4 text-zinc-500" />
-                  <MoodSelect value={mood} onChange={setMood} />
+                <div className="flex flex-wrap items-center gap-3 mb-3">
+                  <Smile className="h-4 w-4 text-neutral-400" />
+                  {/* Native select for bulletproof visibility in dark mode */}
+                  <div className="relative">
+                    <select
+                      value={mood}
+                      onChange={(e) => setMood(e.target.value as Mood | "")}
+                      className="appearance-none rounded-xl border border-neutral-700 bg-neutral-900 text-neutral-100 px-4 py-2.5 pr-10 text-sm"
+                    >
+                      <option value="">Choose mood (optional)</option>
+                      {MOODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500">▼</span>
+                  </div>
                 </div>
 
                 <Textarea
@@ -312,7 +322,7 @@ export default function ThoughtsFeed() {
                   onChange={e => setText(e.target.value)}
                   placeholder="Share your thoughts…"
                   rows={4}
-                  className="resize-y focus:ring-2 focus:ring-indigo-500 text-base md:text-[15px]"
+                  className="resize-y focus:ring-2 focus:ring-indigo-500/60"
                 />
 
                 {/* files preview */}
@@ -324,7 +334,7 @@ export default function ThoughtsFeed() {
                         <div key={i} className="relative group">
                           <img src={url} alt="" className="h-24 w-full object-cover rounded-lg" />
                           <button
-                            className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                            className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-1"
                             onClick={() => removeFile(i)} aria-label="Remove"
                           >
                             <X className="h-4 w-4" />
@@ -338,13 +348,13 @@ export default function ThoughtsFeed() {
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <label className="inline-flex items-center gap-2 cursor-pointer">
                     <input type="file" accept="image/*" multiple className="hidden" onChange={e => onPickFiles(e.target.files)} />
-                    <span className="inline-flex items-center gap-2 text-indigo-600 hover:underline">
+                    <span className="inline-flex items-center gap-2 text-indigo-400 hover:text-indigo-300">
                       <ImageIcon className="h-5 w-5" /><span className="text-sm sm:text-base">Add photo(s)</span>
                     </span>
                   </label>
 
                   <div className="flex items-center gap-2">
-                    {mood && <Badge className="bg-indigo-50 text-indigo-700">{mood}</Badge>}
+                    {mood && <Badge className="bg-neutral-800 text-indigo-300">{mood}</Badge>}
                     <Button onClick={createPost} disabled={posting || (!text.trim() && files.length === 0)} className="rounded-xl">
                       {posting ? "Posting…" : "Post"}
                     </Button>
@@ -361,19 +371,19 @@ export default function ThoughtsFeed() {
                 <div className="flex items-start gap-3">
                   <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-rose-500 to-orange-500" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 text-[13px] sm:text-sm text-zinc-500">
-                      <span className="font-medium text-zinc-900">User</span>
+                    <div className="flex flex-wrap items-center gap-2 text-[13px] sm:text-sm text-neutral-400">
+                      <span className="font-medium text-neutral-100">User</span>
                       <span>· {timeAgo(new Date(p.created_at).getTime())}</span>
-                      {p.mood && <Badge className="bg-zinc-100 text-zinc-700">{p.mood}</Badge>}
+                      {p.mood && <Badge className="bg-neutral-800 text-neutral-200">{p.mood}</Badge>}
                     </div>
 
-                    {p.text_content && <p className="mt-2 text-zinc-900 whitespace-pre-wrap text-[15px] sm:text-base">{p.text_content}</p>}
+                    {p.text_content && <p className="mt-2 text-neutral-100 whitespace-pre-wrap text-[15px] sm:text-base">{p.text_content}</p>}
 
                     {(imagesByPost[p.id]?.length ?? 0) > 0 && (
                       <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-2">
                         {imagesByPost[p.id].map((img) => (
                           <button key={img.id} className="relative group" onClick={() => openLightboxFor(img.id)} aria-label="Open photo">
-                            <img src={img.src} alt="" className="rounded-xl object-cover w-full h-40 sm:h-48" />
+                            <img src={img.src} alt="" loading="lazy" className="rounded-xl object-cover w-full h-40 sm:h-48" />
                           </button>
                         ))}
                       </div>
@@ -383,7 +393,7 @@ export default function ThoughtsFeed() {
                     <div className="mt-4 flex items-center gap-4">
                       <button
                         className={`inline-flex items-center gap-1.5 text-sm ${
-                          myLikeId[p.id] ? "text-rose-600" : "text-zinc-600"
+                          myLikeId[p.id] ? "text-rose-400" : "text-neutral-300"
                         }`}
                         onClick={() => toggleLike(p.id)}
                         aria-label="Like"
@@ -396,7 +406,7 @@ export default function ThoughtsFeed() {
 
                       {/* Report post */}
                       <button
-                        className="ml-auto inline-flex items-center gap-1.5 text-sm text-zinc-600"
+                        className="ml-auto inline-flex items-center gap-1.5 text-sm text-neutral-300"
                         onClick={() => toggleReportPost(p.id)}
                         aria-label="Report post"
                       >
@@ -406,7 +416,7 @@ export default function ThoughtsFeed() {
                       {/* Soft delete (owner only) */}
                       {user?.id === p.user_id && (
                         <button
-                          className="inline-flex items-center gap-1.5 text-sm text-zinc-600"
+                          className="inline-flex items-center gap-1.5 text-sm text-neutral-300"
                           onClick={() => softDeletePost(p.id)}
                           aria-label="Delete post"
                         >
@@ -420,41 +430,38 @@ export default function ThoughtsFeed() {
             ))}
 
             <div ref={moreRef} />
-            {initialLoading && <Card className="p-6 text-center text-zinc-500">Loading…</Card>}
-            {!initialLoading && posts.length === 0 && <Card className="p-6 text-center text-zinc-500">No posts yet. Be the first!</Card>}
-            {loadingMore && <Card className="p-4 text-center text-zinc-500">Loading more…</Card>}
+            {initialLoading && <Card className="p-6 text-center text-neutral-400">Loading…</Card>}
+            {!initialLoading && posts.length === 0 && <Card className="p-6 text-center text-neutral-400">No posts yet. Be the first!</Card>}
+            {loadingMore && <Card className="p-4 text-center text-neutral-400">Loading more…</Card>}
           </div>
-
-          {/* MOBILE PHOTO CAROUSEL */}
-          <Card className="p-3 sm:p-4 lg:hidden">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-700">Latest Photos</h3>
-              <span className="text-xs text-zinc-400">{allPhotos.length}</span>
-            </div>
-            <div className="mt-3 -mx-1 overflow-x-auto no-scrollbar">
-              <div className="px-1 flex gap-2">
-                {[...allPhotos].reverse().slice(0, 120).map((p, i) => (
-                  <button key={p.id} onClick={() => openLightboxFor(p.id)} className="shrink-0" aria-label={`Open photo ${i+1}`}>
-                    <img src={p.src} alt="" className="h-24 w-24 sm:h-28 sm:w-28 object-cover rounded-xl" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          </Card>
         </div>
 
-        {/* RIGHT PHOTO RAIL (lg+) */}
+        {/* RIGHT PHOTO RAIL — “bubbles” */}
         <aside className="hidden lg:block sticky top-4 h-[calc(100vh-2rem)] overflow-auto">
           <Card className="p-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-700">Latest Photos</h3>
-              <span className="text-xs text-zinc-400">{allPhotos.length}</span>
+              <h3 className="text-sm font-semibold text-neutral-200">Latest Photos</h3>
+              <span className="text-xs text-neutral-500">{allPhotos.length}</span>
             </div>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {allPhotos.length === 0 && <p className="col-span-3 text-sm text-zinc-500">Photos you post here will appear on the right.</p>}
+
+            {/* vertical bubble list */}
+            <div className="mt-4 flex flex-col gap-3">
+              {allPhotos.length === 0 && (
+                <p className="text-sm text-neutral-400">Photos you post here will appear on the right.</p>
+              )}
               {[...allPhotos].reverse().slice(0, 120).map((p) => (
-                <button key={p.id} onClick={() => openLightboxFor(p.id)} className="focus:outline-none">
-                  <img src={p.src} alt="" className="h-24 w-full object-cover rounded-lg" />
+                <button
+                  key={p.id}
+                  onClick={() => openLightboxFor(p.id)}
+                  className="flex items-center gap-3 text-left"
+                >
+                  <img
+                    src={p.src}
+                    alt=""
+                    loading="lazy"
+                    className="h-14 w-14 rounded-full object-cover ring-2 ring-neutral-800"
+                  />
+                  <div className="flex-1 border-b border-neutral-800/70" />
                 </button>
               ))}
             </div>
@@ -462,7 +469,7 @@ export default function ThoughtsFeed() {
         </aside>
       </div>
 
-      {/* LIGHTBOX */}
+      {/* LIGHTBOX (dark) */}
       {lightboxOpen && (
         <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-3 sm:p-6" aria-modal="true" role="dialog">
           <button
@@ -493,7 +500,7 @@ export default function ThoughtsFeed() {
   );
 }
 
-/* -------------------- Comments Thread -------------------- */
+/* -------------------- Comments Thread (dark) -------------------- */
 function CommentsThread({ postId, currentUserId }: { postId: string; currentUserId?: string }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -547,22 +554,22 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
     <div className="inline-flex items-center gap-2">
       <button
         onClick={() => setOpen(v => !v)}
-        className="text-sm text-zinc-600"
+        className="text-sm text-neutral-300"
         aria-expanded={open}
       >
         {open ? "Hide comments" : "View comments"}
       </button>
       {open && (
         <div className="mt-3 w-full">
-          {loading && <div className="text-sm text-zinc-500">Loading comments…</div>}
+          {loading && <div className="text-sm text-neutral-400">Loading comments…</div>}
           {!loading && (
             <div className="mt-2 space-y-3">
               {items.map(c => (
                 <div key={c.id} className="flex items-start gap-2">
-                  <div className="h-8 w-8 rounded-full bg-zinc-200" />
+                  <div className="h-8 w-8 rounded-full bg-neutral-800" />
                   <div className="flex-1">
-                    <div className="text-sm text-zinc-900">{c.text}</div>
-                    <div className="mt-1 flex items-center gap-3 text-xs text-zinc-500">
+                    <div className="text-sm text-neutral-100">{c.text}</div>
+                    <div className="mt-1 flex items-center gap-3 text-xs text-neutral-400">
                       <span>{timeAgo(new Date(c.created_at).getTime())}</span>
                       <button className="inline-flex items-center gap-1" onClick={() => toggleReport(c.id)}>
                         <Flag className="h-3.5 w-3.5" /> Report
@@ -591,35 +598,6 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
             </div>
           )}
         </div>
-      )}
-    </div>
-  );
-}
-
-/* -------------------- Mood select -------------------- */
-function MoodSelect({ value, onChange }: { value: Mood | null; onChange: (m: Mood | null) => void }) {
-  const [open, setOpen] = useState(false as boolean);
-  return (
-    <div className="relative w-full xs:w-56 sm:w-64">
-      {Select && (
-        <Select value={value ?? ""} onValueChange={(v: Mood) => onChange(v)}>
-          {(onValueChange: any) => (
-            <>
-              <SelectTrigger onClick={() => setOpen(v => !v)}>
-                <SelectValue placeholder={value ?? "Choose mood (optional)"} />
-              </SelectTrigger>
-              {open && (
-                <SelectContent>
-                  {MOODS.map(m => (
-                    <SelectItem key={m} value={m} onClick={(v: Mood) => { onValueChange?.(v); onChange(v); setOpen(false); }}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              )}
-            </>
-          )}
-        </Select>
       )}
     </div>
   );
