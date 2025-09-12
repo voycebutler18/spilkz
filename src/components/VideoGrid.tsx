@@ -12,7 +12,6 @@ import {
   MessageCircle,
   Share2,
   Trash2,
-  Eye,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -159,7 +158,7 @@ export function VideoGrid({
       video.play();
       setPlayingVideo(splikId);
 
-      // view RPC (keep your existing function)
+      // view RPC (kept; we just don't show views anymore)
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -258,9 +257,8 @@ export function VideoGrid({
     }
   };
 
-  // 🔴 new: keep the modal live while it's open
+  // keep the modal live while it's open
   useEffect(() => {
-    // cleanup previous channel
     if (commentsChannelRef.current) {
       try {
         supabase.removeChannel(commentsChannelRef.current);
@@ -269,7 +267,6 @@ export function VideoGrid({
     }
     if (!showComments) return;
 
-    // subscribe to INSERT/DELETE for this splik's comments
     const ch = supabase
       .channel(`comments-${showComments}`)
       .on(
@@ -281,9 +278,7 @@ export function VideoGrid({
           filter: `splik_id=eq.${showComments}`,
         },
         () => {
-          // live refresh list
           loadComments(showComments);
-          // bump local count immediately
           setVideoStats((prev) => ({
             ...prev,
             [showComments]: {
@@ -319,7 +314,6 @@ export function VideoGrid({
 
     commentsChannelRef.current = ch;
 
-    // initial load when opening
     loadComments(showComments);
 
     return () => {
@@ -360,7 +354,6 @@ export function VideoGrid({
       }));
 
       setNewComment("");
-      // list will refresh via realtime; still do a fetch to show the new one instantly
       loadComments(splikId);
       toast.success("Comment added");
     } catch (e) {
@@ -407,15 +400,6 @@ export function VideoGrid({
                   playsInline
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
-
-                {/* Views badge */}
-                <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/80 backdrop-blur-md px-3 py-2 rounded-full border border-white/20 shadow-lg">
-                  <Eye className="h-3.5 w-3.5 text-white" />
-                  <span className="text-white font-bold text-xs tracking-wide">
-                    {(videoStats[splik.id]?.views || splik.views || 0).toLocaleString()}
-                  </span>
-                  <div className="w-2 h-2 bg-gradient-to-r from-red-500 to-pink-500 rounded-full animate-pulse shadow-lg" />
-                </div>
 
                 {/* Play/Pause overlay */}
                 <div
@@ -500,14 +484,8 @@ export function VideoGrid({
                   </p>
                 )}
 
-                {/* Counts row */}
-                <div className="flex items-center justify-between text-xs font-medium">
-                  <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
-                    <Eye className="h-3 w-3" />
-                    <span>
-                      {(videoStats[splik.id]?.views || 0).toLocaleString()} views
-                    </span>
-                  </div>
+                {/* Counts row (views removed) */}
+                <div className="flex items-center justify-end text-xs font-medium">
                   <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
                     {formatTime(splik.created_at)}
                   </span>
