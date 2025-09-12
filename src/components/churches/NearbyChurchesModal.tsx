@@ -1,12 +1,31 @@
 // src/components/churches/NearbyChurchesModal.tsx
 import * as React from "react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { MapPin, LocateFixed, Search as SearchIcon, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import {
+  MapPin,
+  LocateFixed,
+  Search as SearchIcon,
+  ExternalLink,
+  Loader2,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 /* ---------------- Types ---------------- */
 type DistanceKey = "1km" | "2km" | "5km" | "1mi" | "3mi" | "5mi";
@@ -109,7 +128,7 @@ function shuffle<T>(arr: T[]) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor((Math.random?.() ?? 0.5) * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
+    [a[i], a[j]] = [a[j]];
   }
   return a;
 }
@@ -125,7 +144,7 @@ async function overpassFetch(query: string) {
         headers: {
           "Content-Type": "text/plain;charset=UTF-8",
           "User-Agent": "SplikzApp/1.0 (church-finder)",
-          "Accept": "application/json",
+          Accept: "application/json",
         },
         body: query,
         signal: controller.signal,
@@ -212,10 +231,9 @@ function buildQueryFull(center: { lat: number; lon: number }, radius: number, re
   `;
 }
 
-/* ---------- Address helpers (match Food behavior + better fallbacks) ---------- */
+/* ---------- Address helpers ---------- */
 function buildAddressFromTags(tags: Record<string, string> | undefined) {
   if (!tags) return "";
-  // Prefer full string if provided
   const full = tags["addr:full"];
   if (full) return full;
 
@@ -396,7 +414,6 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
 
-          // 💡 Improved address (mirrors Food + more tags)
           const addrFromTags = buildAddressFromTags(el.tags);
           return {
             id: `${el.type}/${el.id}`,
@@ -425,14 +442,13 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
 
-      // 🔁 For entries still missing address, reverse-geocode a few (throttled)
+      // reverse-geocode a few missing addresses
       const toFill = byDistance.filter(x => !x.address).slice(0, 20);
       for (const p of toFill) {
         const addr = await reverseGeocode(p.lat, p.lon);
         if (addr) {
           setNearby(prev => prev.map(it => (it.id === p.id ? { ...it, address: addr } : it)));
         }
-        // be polite to Nominatim
         await new Promise(r => setTimeout(r, 250));
       }
 
@@ -454,12 +470,40 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl">
-        <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20"></div>
-        <DialogHeader className="relative z-10 space-y-4 pb-4 border-b border-white/10">
+      <DialogContent
+        className="
+          max-w-3xl
+          max-h-[90vh]
+          overflow-y-auto  /* allow outer scroll if needed */
+          bg-slate-900/95 backdrop-blur-2xl
+          border border-white/20 shadow-2xl rounded-3xl
+          p-0
+        "
+      >
+        {/* soft gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none" />
+
+        {/* Close (works with Dialog state) */}
+        <DialogClose asChild>
+          <button
+            aria-label="Close"
+            className="
+              absolute right-3 top-3 z-20
+              inline-flex h-9 w-9 items-center justify-center
+              rounded-xl border border-white/20
+              bg-slate-800/60 hover:bg-slate-800/90
+              text-white/90 hover:text-white
+              transition
+            "
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </DialogClose>
+
+        <DialogHeader className="relative z-10 space-y-4 pb-4 px-6 pt-6 border-b border-white/10">
           <DialogTitle className="flex items-center gap-3 text-2xl">
             <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
+              <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60" />
               <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 to-orange-500 p-3">
                 <MapPin className="h-6 w-6 text-white" />
               </div>
@@ -473,7 +517,15 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="relative z-10 overflow-y-auto max-h-[70vh] pr-2">
+        {/* Body (independent scroller sized under header) */}
+        <div
+          className="
+            relative z-10
+            overflow-y-auto overscroll-contain
+            max-h-[calc(90vh-140px)]
+            px-6 pr-8
+          "
+        >
           <div className="space-y-6 py-6">
             {/* Location */}
             <div className="space-y-3">
@@ -544,11 +596,9 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
                     onChange={(e) => setFaithSearch(e.target.value)}
                     className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400"
                   />
-                  <div className="max-h-52 overflow-y-auto pr-1">
+                  <div className="max-h-64 overflow-y-auto pr-1">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {FAITH_OPTIONS.filter(opt =>
-                        opt.label.toLowerCase().includes(faithSearch.trim().toLowerCase())
-                      ).map((opt) => (
+                      {filteredFaithOptions.map((opt) => (
                         <button
                           key={opt.key}
                           type="button"
@@ -575,7 +625,7 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
                 disabled={fetchingNearby || (!coords && !locationQuery.trim())}
                 className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold px-8 py-4 rounded-2xl shadow-2xl transform hover:scale-105 transition-all duration-300 text-lg"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                 <div className="relative flex items-center gap-3">
                   <SearchIcon className="h-5 w-5" />
                   <span>{fetchingNearby ? "Searching…" : "Find Churches Near You"}</span>
@@ -601,7 +651,7 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
             {!fetchingNearby && nearby.length > 0 && (
               <div className="space-y-3">
                 <h3 className="text-white text-lg font-semibold">Found {nearby.length} nearby</h3>
-                <div className="max-h-80 overflow-y-auto rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl">
+                <div className="max-h-96 overflow-y-auto rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl">
                   {nearby.map((place) => (
                     <div
                       key={place.id}
