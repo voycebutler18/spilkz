@@ -1,717 +1,601 @@
-// src/pages/Food.tsx
 import * as React from "react";
-import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { toast } from "sonner";
 import {
-  Camera, Plus, Loader2, ChevronUp, ChevronDown, X, Utensils, RefreshCw, Images,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import {
+  MapPin,
+  LocateFixed,
+  Search as SearchIcon,
+  ExternalLink,
+  Loader2,
+  Info,
+  Sparkles,
+  X,
+  Star,
 } from "lucide-react";
-import SplikCard from "@/components/splik/SplikCard";
 
-type Profile = {
+/* ---------------- Types & constants ---------------- */
+type DistanceKey = "1km" | "2km" | "5km" | "1mi" | "3mi" | "5mi";
+const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number; unit: "mi" | "km" }[] = [
+  { key: "1km", label: "1 km", meters: 1000, unit: "km" },
+  { key: "2km", label: "2 km", meters: 2000, unit: "km" },
+  { key: "5km", label: "5 km", meters: 5000, unit: "km" },
+  { key: "1mi", label: "1 mile", meters: 1609.34, unit: "mi" },
+  { key: "3mi", label: "3 miles", meters: 4828.03, unit: "mi" },
+  { key: "5mi", label: "5 miles", meters: 8046.72, unit: "mi" },
+];
+
+const CATEGORY_PRESETS: { key: string; label: string; regex: string }[] = [
+  { key: "any", label: "Any", regex: "" },
+  { key: "steakhouse", label: "Steakhouse", regex: "(steak|steak_house|steakhouse)" },
+  { key: "sushi", label: "Sushi", regex: "sushi" },
+  { key: "pizza", label: "Pizza", regex: "pizza|pizzeria" },
+  { key: "burger", label: "Burger", regex: "burger|hamburger" },
+  { key: "bbq", label: "BBQ / Barbecue", regex: "bbq|barbecue|barbeque" },
+  { key: "seafood", label: "Seafood", regex: "seafood|fish" },
+  { key: "vegan", label: "Vegan / Veg", regex: "vegan|vegetarian" },
+  { key: "brunch", label: "Breakfast / Brunch", regex: "breakfast|brunch" },
+  { key: "cafe", label: "Cafe / Bakery", regex: "cafe|coffee|bakery|pastry" },
+  { key: "italian", label: "Italian", regex: "italian|pasta|trattoria|osteria" },
+  { key: "mexican", label: "Mexican", regex: "mexican|taqueria|taco" },
+  { key: "chinese", label: "Chinese", regex: "chinese|szechuan|cantonese|dim_sum|dimsum" },
+  { key: "thai", label: "Thai", regex: "thai" },
+  { key: "indian", label: "Indian", regex: "indian|curry|tandoor" },
+  { key: "custom", label: "— Custom (type below)", regex: "" },
+];
+
+type NearbyRestaurant = {
   id: string;
-  username: string | null;
-  display_name: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
-  avatar_url?: string | null;
+  name: string;
+  lat: number;
+  lon: number;
+  distanceKm: number;
+  address?: string;
+  cuisine?: string;
 };
 
-type Splik = {
-  id: string;
-  user_id: string;
-  video_url: string;
-  thumbnail_url?: string | null;
-  title?: string | null;
-  description?: string | null;
-  created_at?: string;
-  tag?: string | null;
-  // if your schema has this it will appear, otherwise stays undefined
-  is_food?: boolean;
-  profile?: Profile | null;
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 };
 
-type PhotoItem = {
-  id: string;
-  user_id: string;
-  url: string;
-  created_at: string;
-  // if your schema has this it will appear, otherwise stays undefined
-  category?: string | null;
-  profile?: Profile | null;
-};
+/* ---------------- Component ---------------- */
+export default function NearbyRestaurantsModal({ open, onOpenChange }: Props) {
+  const [locStage, setLocStage] = React.useState<"idle" | "asking" | "have" | "error">("idle");
+  const [coords, setCoords] = React.useState<{ lat: number; lon: number } | null>(null);
+  const [fetchingNearby, setFetchingNearby] = React.useState(false);
+  const [nearby, setNearby] = React.useState<NearbyRestaurant[]>([]);
+  const [nearbyError, setNearbyError] = React.useState<string | null>(null);
 
-type CombinedItem =
-  | { kind: "video"; created_at: string; video: Splik }
-  | { kind: "photo"; created_at: string; photo: PhotoItem };
+  const [locationQuery, setLocationQuery] = React.useState("");
+  const [distanceKey, setDistanceKey] = React.useState<DistanceKey>("2km");
+  const [categoryKey, setCategoryKey] = React.useState<string>("any");
+  const [customCategory, setCustomCategory] = React.useState("");
 
-const FOOD_BUCKET = "food"; // separate Storage bucket
+  const unitForDistanceKey = React.useMemo(
+    () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.unit || "km",
+    [distanceKey]
+  );
+  const metersForDistanceKey = React.useMemo(
+    () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.meters || 2000,
+    [distanceKey]
+  );
+  const prettyDistance = (distanceKm: number) =>
+    unitForDistanceKey === "km" ? `${distanceKm.toFixed(1)} km` : `${(distanceKm * 0.621371).toFixed(1)} mi`;
 
-const displayName = (p?: Profile | null) => {
-  if (!p) return "User";
-  const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-  return p.display_name?.trim() || full || p.username?.trim() || "User";
-};
-const slugFor = (p?: Profile | null) => (p?.username ? p.username : p?.id || "");
+  const coordsPretty = React.useMemo(
+    () => (coords ? `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}` : ""),
+    [coords]
+  );
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Right Food Photo Rail (vertical)
-──────────────────────────────────────────────────────────────────────────── */
-function RightFoodRail({
-  title = "Splikz Food Photos",
-  maxListHeight = "calc(100vh - 220px)",
-  limit = 80,
-  showUploader = true,
-}: {
-  title?: string;
-  maxListHeight?: string | number;
-  limit?: number;
-  showUploader?: boolean;
-}) {
-  const [loading, setLoading] = React.useState(true);
-  const [items, setItems] = React.useState<PhotoItem[]>([]);
-  const [viewerIndex, setViewerIndex] = React.useState<number | null>(null);
-  const [isUploading, setIsUploading] = React.useState(false);
-  const fileRef = React.useRef<HTMLInputElement>(null);
-
-  const hydrateProfiles = async (rows: PhotoItem[]) => {
-    const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
-    if (!userIds.length) return rows;
-    const { data: profs } = await supabase
-      .from("profiles")
-      .select("id, username, display_name, first_name, last_name, avatar_url")
-      .in("id", userIds);
-    const byId: Record<string, Profile> = {};
-    (profs || []).forEach((p: any) => (byId[p.id] = p));
-    return rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
+  /* ---------- helpers (from the working v4 modal) ---------- */
+  const reverseGeocode = async (lat: number, lon: number): Promise<string | null> => {
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/reverse");
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("lat", String(lat));
+      url.searchParams.set("lon", String(lon));
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+      });
+      if (!res.ok) return null;
+      const j = (await res.json()) as any;
+      const city = j.address?.city || j.address?.town || j.address?.village || j.address?.hamlet;
+      const state = j.address?.state || j.address?.region;
+      const country = j.address?.country_code?.toUpperCase();
+      if (!city && !state) return j.display_name || null;
+      return [city, state, country].filter(Boolean).join(", ");
+    } catch {
+      return null;
+    }
   };
 
-  const load = React.useCallback(async () => {
-    setLoading(true);
+  const requestLocation = () => {
+    setLocStage("asking");
+    setNearbyError(null);
+    if (!("geolocation" in navigator)) {
+      setLocStage("error");
+      setNearbyError("Geolocation is not available on this device.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const c = { lat: Number(latitude), lon: Number(longitude) };
+        setCoords(c);
+        setLocStage("have");
+        const place = await reverseGeocode(c.lat, c.lon);
+        setLocationQuery(place ?? `${c.lat.toFixed(4)}, ${c.lon.toFixed(4)}`);
+      },
+      (err) => {
+        console.error("Geolocation error:", err);
+        setLocStage("error");
+        setNearbyError(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission denied. You can search by city or ZIP instead."
+            : "Unable to get your location. Try again or search by city/ZIP."
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  const geocodeToCoords = async (q: string): Promise<{ lat: number; lon: number } | null> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
-      // fetch latest photos, filter Food on the client so this still works if 'category' column isn't there yet
-      const { data, error } = await supabase
-        .from("vibe_photos")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(limit);
-      if (error) throw error;
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("q", q);
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("limit", "1");
+      url.searchParams.set("countrycodes", "us,ca");
+      const res = await fetch(url.toString(), {
+        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw new Error(`Geocoding failed: ${res.status}`);
+      const arr = (await res.json()) as Array<{ lat: string; lon: string }>;
+      if (!arr.length) return null;
+      return { lat: Number(arr[0].lat), lon: Number(arr[0].lon) };
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === "AbortError") throw new Error("Location search timed out. Please try again.");
+      throw error;
+    }
+  };
 
-      const mapped: PhotoItem[] = (data || []).map((r: any) => ({
-        id: String(r.id),
-        user_id: String(r.user_id),
-        url: String(r.photo_url),
-        created_at: r.created_at || new Date().toISOString(),
-        category: r.category ?? null,
-      }));
+  const haversineKm = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
+    const R = 6371;
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLon = ((b.lon - a.lon) * Math.PI) / 180;
+    const la1 = (a.lat * Math.PI) / 180;
+    const la2 = (b.lat * Math.PI) / 180;
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLon = Math.sin(dLon / 2);
+    const h = sinDLat * sinDLat + Math.cos(la1) * Math.cos(la2) * sinDLon * sinDLon;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  };
 
-      // keep only food: either explicit category OR served from the /food/ bucket path
-      const onlyFood = mapped.filter(
-        (r) =>
-          (r.category && String(r.category).toLowerCase() === "food") ||
-          r.url.includes("/storage/v1/object/public/food/") ||
-          r.url.includes("/food/")
+  const buildCategoryRegex = () => {
+    const preset = CATEGORY_PRESETS.find((c) => c.key === categoryKey);
+    if (preset && preset.key !== "any" && preset.key !== "custom") return preset.regex;
+    const raw = customCategory.trim();
+    if (!raw) return "";
+    const tokens = raw
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .split(/\s+/)
+      .filter(Boolean);
+    if (tokens.length === 0) return "";
+    const joined = tokens.join("|");
+    const compound = tokens.join("");
+    const underscored = tokens.join("_");
+    return `(${joined}|${compound}|${underscored})`;
+  };
+
+  const buildOverpassAroundQuery = (
+    center: { lat: number; lon: number },
+    radiusMeters: number,
+    categoryRegex: string
+  ) => {
+    const amenityFilter = `["amenity"~"restaurant|fast_food|cafe|bar|pub"]`;
+    const around = `(around:${Math.round(radiusMeters)},${center.lat},${center.lon})`;
+    if (categoryRegex) {
+      const cat = categoryRegex.replace(/"/g, '\\"');
+      return `
+        [out:json][timeout:30];
+        (
+          node${amenityFilter}["cuisine"~"${cat}",i]${around};
+          node${amenityFilter}["name"~"${cat}",i]${around};
+          node${amenityFilter}["brand"~"${cat}",i]${around};
+          way${amenityFilter}["cuisine"~"${cat}",i]${around};
+          way${amenityFilter}["name"~"${cat}",i]${around};
+          way${amenityFilter}["brand"~"${cat}",i]${around};
+          relation${amenityFilter}["cuisine"~"${cat}",i]${around};
+          relation${amenityFilter}["name"~"${cat}",i]${around};
+          relation${amenityFilter}["brand"~"${cat}",i]${around};
+        );
+        out center tags;
+      `;
+    }
+    return `
+      [out:json][timeout:30];
+      (
+        node${amenityFilter}${around};
+        way${amenityFilter}${around};
+        relation${amenityFilter}${around};
       );
+      out center tags;
+    `;
+  };
 
-      setItems(await hydrateProfiles(onlyFood));
-    } catch (e) {
-      console.error("Food rail load failed:", e);
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [limit]);
-
-  React.useEffect(() => {
-    load();
-
-    // Realtime: reload when a new vibe_photos row is inserted
-    const ch = supabase
-      .channel("food-rail")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "vibe_photos" },
-        (payload) => {
-          const row: any = payload.new;
-          if (
-            (row.category && String(row.category).toLowerCase() === "food") ||
-            String(row.photo_url || "").includes("/food/")
-          ) {
-            load();
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      try {
-        supabase.removeChannel(ch);
-      } catch {}
-    };
-  }, [load]);
-
-  const open = (i: number) => setViewerIndex(i);
-  const close = () => setViewerIndex(null);
-  const up = () => setViewerIndex((i) => (i === null || i <= 0 ? i : i - 1));
-  const down = () =>
-    setViewerIndex((i) => (i === null || i >= items.length - 1 ? i : i + 1));
-
-  React.useEffect(() => {
-    if (viewerIndex === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowUp") { e.preventDefault(); up(); }
-      else if (e.key === "ArrowDown") { e.preventDefault(); down(); }
-      else if (e.key === "Escape") { e.preventDefault(); close(); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [viewerIndex, items.length]);
-
-  const onPickFile = () => fileRef.current?.click();
-
-  const handleFile = async (file: File) => {
+  const overpassFetch = async (query: string) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     try {
-      setIsUploading(true);
-
-      if (!file.type.startsWith("image/")) {
-        toast.error("Please upload an image file.");
-        return;
-      }
-      if (file.size > 12 * 1024 * 1024) {
-        toast.error("Image is too large (max 12 MB).");
-        return;
-      }
-
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id;
-      if (!uid) {
-        toast.error("Please log in to upload a photo.");
-        return;
-      }
-
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const path = `${uid}/${Date.now()}.${ext}`;
-
-      // upload to the FOOD bucket
-      const { error: upErr } = await supabase
-        .storage
-        .from(FOOD_BUCKET)
-        .upload(path, file, { contentType: file.type, upsert: false });
-      if (upErr) {
-        console.error(upErr);
-        toast.error("Upload failed. Check bucket permissions.");
-        return;
-      }
-
-      const { data: pub } = supabase.storage.from(FOOD_BUCKET).getPublicUrl(path);
-      const publicUrl = pub?.publicUrl;
-      if (!publicUrl) {
-        toast.error("Could not get public URL for image.");
-        return;
-      }
-
-      // Insert into vibe_photos with explicit category=food
-      const { error: vpErr } = await supabase
-        .from("vibe_photos")
-        .insert([{ user_id: uid, photo_url: publicUrl, category: "food" }]);
-      if (vpErr) {
-        console.warn("insert vibe_photos error:", vpErr.message);
-      }
-
-      // Optional activity row (vibes) — tries image_url then media_url for compatibility
-      const { error: vib1 } = await supabase
-        .from("vibes")
-        .insert([{ user_id: uid, content: "", image_url: publicUrl, mood: "food" }]);
-      if (vib1) {
-        await supabase
-          .from("vibes")
-          .insert([{ user_id: uid, content: "", media_url: publicUrl, mood: "food" }]);
-      }
-
-      // Optimistic add
-      setItems((prev) => [
-        {
-          id: `tmp-${Date.now()}`,
-          url: publicUrl,
-          created_at: new Date().toISOString(),
-          user_id: uid,
-          category: "food",
-          profile: prev.find((p) => p.user_id === uid)?.profile ?? undefined,
-        },
-        ...prev,
-      ]);
-
-      toast.success("Photo uploaded to Food!");
-    } catch (e) {
-      console.error(e);
-      toast.error("Something went wrong uploading your photo.");
-    } finally {
-      setIsUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
+      const res = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: query,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw new Error(`Overpass API error ${res.status}: ${res.statusText}`);
+      return await res.json();
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === "AbortError") throw new Error("Search timed out. Please try again.");
+      throw error;
     }
   };
 
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) void handleFile(f);
-  };
+  const runNearbySearch = async () => {
+    try {
+      setNearbyError(null);
+      setFetchingNearby(true);
+      setNearby([]);
 
-  return (
-    <>
-      {/* hidden file input */}
-      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
-
-      <div className="bg-card/60 backdrop-blur-xl rounded-2xl border border-border/50 shadow-2xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-semibold flex items-center gap-2">
-            <Utensils className="h-4 w-4" /> {title}
-          </h3>
-          <Images className="h-4 w-4 text-muted-foreground" />
-</div>
-
-        {showUploader && (
-          <div className="mb-4">
-            <Button onClick={onPickFile} disabled={isUploading} className="w-full">
-              {isUploading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Uploading…
-                </>
-              ) : (
-                <>
-                  <Plus className="h-4 w-4 mr-2" /> Upload Food Photo
-                </>
-              )}
-            </Button>
-          </div>
-        )}
-
-        <div
-          className="space-y-3 overflow-y-auto custom-scrollbar pr-1"
-          style={{ maxHeight: typeof maxListHeight === "number" ? `${maxListHeight}px` : maxListHeight }}
-        >
-          {loading && (
-            <div className="py-10 text-center text-muted-foreground text-sm">Loading photos…</div>
-          )}
-          {!loading && items.length === 0 && (
-            <div className="py-10 text-center text-muted-foreground text-sm">No food photos yet</div>
-          )}
-
-          {items.map((ph, idx) => {
-            const person = ph.profile;
-            const name = displayName(person);
-            const slug = slugFor(person);
-            return (
-              <div
-                key={ph.id}
-                className="relative aspect-square bg-muted/40 rounded-xl border border-border/40 overflow-hidden group cursor-pointer"
-                onClick={() => setViewerIndex(idx)}
-              >
-                <img
-                  src={ph.url}
-                  alt={name}
-                  loading="lazy"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
-
-                {/* Small avatar → creator profile (don’t open viewer on click) */}
-                <Link
-                  to={slug ? `/creator/${slug}` : "#"}
-                  onClick={(e) => e.stopPropagation()}
-                  className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
-                  title={name}
-                >
-                  {person?.avatar_url ? (
-                    <img src={person.avatar_url} alt={name} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-white text-xs font-semibold">
-                      {name.charAt(0).toUpperCase()}
-                    </span>
-                  )}
-                </Link>
-
-                {/* Name on hover */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="absolute bottom-2 left-2 right-2">
-                    <p className="text-white text-xs font-medium truncate">{name}</p>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Fullscreen viewer */}
-      {viewerIndex !== null && items[viewerIndex] && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center">
-          <div className="relative max-w-4xl max-h-screen p-4">
-            <button
-              onClick={() => setViewerIndex(null)}
-              className="absolute top-6 right-6 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
-              aria-label="Close viewer"
-            >
-              <X className="h-6 w-6 text-white" />
-            </button>
-
-            {viewerIndex > 0 && (
-              <button
-                onClick={() => setViewerIndex((i) => (i ? Math.max(0, i - 1) : i))}
-                className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
-                aria-label="Previous photo"
-              >
-                <ChevronUp className="h-6 w-6 text-white" />
-              </button>
-            )}
-            {viewerIndex < items.length - 1 && (
-              <button
-                onClick={() => setViewerIndex((i) => (i === null ? i : Math.min(items.length - 1, i + 1)))}
-                className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
-                aria-label="Next photo"
-              >
-                <ChevronDown className="h-6 w-6 text-white" />
-              </button>
-            )}
-
-            <div className="bg-card/60 backdrop-blur-xl rounded-2xl border border-border/50 overflow-hidden">
-              <img
-                src={items[viewerIndex].url}
-                alt={displayName(items[viewerIndex].profile)}
-                className="w-full h-auto max-h-[80vh] object-contain"
-              />
-              <div className="p-6 border-t border-border/50">
-                <div className="flex items-center space-x-3">
-                  <Link
-                    to={`/creator/${slugFor(items[viewerIndex].profile)}`}
-                    className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/20 flex items-center justify-center"
-                  >
-                    {items[viewerIndex].profile?.avatar_url ? (
-                      <img
-                        src={items[viewerIndex].profile!.avatar_url!}
-                        alt={displayName(items[viewerIndex].profile)}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-white text-sm font-semibold">
-                        {displayName(items[viewerIndex].profile).charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                  </Link>
-                  <div>
-                    <h3 className="text-white font-semibold">
-                      {displayName(items[viewerIndex].profile)}
-                    </h3>
-                    <p className="text-slate-400 text-xs">
-                      {new Date(items[viewerIndex].created_at).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/50 text-white px-4 py-2 rounded-full text-sm">
-              {viewerIndex + 1} of {items.length}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,.5); border-radius: 3px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.8); }
-      `}</style>
-    </>
-  );
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
-   Food Photo Card (for photos in the center mixed feed)
-──────────────────────────────────────────────────────────────────────────── */
-function FoodPhotoCard({ item }: { item: PhotoItem }) {
-  const person = item.profile;
-  const display = displayName(person);
-  const slug = slugFor(person);
-
-  return (
-    <Card className="overflow-hidden">
-      <CardContent className="p-0">
-        <div className="p-4 flex items-center gap-3">
-          <Link to={`/creator/${slug}`} className="w-10 h-10 rounded-full overflow-hidden border">
-            {person?.avatar_url ? (
-              <img src={person.avatar_url} alt={display} className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-muted text-sm font-semibold">
-                {display.charAt(0).toUpperCase()}
-              </div>
-            )}
-          </Link>
-          <div className="min-w-0">
-            <p className="font-semibold leading-tight truncate">{display}</p>
-            <p className="text-xs text-muted-foreground">
-              {new Date(item.created_at).toLocaleString()}
-            </p>
-          </div>
-          <Badge className="ml-auto" variant="secondary">
-            <Utensils className="h-3 w-3 mr-1" /> Food
-          </Badge>
-        </div>
-        <div className="w-full">
-          <img src={item.url} alt={display} className="w-full h-auto object-contain" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/* ────────────────────────────────────────────────────────────────────────────
-   FOOD PAGE
-   - Center feed mixes Food videos + Food photos
-   - Right rail shows Food photos + upload
-   - Mobile: toggle to open the rail
-──────────────────────────────────────────────────────────────────────────── */
-export default function FoodPage() {
-  const [loading, setLoading] = React.useState(true);
-  const [showMobileRail, setShowMobileRail] = React.useState(false);
-  const [videos, setVideos] = React.useState<Splik[]>([]);
-  const [photos, setPhotos] = React.useState<PhotoItem[]>([]);
-  const [feed, setFeed] = React.useState<CombinedItem[]>([]);
-
-  const hydrateProfile = async (user_id: string): Promise<Profile | null> => {
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("id, username, display_name, first_name, last_name, avatar_url")
-      .eq("id", user_id)
-      .maybeSingle();
-    return (prof as Profile) || null;
-  };
-
-  const loadVideos = React.useCallback(async () => {
-    // Grab latest videos then filter to "food" client-side so we don't depend on an is_food column.
-    const { data, error } = await supabase
-      .from("spliks")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (error) throw error;
-
-    const rows = (data || []) as Splik[];
-    // keep videos that look like "food": explicit is_food === true OR tag/title/description contains "food"
-    const onlyFood = rows.filter((r) => {
-      const t = `${r.tag || ""} ${r.title || ""} ${r.description || ""}`.toLowerCase();
-      return (r as any).is_food === true || t.includes("food");
-    });
-
-    const withProfiles = await Promise.all(
-      onlyFood.map(async (s) => ({ ...s, profile: await hydrateProfile(s.user_id) }))
-    );
-    setVideos(withProfiles);
-  }, []);
-
-  const loadPhotos = React.useCallback(async () => {
-    const { data, error } = await supabase
-      .from("vibe_photos")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (error) throw error;
-
-    const mapped: PhotoItem[] = await Promise.all(
-      (data || []).map(async (r: any) => ({
-        id: String(r.id),
-        user_id: String(r.user_id),
-        url: String(r.photo_url),
-        created_at: r.created_at || new Date().toISOString(),
-        category: r.category ?? null,
-        profile: await hydrateProfile(String(r.user_id)),
-      }))
-    );
-
-    const onlyFood = mapped.filter(
-      (r) =>
-        (r.category && String(r.category).toLowerCase() === "food") ||
-        r.url.includes("/storage/v1/object/public/food/") ||
-        r.url.includes("/food/")
-    );
-
-    setPhotos(onlyFood);
-  }, []);
-
-  const buildFeed = React.useCallback(() => {
-    const combined: CombinedItem[] = [
-      ...videos
-        .filter((v) => !!v.created_at)
-        .map((v) => ({ kind: "video", created_at: v.created_at!, video: v })),
-      ...photos.map((p) => ({ kind: "photo", created_at: p.created_at, photo: p })),
-    ].sort((a, b) => (new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
-    setFeed(combined);
-  }, [videos, photos]);
-
-  React.useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        await Promise.all([loadVideos(), loadPhotos()]);
-      } catch (e) {
-        console.error("Food load error:", e);
-      } finally {
-        setLoading(false);
-      }
-    })();
-
-    // Realtime updates: photos INSERT & spliks INSERT
-    const ch = supabase
-      .channel("food-feed")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "vibe_photos" },
-        (payload) => {
-          const row: any = payload.new;
-          if (
-            (row.category && String(row.category).toLowerCase() === "food") ||
-            String(row.photo_url || "").includes("/food/")
-          ) {
-            loadPhotos();
+      let center = coords;
+      if (!center) {
+        if (!locationQuery.trim()) {
+          setNearbyError("Enter a city or ZIP, or use your location.");
+          setFetchingNearby(false);
+          return;
+        }
+        try {
+          const gc = await geocodeToCoords(locationQuery.trim());
+          if (!gc) {
+            setNearbyError("Couldn't find that place. Try a different city or ZIP code.");
+            setFetchingNearby(false);
+            return;
           }
+          center = gc;
+          setCoords(gc);
+          setLocStage("have");
+        } catch (geoError: any) {
+          setNearbyError("Error finding location: " + geoError.message);
+          setFetchingNearby(false);
+          return;
         }
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "spliks" },
-        (payload) => {
-          const r: any = payload.new;
-          const text = `${r.tag || ""} ${r.title || ""} ${r.description || ""}`.toLowerCase();
-          if (r.is_food === true || text.includes("food")) loadVideos();
-        }
-      )
-      .subscribe();
+      }
 
-    return () => {
-      try { supabase.removeChannel(ch); } catch {}
-    };
-  }, [loadVideos, loadPhotos]);
+      const categoryRegex =
+        categoryKey === "custom"
+          ? buildCategoryRegex()
+          : buildCategoryRegex() || CATEGORY_PRESETS.find((c) => c.key === categoryKey)?.regex || "";
 
-  React.useEffect(() => {
-    buildFeed();
-  }, [videos, photos, buildFeed]);
+      const query = buildOverpassAroundQuery(center!, metersForDistanceKey, categoryRegex || "");
+      const json = await overpassFetch(query);
+      const elements: any[] = json.elements || [];
+
+      const mapped: NearbyRestaurant[] = elements
+        .map((el) => {
+          const name = el.tags?.name || el.tags?.brand || "Unnamed Restaurant";
+          const rLat = el.lat ?? el.center?.lat;
+          const rLon = el.lon ?? el.center?.lon;
+          if (typeof rLat !== "number" || typeof rLon !== "number") return null;
+          const distanceKm = haversineKm(center!, { lat: rLat, lon: rLon });
+          const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
+          if (distanceKm > maxDistanceKm) return null;
+
+          const addressParts = [
+            el.tags?.["addr:housenumber"],
+            el.tags?.["addr:street"],
+            el.tags?.["addr:city"],
+          ].filter(Boolean);
+
+          return {
+            id: `${el.type}/${el.id}`,
+            name,
+            lat: rLat,
+            lon: rLon,
+            distanceKm,
+            address: addressParts.length > 0 ? addressParts.join(" ") : "Address not available",
+            cuisine: el.tags?.cuisine || el.tags?.["cuisine:type"] || undefined,
+          } as NearbyRestaurant;
+        })
+        .filter(Boolean) as NearbyRestaurant[];
+
+      const unique = mapped.reduce((acc, r) => {
+        const existing = acc.find(
+          (u) =>
+            u.name === r.name &&
+            Math.abs(u.lat - r.lat) < 0.0001 &&
+            Math.abs(u.lon - r.lon) < 0.0001
+        );
+        if (!existing) acc.push(r);
+        return acc;
+      }, [] as NearbyRestaurant[]);
+
+      const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
+      setNearby(byDistance);
+
+      if (byDistance.length === 0) {
+        setNearbyError("No restaurants found in this area. Try increasing the distance or changing the category.");
+      }
+    } catch (err: any) {
+      console.error("Restaurant search error:", err);
+      setNearbyError(err.message || "Couldn't load restaurants. Please try again.");
+    } finally {
+      setFetchingNearby(false);
+    }
+  };
+
+  const resetAndClose = () => {
+    setLocStage("idle");
+    setCoords(null);
+    setLocationQuery("");
+    setNearby([]);
+    setNearbyError(null);
+    setFetchingNearby(false);
+    setDistanceKey("2km");
+    setCategoryKey("any");
+    setCustomCategory("");
+    onOpenChange(false);
+  };
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
-        <div className="container">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Utensils className="h-8 w-8" />
-              <div>
-                <h1 className="text-3xl md:text-4xl font-bold mb-1">Food</h1>
-                <p className="text-muted-foreground">
-                  Upload food pics on the right • Latest food videos + photos
-                </p>
+    <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(o) : resetAndClose())}>
+      <DialogContent
+        className="
+          max-w-4xl max-h-[90vh] overflow-y-auto
+          bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl p-0
+        "
+      >
+        {/* decorative gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none" />
+
+        {/* top-right working close */}
+        <DialogClose asChild>
+          <button
+            aria-label="Close"
+            className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-slate-800/60 hover:bg-slate-800/90 text-white/90 hover:text-white transition"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </DialogClose>
+
+        <DialogHeader className="relative z-10 space-y-4 pb-4 px-6 pt-6 border-b border-white/10">
+          <DialogTitle className="flex items-center gap-3 text-2xl">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60" />
+              <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 to-orange-500 p-3">
+                <MapPin className="h-6 w-6 text-white" />
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              {/* Mobile toggle to open the rail */}
-              <Button
-                variant="outline"
-                className="lg:hidden"
-                onClick={() => setShowMobileRail((v) => !v)}
-              >
-                <Camera className="h-4 w-4 mr-2" />
-                {showMobileRail ? "Hide Splikz Photos" : "Splikz Food Photos"}
-              </Button>
-              <Button onClick={() => window.location.reload()}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+            <span className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent font-bold">
+              Discover Culinary Excellence
+            </span>
+          </DialogTitle>
+          <DialogDescription className="text-gray-300 text-lg">
+            Find extraordinary dining experiences near you.
+          </DialogDescription>
+        </DialogHeader>
 
-      <div className="container py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Center Feed */}
-          <div className="lg:col-span-9 space-y-6">
-            {/* Mobile rail (collapsible) */}
-            {showMobileRail && (
-              <div className="lg:hidden">
-                <RightFoodRail maxListHeight="50vh" />
+        {/* body scroller */}
+        <div className="relative z-10 overflow-y-auto overscroll-contain max-h-[calc(90vh-140px)] px-6 pr-8">
+          <div className="space-y-8 py-6">
+            {/* info card */}
+            <div className="relative group">
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 to-cyan-500/20 rounded-2xl blur-lg"></div>
+              <div className="relative flex items-start gap-4 p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl">
+                <div className="p-2 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl">
+                  <Info className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <p className="text-white font-medium mb-1">Privacy First</p>
+                  <p className="text-gray-300 text-sm leading-relaxed">
+                    Location is only accessed when you tap “Use location”.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* location */}
+            <div className="space-y-4">
+              <label className="text-white font-semibold text-lg flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-yellow-400" />
+                Where shall we discover?
+              </label>
+              <div className="flex gap-3">
+                <Input
+                  placeholder="City, neighborhood, or ZIP (e.g., Austin TX, 78701)"
+                  value={locationQuery}
+                  onChange={(e) => {
+                    setLocationQuery(e.target.value);
+                    if (e.target.value.trim() && coords) {
+                      setCoords(null);
+                      setLocStage("idle");
+                    }
+                  }}
+                  disabled={fetchingNearby}
+                  className="bg-white/10 backdrop-blur-xl border border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3 text-base focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300"
+                />
+                <Button
+                  variant="outline"
+                  onClick={requestLocation}
+                  disabled={fetchingNearby || locStage === "asking"}
+                  className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 border-0 text-white font-semibold rounded-xl shadow-xl"
+                >
+                  <LocateFixed className="h-4 w-4 mr-2" />
+                  {locStage === "asking" ? "Locating…" : "Use location"}
+                </Button>
+              </div>
+            </div>
+
+            {/* controls */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="space-y-3">
+                <label className="text-white font-semibold">Search radius</label>
+                <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
+                  <SelectTrigger className="bg-white/10 backdrop-blur-xl border border-white/20 text-white rounded-xl py-3">
+                    <SelectValue placeholder="Choose distance" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border border-white/20 rounded-xl">
+                    {DISTANCE_OPTIONS.map((d) => (
+                      <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
+                        {d.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="lg:col-span-2 space-y-3">
+                <label className="text-white font-semibold">Culinary category</label>
+                <div className="flex gap-3">
+                  <Select value={categoryKey} onValueChange={setCategoryKey} disabled={fetchingNearby}>
+                    <SelectTrigger className="w-64 bg-white/10 backdrop-blur-xl border border-white/20 text-white rounded-xl py-3">
+                      <SelectValue placeholder="Any cuisine" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border border-white/20 rounded-xl max-h-60">
+                      {CATEGORY_PRESETS.map((c) => (
+                        <SelectItem key={c.key} value={c.key} className="text-white hover:bg-white/10">
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    placeholder="Custom cuisine (e.g., ramen, steakhouse)"
+                    value={customCategory}
+                    onChange={(e) => setCustomCategory(e.target.value)}
+                    disabled={categoryKey !== "custom" || fetchingNearby}
+                    className="flex-1 bg-white/10 backdrop-blur-xl border border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3 focus:ring-2 focus:ring-pink-500 focus:border-transparent transition-all duration-300"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* statuses */}
+            {locStage === "asking" && (
+              <div className="flex items-center gap-3 text-blue-200">
+                <Loader2 className="h-5 w-5 animate-spin" /> Requesting location permission…
+              </div>
+            )}
+            {coords && (
+              <div className="text-green-300">
+                <span className="font-semibold">Location confirmed:</span>{" "}
+                <span className="font-mono text-sm text-gray-300">{coordsPretty}</span>
               </div>
             )}
 
-            <Tabs defaultValue="latest" className="space-y-6">
-              <TabsList className="grid w-full max-w-md grid-cols-2">
-                <TabsTrigger value="latest">Latest</TabsTrigger>
-                <TabsTrigger value="videos">Videos Only</TabsTrigger>
-              </TabsList>
+            {/* search */}
+            <div className="flex justify-center pt-2">
+              <Button
+                onClick={runNearbySearch}
+                disabled={fetchingNearby || (!coords && !locationQuery.trim())}
+                className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold px-8 py-4 rounded-2xl shadow-2xl transform hover:scale-105 transition-all duration-300 text-lg"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="relative flex items-center gap-3">
+                  <SearchIcon className="h-5 w-5" />
+                  <span>{fetchingNearby ? "Searching…" : "Find Restaurants Near You"}</span>
+                </div>
+              </Button>
+            </div>
 
-              <TabsContent value="latest" className="space-y-6">
-                {loading ? (
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-                    <p className="text-sm text-muted-foreground">Loading food feed…</p>
-                  </div>
-                ) : feed.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-10 text-center">
-                      <Utensils className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-                      <h3 className="text-lg font-semibold mb-1">Nothing yet</h3>
-                      <p className="text-muted-foreground">
-                        Be the first to upload a food photo!
-                      </p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-6">
-                    {feed.map((it, i) =>
-                      it.kind === "video" ? (
-                        <SplikCard key={`v-${it.video.id}-${i}`} splik={it.video} />
-                      ) : (
-                        <FoodPhotoCard key={`p-${it.photo.id}-${i}`} item={it.photo} />
-                      )
-                    )}
-                  </div>
-                )}
-              </TabsContent>
+            {/* error */}
+            {nearbyError && (
+              <div className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 text-red-200">
+                {nearbyError}
+              </div>
+            )}
 
-              <TabsContent value="videos" className="space-y-6">
-                {loading ? (
-                  <div className="flex flex-col items-center justify-center py-16">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-                    <p className="text-sm text-muted-foreground">Loading food videos…</p>
-                  </div>
-                ) : videos.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-10 text-center">
-                      <Utensils className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-                      <h3 className="text-lg font-semibold mb-1">No food videos</h3>
-                      <p className="text-muted-foreground">
-                        Try uploading or tagging your video as food.
-                      </p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-6">
-                    {videos.map((v) => (
-                      <SplikCard key={v.id} splik={v} />
-                    ))}
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
-          </div>
+            {/* loading */}
+            {fetchingNearby && (
+              <div className="flex items-center gap-3 text-purple-200">
+                <Loader2 className="h-5 w-5 animate-spin" /> Searching for restaurants…
+              </div>
+            )}
 
-          {/* Right Sidebar – Desktop */}
-          <div className="lg:col-span-3 hidden lg:block">
-            <RightFoodRail />
+            {/* results */}
+            {!fetchingNearby && nearby.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xl font-bold text-white">Found {nearby.length} places</h3>
+                  <div className="flex gap-1">
+                    <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                    <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                    <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                  </div>
+                </div>
+
+                <div className="max-h-96 overflow-y-auto rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl">
+                  {nearby.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between p-6 border-b border-white/10 last:border-b-0 hover:bg-white/5 transition-all duration-300"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-white font-semibold text-lg truncate">{r.name}</div>
+                        <div className="text-gray-300 text-sm truncate mt-1">{r.address}</div>
+                        <div className="text-yellow-400 text-sm font-medium mt-2">
+                          {prettyDistance(r.distanceKm)} away
+                        </div>
+                      </div>
+                      <a
+                        href={`https://www.google.com/maps?q=${encodeURIComponent(
+                          r.name + " " + (r.address || "")
+                        )}&ll=${r.lat},${r.lon}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-4 flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-xl shadow-lg"
+                        title="Open in Google Maps"
+                      >
+                        <span>View</span>
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* empty */}
+            {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
+              <div className="text-center p-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300">
+                No restaurants found. Try a bigger radius or another category.
+              </div>
+            )}
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
