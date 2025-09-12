@@ -7,23 +7,24 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import LeftSidebar from "@/components/layout/LeftSidebar";
 
-/* ✅ mobile-only UI */
+/* Mobile UI */
 import MobileMenu from "@/components/layout/MobileMenu";
 import MobileTabBar from "@/components/layout/MobileTabBar";
 import { useUploadModal } from "@/contexts/UploadModalContext";
 import { supabase } from "@/integrations/supabase/client";
 
-/* ✅ NEW: right activity rail */
+/* Activity rails */
 import RightActivityRail from "@/components/highlights/RightActivityRail";
+import MobileActivity from "@/components/highlights/MobileActivity";
 
 const AppLayout: React.FC = () => {
-  /* mobile state only */
+  // mobile state only
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [user, setUser] = React.useState<any>(null);
   const { openUpload } = useUploadModal();
 
   React.useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
       setUser(session?.user ?? null)
     );
@@ -36,13 +37,17 @@ const AppLayout: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* ───────────────── DESKTOP ───────────────── */}
+      {/* ─────────────── DESKTOP / TABLET ─────────────── */}
       <div className="hidden md:block">
+        {/* Global top bar */}
         <Header />
 
+        {/* 3-column shell: Left rail (fixed), Main content, Right rail */}
         <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[260px_1fr] lg:grid-cols-[260px_1fr_320px]">
+          {/* Fixed left rail (desktop only) */}
           <LeftSidebar />
 
+          {/* Main content area */}
           <main
             id="main"
             className="min-h-[calc(100vh-56px)] px-3 sm:px-4 py-4"
@@ -51,7 +56,7 @@ const AppLayout: React.FC = () => {
             <Outlet />
           </main>
 
-          {/* ✅ Right activity rail */}
+          {/* Right activity rail (videos + Daily Prayers, last 24h) */}
           <aside className="hidden lg:block border-l border-border/60 p-3">
             <RightActivityRail
               includeKinds={["video_post", "prayer_post"]}
@@ -60,11 +65,13 @@ const AppLayout: React.FC = () => {
           </aside>
         </div>
 
+        {/* Global footer */}
         <Footer />
       </div>
 
-      {/* ───────────────── MOBILE ───────────────── */}
+      {/* ─────────────── MOBILE ─────────────── */}
       <div className="md:hidden">
+        {/* Top bar for mobile */}
         <div className="sticky top-0 z-40 h-12 border-b bg-background/95 backdrop-blur px-3 flex items-center justify-between">
           <button
             aria-label="Open menu"
@@ -73,20 +80,30 @@ const AppLayout: React.FC = () => {
           >
             <Menu className="h-6 w-6" />
           </button>
-        <Link to="/" className="font-bold text-lg">Splikz</Link>
+          <Link to="/" className="font-bold text-lg">
+            Splikz
+          </Link>
           <div className="w-8" />
         </div>
 
+        {/* ✅ Mobile activity bar (last 24h) */}
+        <MobileActivity />
+
+        {/* Content with bottom padding so tab bar doesn’t overlap */}
         <main className="px-3 sm:px-4 py-3 pb-24">
           <Outlet />
         </main>
 
+        {/* Bottom tab bar */}
         <MobileTabBar
-          onUploadClick={() => openUpload({ onCompleteNavigateTo: "/dashboard" })}
+          onUploadClick={() =>
+            openUpload({ onCompleteNavigateTo: "/dashboard" })
+          }
           isAuthed={!!user}
           profilePath={profilePath}
         />
 
+        {/* Slide-out left menu */}
         <MobileMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
       </div>
     </div>
