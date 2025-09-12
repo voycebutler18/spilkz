@@ -10,15 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, MessageSquare, Heart } from "lucide-react";
+import { MapPin, Calendar, Film, Users, Heart } from "lucide-react";
 import { toast } from "sonner";
-import { ENABLE_DMS } from "@/config/features"; // ⬅️ feature flag to hide/show DMs
 
 interface Profile {
   id: string;
   username: string | null;
   display_name: string | null;
-  first_name?: string | null;   // names supported
+  first_name?: string | null;
   last_name?: string | null;
   full_name?: string | null;
   bio: string | null;
@@ -191,6 +190,7 @@ export default function CreatorProfile() {
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
+      // refresh the "Liked" tab on hype_reactions
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "hype_reactions", filter: `user_id=eq.${profile.id}` },
@@ -413,19 +413,7 @@ export default function CreatorProfile() {
 
               {profile.bio && <p className="mb-4">{profile.bio}</p>}
 
-              {/* ⬇️ Hide the Message button unless DMs are enabled */}
-              {ENABLE_DMS && currentUserId !== profile.id && (
-                <div className="mb-4">
-                  <Button
-                    variant="secondary"
-                    className="flex items-center gap-2"
-                    onClick={() => navigate(`/messages/${profile.id}`)}
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                    Message
-                  </Button>
-                </div>
-              )}
+              {/* Message button removed intentionally */}
 
               <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-4">
                 {profile.city && (
