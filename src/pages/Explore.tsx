@@ -462,8 +462,6 @@ const Explore = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const { toast } = useToast();
-
   const handleShare = async (splikId: string) => {
     const url = `${window.location.origin}/video/${splikId}`;
     try {
