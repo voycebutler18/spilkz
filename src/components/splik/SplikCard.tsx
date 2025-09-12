@@ -1,4 +1,3 @@
-
 // src/components/splik/SplikCard.tsx
 import * as React from "react";
 import { Link } from "react-router-dom";
@@ -363,7 +362,7 @@ export default function SplikCard({
     const v = videoRef.current;
     if (!v) return;
     
-    const nextMuted = !isMuted;
+    const nextMuted = !v.muted; // Use video's actual muted state
     v.muted = nextMuted;
     setIsMuted(nextMuted);
     
@@ -385,11 +384,14 @@ export default function SplikCard({
   return (
     <div ref={cardRef} className="rounded-xl bg-card/60 ring-1 ring-border/60 overflow-hidden">
       {/* Video */}
-      <div className="relative">
+      <div className="relative bg-black">
         <video
           ref={videoRef}
           poster={splik.thumbnail_url || undefined}
-          className="block w-full h-[560px] sm:h-[640px] object-contain bg-black"
+          className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
+          style={{
+            objectPosition: 'center center'
+          }}
           src={shouldLoad ? splik.video_url : ""}
           playsInline
           muted
@@ -415,6 +417,9 @@ export default function SplikCard({
                 }); 
             }
           }}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onVolumeChange={() => setIsMuted(videoRef.current?.muted ?? true)}
           onError={() => {
             // Fallback: enable controls so user can still play
             const v = videoRef.current;
