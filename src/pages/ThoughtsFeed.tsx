@@ -1,3 +1,4 @@
+// src/pages/ThoughtsFeed.tsx
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -5,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   X, Image, Smile, ChevronLeft, ChevronRight,
   Heart, Flag, Trash2, MessageCircle, Share, MoreHorizontal,
-  Camera, Video, MapPin, Calendar
+  Camera, Video, Calendar
 } from "lucide-react";
 
 /* Enhanced UI Components with better styling */
@@ -24,31 +25,26 @@ try {
       secondary: "bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 border border-neutral-700",
       ghost: "hover:bg-neutral-800/50 text-neutral-300"
     };
-    const sizes = {
-      sm: "px-3 py-1.5 text-sm",
-      md: "px-4 py-2",
-      lg: "px-6 py-3 text-lg"
-    };
+    const sizes = { sm: "px-3 py-1.5 text-sm", md: "px-4 py-2", lg: "px-6 py-3 text-lg" };
     return (
-      <button 
-        className={`rounded-xl font-medium transition-all duration-200 disabled:opacity-50 ${variants[variant]} ${sizes[size]} ${className}`} 
-        {...p} 
+      <button
+        className={`rounded-xl font-medium transition-all duration-200 disabled:opacity-50 ${variants[variant]} ${sizes[size]} ${className}`}
+        {...p}
       />
     );
   };
-  
+
   Card = ({ className = "", ...p }: any) => (
     <div className={`rounded-2xl border border-neutral-800/50 bg-neutral-900/80 backdrop-blur-sm shadow-xl ${className}`} {...p} />
   );
-  
+
   Badge = ({ className = "", ...p }: any) => (
     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-gradient-to-r from-purple-600/20 to-blue-600/20 text-purple-300 border border-purple-500/30 ${className}`} {...p} />
   );
-  
+
   const BaseInput = (Tag: any) => ({ className = "", ...p }: any) => (
     <Tag className={`w-full border border-neutral-700/50 bg-neutral-800/50 text-neutral-100 rounded-xl px-4 py-3 placeholder:text-neutral-500 focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all ${className}`} {...p} />
   );
-  
   Textarea = BaseInput("textarea");
   Input = BaseInput("input");
 }
@@ -207,7 +203,6 @@ export default function ThoughtsFeed() {
     const safe = arr.filter(f => f.type.startsWith("image/") && f.size <= maxEachMB * 1024 * 1024);
     setFiles(prev => [...prev, ...safe]);
   }
-  
   function removeFile(i: number) { setFiles(prev => prev.filter((_, idx) => idx !== i)); }
 
   async function createPost() {
@@ -299,13 +294,11 @@ export default function ThoughtsFeed() {
       }
     }
   }
-  
   function closeLightbox() {
     setLightboxIndex(null);
     if (location.pathname.includes("/thoughts/photos/"))
       navigate("/thoughts", { replace: true });
   }
-  
   const prevPhoto = () => setLightboxIndex(i => (i === null ? i : (i + allPhotos.length - 1) % allPhotos.length));
   const nextPhoto = () => setLightboxIndex(i => (i === null ? i : (i + 1) % allPhotos.length));
 
@@ -320,7 +313,6 @@ export default function ThoughtsFeed() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lightboxOpen]);
-  
   useLightboxSwipe(lightboxOpen, prevPhoto, nextPhoto, closeLightbox);
 
   return (
@@ -401,11 +393,7 @@ export default function ThoughtsFeed() {
                         const url = URL.createObjectURL(f);
                         return (
                           <div key={i} className="relative group">
-                            <img 
-                              src={url} 
-                              alt="" 
-                              className="h-32 w-full object-cover rounded-xl shadow-lg" 
-                            />
+                            <img src={url} alt="" className="h-32 w-full object-cover rounded-xl shadow-lg" />
                             <button
                               className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 shadow-lg opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-red-600"
                               onClick={() => removeFile(i)}
@@ -443,19 +431,13 @@ export default function ThoughtsFeed() {
                       >
                         <option value="" className="bg-neutral-800 text-neutral-200">😊 Mood</option>
                         {MOODS.map(m => (
-                          <option key={m} value={m} className="bg-neutral-800 text-neutral-200">
-                            {m}
-                          </option>
+                          <option key={m} value={m} className="bg-neutral-800 text-neutral-200">{m}</option>
                         ))}
                       </select>
                     </div>
                   </div>
 
-                  <Button 
-                    onClick={createPost} 
-                    disabled={posting || (!text.trim() && files.length === 0)}
-                    className="min-w-[100px]"
-                  >
+                  <Button onClick={createPost} disabled={posting || (!text.trim() && files.length === 0)} className="min-w-[100px]">
                     {posting ? "Posting..." : "Post"}
                   </Button>
                 </div>
@@ -470,9 +452,7 @@ export default function ThoughtsFeed() {
                 {/* Enhanced Post Header */}
                 <div className="p-6 pb-4">
                   <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-rose-500 to-orange-500 flex items-center justify-center text-white font-bold text-lg">
-                      U
-                    </div>
+                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-rose-500 to-orange-500 flex items-center justify-center text-white font-bold text-lg">U</div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-neutral-100">User</h3>
@@ -483,9 +463,7 @@ export default function ThoughtsFeed() {
                           </Badge>
                         )}
                       </div>
-                      <p className="text-sm text-neutral-400">
-                        {timeAgo(new Date(p.created_at).getTime())} • 🌍
-                      </p>
+                      <p className="text-sm text-neutral-400">{timeAgo(new Date(p.created_at).getTime())} • 🌍</p>
                     </div>
                     <button className="p-2 hover:bg-neutral-800 rounded-full transition-colors">
                       <MoreHorizontal className="h-5 w-5 text-neutral-400" />
@@ -496,9 +474,7 @@ export default function ThoughtsFeed() {
                 {/* Post Content */}
                 {p.text_content && (
                   <div className="px-6 pb-4">
-                    <p className="text-neutral-100 text-base leading-relaxed whitespace-pre-wrap">
-                      {p.text_content}
-                    </p>
+                    <p className="text-neutral-100 text-base leading-relaxed whitespace-pre-wrap">{p.text_content}</p>
                   </div>
                 )}
 
@@ -506,36 +482,27 @@ export default function ThoughtsFeed() {
                 {(imagesByPost[p.id]?.length ?? 0) > 0 && (
                   <div className="relative">
                     {imagesByPost[p.id].length === 1 ? (
-                      <button 
-                        onClick={() => openLightboxFor(imagesByPost[p.id][0].id)}
-                        className="w-full"
-                      >
-                        <img 
-                          src={imagesByPost[p.id][0].src} 
-                          alt="" 
+                      <button onClick={() => openLightboxFor(imagesByPost[p.id][0].id)} className="w-full">
+                        <img
+                          src={imagesByPost[p.id][0].src}
+                          alt=""
                           loading="lazy"
-                          className="w-full h-96 object-cover hover:opacity-95 transition-opacity cursor-pointer" 
+                          className="w-full h-96 object-cover hover:opacity-95 transition-opacity cursor-pointer"
                         />
                       </button>
                     ) : (
                       <div className="grid grid-cols-2 gap-1">
                         {imagesByPost[p.id].slice(0, 4).map((img, i) => (
-                          <button
-                            key={img.id}
-                            onClick={() => openLightboxFor(img.id)}
-                            className="relative"
-                          >
-                            <img 
-                              src={img.src} 
-                              alt="" 
+                          <button key={img.id} onClick={() => openLightboxFor(img.id)} className="relative">
+                            <img
+                              src={img.src}
+                              alt=""
                               loading="lazy"
-                              className="w-full h-48 object-cover hover:opacity-95 transition-opacity cursor-pointer" 
+                              className="w-full h-48 object-cover hover:opacity-95 transition-opacity cursor-pointer"
                             />
                             {i === 3 && imagesByPost[p.id].length > 4 && (
                               <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                                <span className="text-white text-2xl font-bold">
-                                  +{imagesByPost[p.id].length - 4}
-                                </span>
+                                <span className="text-white text-2xl font-bold">+{imagesByPost[p.id].length - 4}</span>
                               </div>
                             )}
                           </button>
@@ -547,26 +514,20 @@ export default function ThoughtsFeed() {
 
                 {/* Enhanced Reactions + actions */}
                 <div className="p-6 pt-4">
-                  {/* Reaction Summary */}
                   {(likesCount[p.id] || 0) > 0 && (
                     <div className="flex items-center gap-2 mb-3 text-sm text-neutral-400">
                       <div className="flex -space-x-1">
-                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-red-500 to-pink-500 flex items-center justify-center text-white text-xs">
-                          ❤️
-                        </div>
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-red-500 to-pink-500 flex items-center justify-center text-white text-xs">❤️</div>
                       </div>
                       <span>{likesCount[p.id]} {likesCount[p.id] === 1 ? 'person likes' : 'people like'} this</span>
                     </div>
                   )}
 
-                  {/* Enhanced Action Buttons */}
                   <div className="flex items-center justify-between pt-3 border-t border-neutral-800">
-                    <button 
+                    <button
                       onClick={() => toggleLike(p.id)}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all hover:bg-neutral-800/50 ${
-                        myLikeId[p.id] 
-                          ? 'text-red-400' 
-                          : 'text-neutral-300 hover:text-red-400'
+                        myLikeId[p.id] ? 'text-red-400' : 'text-neutral-300 hover:text-red-400'
                       }`}
                     >
                       <Heart className={`h-5 w-5 ${myLikeId[p.id] ? 'fill-current' : ''}`} />
@@ -580,7 +541,6 @@ export default function ThoughtsFeed() {
                       <span>Share</span>
                     </button>
 
-                    {/* Report + Delete in dropdown */}
                     <div className="flex items-center gap-2">
                       <button
                         className="p-2 text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 rounded-lg transition-colors"
@@ -618,21 +578,17 @@ export default function ThoughtsFeed() {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-neutral-100">Photos</h3>
-                <span className="text-sm text-neutral-400 bg-neutral-800 px-2 py-1 rounded-full">
-                  {allPhotos.length}
-                </span>
+                <span className="text-sm text-neutral-400 bg-neutral-800 px-2 py-1 rounded-full">{allPhotos.length}</span>
               </div>
 
               {allPhotos.length === 0 ? (
                 <div className="text-center py-8">
                   <Image className="h-12 w-12 text-neutral-600 mx-auto mb-3" />
-                  <p className="text-sm text-neutral-400">
-                    Photos you share will appear here
-                  </p>
+                  <p className="text-sm text-neutral-400">Photos you share will appear here</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-3 gap-2">
-                  {[...allPhotos].reverse().slice(0, 120).map((photo, i) => (
+                  {[...allPhotos].reverse().slice(0, 120).map((photo) => (
                     <button
                       key={photo.id}
                       onClick={() => openLightboxFor(photo.id)}
@@ -649,7 +605,7 @@ export default function ThoughtsFeed() {
                   ))}
                 </div>
               )}
-              
+
               {allPhotos.length > 120 && (
                 <button className="w-full mt-3 text-center text-purple-400 hover:text-purple-300 font-medium text-sm">
                   View all photos ({allPhotos.length})
@@ -662,10 +618,10 @@ export default function ThoughtsFeed() {
 
       {/* Mobile-Optimized LIGHTBOX */}
       {lightboxOpen && lightboxIndex !== null && (
-        <div 
-          className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2 sm:p-4" 
+        <div
+          className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2 sm:p-4"
           onClick={closeLightbox}
-          style={{ touchAction: 'manipulation' }}
+          style={{ touchAction: "manipulation" }}
         >
           <button
             className="absolute top-2 right-2 sm:top-4 sm:right-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl"
@@ -675,8 +631,8 @@ export default function ThoughtsFeed() {
             <X className="h-5 w-5 sm:h-6 sm:w-6" />
           </button>
 
-          <button 
-            className="absolute left-2 sm:left-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl" 
+          <button
+            className="absolute left-2 sm:left-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl"
             onClick={prevPhoto}
             aria-label="Previous"
           >
@@ -687,12 +643,12 @@ export default function ThoughtsFeed() {
             src={allPhotos[lightboxIndex].src}
             alt=""
             className="max-h-[85vh] max-w-[90vw] sm:max-h-[90vh] sm:max-w-[90vw] object-contain rounded-lg sm:rounded-xl shadow-2xl"
-            onClick={e => e.stopPropagation()}
-            style={{ touchAction: 'manipulation' }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ touchAction: "manipulation" }}
           />
 
-          <button 
-            className="absolute right-2 sm:right-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl" 
+          <button
+            className="absolute right-2 sm:right-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl"
             onClick={nextPhoto}
             aria-label="Next"
           >
@@ -700,44 +656,7 @@ export default function ThoughtsFeed() {
           </button>
 
           {/* Mobile-Friendly Photo Counter */}
-          <div className="absolute bottom-2 sm:bottom-4 left-1/2 transform -translate-x-1/2 text-white bg-black/70 backdrop-blur px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm z-10 font-medium">
-            {lightboxIndex + 1} / {allPhotos.length}
-          </div>
-        </div>
-      )}-4" onClick={closeLightbox}>
-          <button
-            className="absolute top-4 right-4 text-white p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10"
-            onClick={closeLightbox}
-            aria-label="Close"
-          >
-            <X className="h-6 w-6" />
-          </button>
-
-          <button 
-            className="absolute left-4 text-white p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10" 
-            onClick={prevPhoto}
-            aria-label="Previous"
-          >
-            <ChevronLeft className="h-7 w-7" />
-          </button>
-
-          <img
-            src={allPhotos[lightboxIndex].src}
-            alt=""
-            className="max-h-[90vh] max-w-[90vw] object-contain rounded-xl shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          />
-
-          <button 
-            className="absolute right-4 text-white p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10" 
-            onClick={nextPhoto}
-            aria-label="Next"
-          >
-            <ChevronRight className="h-7 w-7" />
-          </button>
-
-          {/* Photo counter */}
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 text-white bg-black/50 backdrop-blur px-3 py-1 rounded-full text-sm z-10">
+          <div className="absolute bottom-2 sm:bottom-4 left-1/2 -translate-x-1/2 text-white bg-black/70 backdrop-blur px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm z-10 font-medium">
             {lightboxIndex + 1} / {allPhotos.length}
           </div>
         </div>
@@ -806,7 +725,7 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
         <MessageCircle className="h-5 w-5" />
         <span>Comment</span>
       </button>
-      
+
       {open && (
         <div className="mt-4 space-y-3 pl-4 border-l-2 border-neutral-800">
           {loading && <div className="text-sm text-neutral-400">Loading comments…</div>}
@@ -814,25 +733,17 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
             <>
               {items.map(c => (
                 <div key={c.id} className="flex items-start gap-3">
-                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-medium">
-                    U
-                  </div>
+                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-medium">U</div>
                   <div className="flex-1 bg-neutral-800/30 rounded-2xl p-3">
                     <div className="text-sm font-medium text-neutral-200 mb-1">User</div>
                     <div className="text-sm text-neutral-100">{c.text}</div>
                     <div className="mt-2 flex items-center gap-3 text-xs text-neutral-400">
                       <span>{timeAgo(new Date(c.created_at).getTime())}</span>
-                      <button 
-                        className="inline-flex items-center gap-1 hover:text-neutral-300" 
-                        onClick={() => toggleReport(c.id)}
-                      >
+                      <button className="inline-flex items-center gap-1 hover:text-neutral-300" onClick={() => toggleReport(c.id)}>
                         <Flag className="h-3 w-3" /> Report
                       </button>
                       {c.user_id === currentUserId && (
-                        <button 
-                          className="inline-flex items-center gap-1 hover:text-neutral-300" 
-                          onClick={() => removeComment(c.id)}
-                        >
+                        <button className="inline-flex items-center gap-1 hover:text-neutral-300" onClick={() => removeComment(c.id)}>
                           <Trash2 className="h-3 w-3" /> Delete
                         </button>
                       )}
@@ -842,21 +753,20 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
               ))}
 
               <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-sm font-medium">
-                  Y
-                </div>
+                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-sm font-medium">Y</div>
                 <Input
                   value={text}
                   onChange={(e: any) => setText(e.target.value)}
                   placeholder="Write a comment…"
                   className="flex-1 h-10"
-                  onKeyPress={(e: any) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), addComment())}
+                  onKeyDown={(e: any) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      addComment();
+                    }
+                  }}
                 />
-                <Button 
-                  onClick={addComment} 
-                  disabled={posting || !text.trim()}
-                  size="sm"
-                >
+                <Button onClick={addComment} disabled={posting || !text.trim()} size="sm">
                   {posting ? "..." : "Post"}
                 </Button>
               </div>
@@ -889,24 +799,24 @@ function useLightboxSwipe(
   useEffect(() => {
     if (!enabled) return;
     let startX = 0, startY = 0, dx = 0, dy = 0, touching = false;
-    const onTouchStart = (e: TouchEvent) => { 
-      touching = true; 
-      startX = e.touches[0].clientX; 
-      startY = e.touches[0].clientY; 
+    const onTouchStart = (e: TouchEvent) => {
+      touching = true;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
     };
-    const onTouchMove = (e: TouchEvent) => { 
-      if (!touching) return; 
-      dx = e.touches[0].clientX - startX; 
-      dy = e.touches[0].clientY - startY; 
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touching) return;
+      dx = e.touches[0].clientX - startX;
+      dy = e.touches[0].clientY - startY;
     };
     const onTouchEnd = () => {
-      if (!touching) return; 
+      if (!touching) return;
       touching = false;
       const absX = Math.abs(dx), absY = Math.abs(dy);
-      if (absX > 40 && absX > absY) { 
-        dx > 0 ? onPrev() : onNext(); 
-      } else if (absY < 10 && absX < 10) { 
-        onClose(); 
+      if (absX > 40 && absX > absY) {
+        dx > 0 ? onPrev() : onNext();
+      } else if (absY < 10 && absX < 10) {
+        onClose();
       }
       startX = startY = dx = dy = 0;
     };
