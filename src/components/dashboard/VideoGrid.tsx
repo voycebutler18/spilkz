@@ -32,7 +32,7 @@ interface Splik {
   thumbnail_url?: string;
   title?: string;
   description?: string;
-  // views: number;  // ⬅️ removed: we no longer display or use views
+  // ⛔ views removed
   likes_count: number;
   created_at: string;
   user_id: string;
@@ -132,7 +132,6 @@ export function VideoGrid({
       video.currentTime = 0;
       video.play();
       setPlayingVideo(splikId);
-
       // ⛔ removed: no view RPC, no view counting
     }
   };
@@ -231,7 +230,8 @@ export function VideoGrid({
         await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splikId);
         toast.success("Removed from favorites");
       } else {
-        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splrikId });
+        // ✅ fixed typo here (splikId)
+        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splikId });
         toast.success("Added to favorites");
       }
     } catch {
@@ -293,7 +293,7 @@ export function VideoGrid({
                 onTimeUpdate={() => handleTimeUpdate(splik.id)}
               />
 
-              {/* ⛔ removed the views badge entirely */}
+              {/* ⛔ views badge removed */}
 
               {/* Play/Pause overlay */}
               <div
@@ -369,7 +369,7 @@ export function VideoGrid({
                 </p>
               )}
 
-              {/* ⛔ removed the views chip; keep just the time */}
+              {/* ⛔ views chip removed; keep just the time */}
               <div className="flex items-center justify-end text-xs font-medium">
                 <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
                   {formatTime(splik.created_at)}
