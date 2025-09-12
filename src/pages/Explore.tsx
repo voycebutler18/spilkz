@@ -144,21 +144,35 @@ function RightPhotoRail({
   const removeLocally = (id: string) =>
     setItems((prev) => prev.filter((p) => p.id !== id));
 
+  /* CORRECTION #1: delete the REAL row even if this is the optimistic card,
+     then remove from storage; also remove both possible ids locally. */
   const deleteActive = async () => {
     if (!active || !currentUserId) return;
-    if (active.user_id !== currentUserId) return;
     try {
-      const { error } = await supabase
+      const { data: existing, error: findErr } = await supabase
+        .from("vibe_photos")
+        .select("id")
+        .eq("user_id", currentUserId)
+        .eq("photo_url", active.photo_url)
+        .limit(1)
+        .maybeSingle();
+      if (findErr) throw findErr;
+
+      const deleteId = existing?.id || active.id;
+
+      const { error: delErr } = await supabase
         .from("vibe_photos")
         .delete()
-        .eq("id", active.id)
+        .eq("id", deleteId)
         .eq("user_id", currentUserId);
-      if (error) throw error;
+      if (delErr) throw delErr;
 
       const path = pathFromPublicUrl(active.photo_url);
       if (path) await supabase.storage.from(PHOTOS_BUCKET).remove([path]);
 
       removeLocally(active.id);
+      if (existing?.id && existing.id !== active.id) removeLocally(existing.id);
+
       closeViewer();
       toast({ title: "Deleted", description: "Your photo was removed." });
     } catch (e: any) {
@@ -217,11 +231,17 @@ function RightPhotoRail({
 
     load();
 
+    /* CORRECTION #2: listen for DELETE in addition to INSERT so the rail refreshes. */
     const ch = supabase
       .channel("rail-vibe-photos")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "vibe_photos" },
+        () => load()
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "vibe_photos" },
         () => load()
       )
       .subscribe();
@@ -513,8 +533,7 @@ const Explore = () => {
 
   useEffect(() => {
     fetchHomeFeed();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
