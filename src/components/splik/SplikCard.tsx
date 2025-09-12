@@ -12,6 +12,8 @@ type Profile = {
   id: string;
   username?: string | null;
   display_name?: string | null;
+  first_name?: string | null;   // ✅ added
+  last_name?: string | null;    // ✅ added
   avatar_url?: string | null;
 };
 
@@ -72,13 +74,14 @@ export default function SplikCard({
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
+  // If profile info wasn't provided, fetch it (now including first/last name)
   React.useEffect(() => {
     if (splik.profile?.username || splik.profile?.display_name) return;
     let cancelled = false;
     (async () => {
       const { data } = await supabase
         .from("profiles")
-        .select("id, username, display_name, avatar_url")
+        .select("id, username, display_name, first_name, last_name, avatar_url") // ✅ include names
         .eq("id", splik.user_id)
         .maybeSingle<Profile>();
       if (!cancelled && data) setLoadedProfile(data);
@@ -230,9 +233,12 @@ export default function SplikCard({
     if (!next && !isPlaying) v.play().catch(() => { v.muted = true; setIsMuted(true); });
   };
 
-  // ✅ Creator link for avatar/name → /creator/{username or id}
+  // ✅ Reliable creator name + link to /creator/{username || id}
   const profile = splik.profile || loadedProfile || null;
-  const name = profile?.display_name || profile?.username || "User";
+  const fullName =
+    [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
+  const name =
+    profile?.display_name || fullName || profile?.username || "User";
   const avatarUrl =
     profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${splik.user_id}`;
   const creatorHref = `/creator/${profile?.username || splik.user_id}`;
@@ -283,7 +289,12 @@ export default function SplikCard({
       {/* Actions */}
       <div className="px-4 pb-4 pt-3">
         <div className="flex items-center gap-2">
-          <FollowButton profileId={splik.user_id} username={profile?.username || undefined} size="sm" variant="outline" />
+          <FollowButton
+            profileId={splik.user_id}
+            username={profile?.username || undefined}
+            size="sm"
+            variant="outline"
+          />
           <Button
             variant={hasHyped ? "default" : "outline"} size="sm"
             className={cn("gap-2", hasHyped && "bg-orange-500 hover:bg-orange-600 text-white")}
