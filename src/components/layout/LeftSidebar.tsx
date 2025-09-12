@@ -1,4 +1,3 @@
-// src/components/layout/LeftSidebar.tsx
 import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -62,6 +61,17 @@ const LeftSidebar: React.FC = () => {
             )}
           >
             Home
+          </Link>
+
+          {/* NEW: Vibes (text-only posts) */}
+          <Link
+            to="/vibes"
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/vibes") && "bg-white/10 font-medium"
+            )}
+          >
+            ✍️ Vibes
           </Link>
 
           <Link
