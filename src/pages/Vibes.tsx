@@ -5,7 +5,7 @@ import VibeComposer from "@/components/vibes/VibeComposer";
 import VibeCard, { Vibe } from "@/components/vibes/VibeCard";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Camera, Plus, Users, TrendingUp, X, ChevronUp, ChevronDown,
+  Camera, Plus, Users, TrendingUp, X, ChevronUp, ChevronDown, Loader2,
 } from "lucide-react";
 import {
   Sheet,
@@ -13,14 +13,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { toast } from "sonner";
 
 /** ────────────────────────────────────────────────────────────────────────────
- * Inline Right-Side Vertical Photo Rail (NOT “stories”)
- * - Visible in right sidebar on desktop (lg+)
- * - MOBILE: floating button opens the same rail from the RIGHT as a slide-in
- * - Vertical scroll, small clickable profile avatars → /creator/:slug
- * - Fullscreen viewer with ArrowUp/ArrowDown
- * - Realtime inserts from vibe_photos or vibes
+ * Right-Side Vertical Photo Rail (NOT “stories”)
+ * - Visible on right sidebar (desktop), and in a right-side sheet (mobile)
+ * - “Upload Photo” posts to Storage → adds to text feed (vibes) → shows in rail
+ * - Realtime inserts from vibe_photos and vibes
  * - No extra files created
  * ──────────────────────────────────────────────────────────────────────────── */
 type ProfileLite = {
@@ -39,6 +38,9 @@ type PhotoItem = {
   user_id: string;
   profile?: ProfileLite | null;
 };
+
+// 🔧 Change this if your Storage bucket name is different
+const PHOTO_BUCKET = "vibes"; // e.g., "vibes", "photos", or your existing bucket
 
 const nameOf = (p?: ProfileLite | null) => {
   if (!p) return "User";
@@ -60,6 +62,10 @@ function RightPhotoRail({
   const [items, setItems] = React.useState<PhotoItem[]>([]);
   const [viewerIndex, setViewerIndex] = React.useState<number | null>(null);
 
+  // upload UI
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = React.useState(false);
+
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
@@ -72,7 +78,7 @@ function RightPhotoRail({
         .limit(limit);
       if (!e1 && p1?.length) photos = p1;
 
-      // 2) Fallback: vibes.* image fields
+      // 2) Fallback to vibes.* (image_url or media_url)
       if (!photos.length) {
         const { data: p2 } = await supabase
           .from("vibes")
@@ -119,6 +125,7 @@ function RightPhotoRail({
 
   React.useEffect(() => {
     load();
+
     const ch = supabase
       .channel("right-photo-rail")
       .on(
@@ -132,6 +139,7 @@ function RightPhotoRail({
         () => load()
       )
       .subscribe();
+
     return () => {
       try { supabase.removeChannel(ch); } catch {}
     };
@@ -155,20 +163,145 @@ function RightPhotoRail({
     return () => window.removeEventListener("keydown", onKey);
   }, [viewerIndex, items.length]);
 
+  const onPickFile = () => fileRef.current?.click();
+
+  const handleFile = async (file: File) => {
+    try {
+      setIsUploading(true);
+
+      if (!file.type.startsWith("image/")) {
+        toast.error("Please upload an image file.");
+        return;
+      }
+      if (file.size > 12 * 1024 * 1024) {
+        toast.error("Image is too large (max 12 MB).");
+        return;
+      }
+
+      // who is uploading?
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id;
+      if (!uid) {
+        toast.error("Please log in to upload a photo.");
+        return;
+      }
+
+      // upload to Storage
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `${uid}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase
+        .storage
+        .from(PHOTO_BUCKET)
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) {
+        toast.error("Upload failed. Check bucket permissions.");
+        console.error(upErr);
+        return;
+      }
+
+      const { data: pub } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
+      const publicUrl = pub?.publicUrl;
+      if (!publicUrl) {
+        toast.error("Could not get public URL for image.");
+        return;
+      }
+
+      // 1) Insert in vibes for the TEXT FEED (try image_url, fallback to media_url)
+      let vibeError = null;
+      {
+        const { error } = await supabase
+          .from("vibes")
+          .insert([{ user_id: uid, content: "", image_url: publicUrl }]);
+        vibeError = error || null;
+        if (vibeError) {
+          // Try media_url instead if image_url column doesn't exist
+          const { error: e2 } = await supabase
+            .from("vibes")
+            .insert([{ user_id: uid, content: "", media_url: publicUrl }]);
+          vibeError = e2 || null;
+        }
+      }
+      if (vibeError) {
+        console.warn("Insert into vibes failed:", vibeError.message);
+      }
+
+      // 2) Insert in vibe_photos for the RIGHT RAIL (if table exists)
+      {
+        const { error } = await supabase
+          .from("vibe_photos")
+          .insert([{ user_id: uid, photo_url: publicUrl }]);
+        if (error && !/relation .* does not exist/i.test(error.message)) {
+          // if it's missing, ignore; otherwise log
+          console.warn("Insert into vibe_photos failed:", error.message);
+        }
+      }
+
+      // Optimistic add (in case realtime is not wired)
+      setItems((prev) => [
+        {
+          id: `tmp-${Date.now()}`,
+          url: publicUrl,
+          created_at: new Date().toISOString(),
+          user_id: uid,
+          profile: prev.find((p) => p.user_id === uid)?.profile ?? undefined,
+        },
+        ...prev,
+      ]);
+
+      toast.success("Photo uploaded!");
+    } catch (e) {
+      console.error(e);
+      toast.error("Something went wrong uploading your photo.");
+    } finally {
+      setIsUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) void handleFile(f);
+  };
+
   return (
     <>
+      {/* Hidden file input */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onFileChange}
+      />
+
       <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-slate-200">{title}</h2>
           <Camera className="h-5 w-5 text-slate-400" />
         </div>
 
-        {/* Optional: wire to your upload flow */}
+        {/* Upload Photo → goes to right rail + text feed */}
         <div className="mb-4">
-          <button className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-xl p-3 transition-all duration-300 group">
+          <button
+            onClick={onPickFile}
+            disabled={isUploading}
+            className="w-full rounded-xl p-3 transition-all duration-300 group
+                       bg-gradient-to-r from-purple-600 to-blue-600
+                       hover:from-purple-700 hover:to-blue-700
+                       disabled:opacity-60 disabled:cursor-not-allowed"
+          >
             <div className="flex items-center justify-center space-x-2">
-              <Plus className="h-5 w-5 text-white" />
-              <span className="text-white font-medium text-sm">Add Photo</span>
+              {isUploading ? (
+                <>
+                  <Loader2 className="h-5 w-5 text-white animate-spin" />
+                  <span className="text-white font-medium text-sm">Uploading…</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-5 w-5 text-white" />
+                  <span className="text-white font-medium text-sm">Upload Photo</span>
+                </>
+              )}
             </div>
           </button>
         </div>
@@ -201,6 +334,7 @@ function RightPhotoRail({
                   loading="lazy"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+
                 {/* Small avatar → creator profile (don’t open viewer) */}
                 <Link
                   to={slug ? `/creator/${slug}` : "#"}
@@ -216,6 +350,7 @@ function RightPhotoRail({
                     </span>
                   )}
                 </Link>
+
                 {/* Name on hover */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                   <div className="absolute bottom-2 left-2 right-2">
@@ -240,6 +375,7 @@ function RightPhotoRail({
             >
               <X className="h-6 w-6 text-white" />
             </button>
+
             {/* Up/Down */}
             {viewerIndex > 0 && (
               <button
@@ -319,9 +455,7 @@ function RightPhotoRail({
 export default function VibesPage() {
   const [loading, setLoading] = React.useState(true);
   const [rows, setRows] = React.useState<Vibe[]>([]);
-  const railOpenRef = React.useRef(false); // to avoid stale closures for sheet
   const [railOpen, setRailOpen] = React.useState(false);
-  railOpenRef.current = railOpen;
 
   const hydrateProfile = React.useCallback(async (v: any): Promise<Vibe> => {
     const { data: prof } = await supabase
@@ -337,7 +471,7 @@ export default function VibesPage() {
     try {
       const { data, error } = await supabase
         .from("vibes")
-        .select("id, user_id, content, mood, created_at")
+        .select("id, user_id, content, mood, created_at, image_url, media_url")
         .order("created_at", { ascending: false })
         .limit(100);
       if (error) throw error;
@@ -442,7 +576,7 @@ export default function VibesPage() {
                 {loading ? (
                   <div className="py-24 flex flex-col items-center justify-center">
                     <div className="relative">
-                      <div className="h-12 w-12 border-2 border-slate-600 border-t-purple-400 rounded-full animate-spin"></div>
+                      <div className="h-12 w-12 border-2 border-slate-600 border-top-color border-t-purple-400 rounded-full animate-spin"></div>
                       <div className="absolute inset-0 h-12 w-12 border-2 border-transparent border-b-blue-400 rounded-full animate-spin animation-delay-150"></div>
                     </div>
                     <p className="mt-6 text-slate-400 font-light">Loading vibes...</p>
@@ -513,7 +647,7 @@ export default function VibesPage() {
           </div>
         </div>
 
-        {/* MOBILE: floating button → opens right-side sheet with the SAME rail */}
+        {/* MOBILE: button → right sheet with photo rail */}
         <button
           aria-label="Open photos"
           onClick={() => setRailOpen(true)}
