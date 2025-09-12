@@ -18,7 +18,7 @@ import {
   Camera,
 } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
-import { FollowButton } from "@/components/FollowButton";
+import FollowButton from "@/components/FollowButton";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -227,7 +227,7 @@ function RightPhotoRail({
 
                 {/* Small avatar → creator profile */}
                 <Link
-                  to={slug ? `/creator/${slug}` : "#`}
+                  to={slug ? `/creator/${slug}` : "#"}
                   className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
                   title={name}
                 >
