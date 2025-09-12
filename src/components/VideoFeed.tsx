@@ -130,6 +130,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // pull any prewarmed feed the Splash page left in the store/session
   const { feed: storeFeed } = useFeedStore();
 
+  // 🔸 Batch preloading state
+  const BATCH_SIZE = 20;
+  const [loadedBatches, setLoadedBatches] = useState<Set<number>>(new Set([0])); // load first batch
+  const [preloadingVideos, setPreloadingVideos] = useState<Set<number>>(new Set());
+
   // Try store → sessionStorage → network (only if needed)
   useEffect(() => {
     let cancelled = false;
@@ -272,7 +277,100 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ========== Autoplay with flicker fixes ========== */
+  /* ===================== Batch preloading ===================== */
+  const preloadVideoBatch = async (batchIndex: number) => {
+    if (loadedBatches.has(batchIndex)) return;
+
+    const startIdx = batchIndex * BATCH_SIZE;
+    const endIdx = Math.min(startIdx + BATCH_SIZE, spliks.length);
+
+    // Mark batch as (to be) loaded
+    setLoadedBatches((prev) => {
+      const ns = new Set(prev);
+      ns.add(batchIndex);
+      return ns;
+    });
+
+    for (let i = startIdx; i < endIdx; i++) {
+      if (!preloadingVideos.has(i)) {
+        setPreloadingVideos((prev) => {
+          const ns = new Set(prev);
+          ns.add(i);
+          return ns;
+        });
+
+        const preloadVideo = document.createElement("video");
+        preloadVideo.preload = "auto";
+        preloadVideo.muted = true;
+        preloadVideo.playsInline = true;
+        // @ts-expect-error iOS attribute
+        preloadVideo.setAttribute("webkit-playsinline", "true");
+        preloadVideo.src = spliks[i]?.video_url;
+
+        preloadVideo.addEventListener(
+          "loadeddata",
+          () => {
+            const startAt = Number(spliks[i]?.trim_start ?? 0);
+            const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+            try {
+              preloadVideo.currentTime = resetAt;
+            } catch {}
+          },
+          { once: true }
+        );
+
+        const finish = () => {
+          setPreloadingVideos((prev) => {
+            const ns = new Set(prev);
+            ns.delete(i);
+            return ns;
+          });
+          preloadVideo.remove();
+        };
+
+        preloadVideo.addEventListener("canplaythrough", finish, { once: true });
+        preloadVideo.addEventListener("error", finish, { once: true });
+
+        preloadVideo.style.display = "none";
+        document.body.appendChild(preloadVideo);
+      }
+    }
+  };
+
+  // Scroll-based batch loading & initial batch
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || spliks.length === 0) return;
+
+    const handleScroll = () => {
+      const scrollTop = container.scrollTop;
+      const containerHeight = container.clientHeight;
+
+      // Each section is 100svh (snap), so index ~ scrollTop / height
+      const currentVideoIndex = Math.floor(scrollTop / containerHeight);
+      const currentBatch = Math.floor(currentVideoIndex / BATCH_SIZE);
+
+      // Preload next batch when 75% through this batch
+      const batchProgress = (currentVideoIndex % BATCH_SIZE) / BATCH_SIZE;
+      if (batchProgress > 0.75) {
+        const nextBatch = currentBatch + 1;
+        if (nextBatch * BATCH_SIZE < spliks.length) {
+          preloadVideoBatch(nextBatch);
+        }
+      }
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    // Preload first batch immediately
+    preloadVideoBatch(0);
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spliks.length, loadedBatches, preloadingVideos]);
+
+  /* ========== Autoplay with flicker fixes (kept) ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -302,12 +400,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
           muteOtherVideos(index);
 
-          // Ensure mobile-friendly attributes and preload are set
+          // Mobile vs desktop preload mode
           video.setAttribute("playsinline", "true");
           // @ts-expect-error - iOS attr
           video.setAttribute("webkit-playsinline", "true");
           video.disablePictureInPicture = true;
-          video.preload = "metadata";
+          video.preload = isTouchDevice() ? "auto" : "metadata";
           video.crossOrigin = "anonymous";
 
           // Default mute on touch devices to satisfy autoplay
@@ -319,7 +417,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
           // Seek slightly off 0 to avoid black frame flicker
           try {
-            if (video.currentTime === 0) {
+            if (video.readyState >= 2 && video.currentTime === 0) {
               video.currentTime = resetAt;
             }
           } catch {}
@@ -351,7 +449,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 setIsPlaying((prev) => ({ ...prev, [index]: true }));
                 setShowPauseButton((prev) => ({ ...prev, [index]: true }));
               } catch {
-                // As a last resort, at least show the first frame
+                // Show first frame at least
                 try {
                   video.currentTime = resetAt;
                 } catch {}
@@ -420,7 +518,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     } else {
       muteOtherVideos(index);
       try {
-        if (video.currentTime === 0) video.currentTime = resetAt;
+        if (video.readyState >= 2 && video.currentTime === 0) video.currentTime = resetAt;
       } catch {}
       video.muted = muted[index] ?? isTouchDevice();
       video.play().catch(console.error);
@@ -486,173 +584,208 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
-    >
-      {spliks.map((s, i) => {
-        const videoIsPlaying = isPlaying[i] ?? false;
-        const shouldShowPauseButton = showPauseButton[i] ?? true;
-        const isSaved = savedIds.has(s.id);
-        const saving = savingIds.has(s.id);
+    <>
+      <div
+        ref={containerRef}
+        className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
+      >
+        {spliks.map((s, i) => {
+          const videoIsPlaying = isPlaying[i] ?? false;
+          const shouldShowPauseButton = showPauseButton[i] ?? true;
+          const isSaved = savedIds.has(s.id);
+          const saving = savingIds.has(s.id);
 
-        return (
-          <section
-            key={`${orderEpoch}-${i}-${s.id}`}
-            data-index={i}
-            className="snap-start min-h-[100svh] w-full flex items-center justify-center"
-          >
-            <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
-              {/* header */}
-              <div className="flex items-center justify-between p-3 border-b">
-                <Link
-                  to={`/creator/${s.profile?.username || s.user_id}`}
-                  className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-                >
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback>{initialsFor(s)}</AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="text-sm font-semibold">{nameFor(s)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
-                    </p>
-                  </div>
-                </Link>
-                <Button size="icon" variant="ghost" title="More">
-                  <MoreVertical className="h-5 w-5" />
-                </Button>
-              </div>
-
-              {/* video */}
-              <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
-                <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
-                <video
-                  ref={(el) => {
-                    videoRefs.current[i] = el;
-                    if (el) {
-                      el.setAttribute("playsinline", "true");
-                      // @ts-expect-error iOS attribute
-                      el.setAttribute("webkit-playsinline", "true");
-                      el.disablePictureInPicture = true;
-                      el.preload = "metadata";
-                      el.crossOrigin = "anonymous";
-                      // default mute on touch; keep state on desktop
-                      el.muted = muted[i] ?? isTouchDevice();
-                    }
-                  }}
-                  src={s.video_url}
-                  poster={s.thumbnail_url ?? undefined}
-                  className="w-full h-full object-cover"
-                  playsInline
-                  // Important: use metadata (no heavy download) and set a non-zero first frame
-                  preload="metadata"
-                  muted={muted[i] ?? isTouchDevice()}
-                  onLoadedMetadata={() => {
-                    const v = videoRefs.current[i];
-                    const startAt = Number(spliks[i]?.trim_start ?? 0);
-                    const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-                    if (v && v.currentTime === 0) {
-                      try {
-                        v.currentTime = resetAt;
-                      } catch {}
-                    }
-                  }}
-                  onError={(e) => console.warn("video error", s.id, e)}
-                  style={{ width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }}
-                />
-
-                {/* Center play/pause controls */}
-                <div
-                  className="absolute inset-0 flex items-center justify-center"
-                  onClick={() => handlePlayPause(i)}
-                >
-                  {videoIsPlaying ? (
-                    shouldShowPauseButton && (
-                      <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4">
-                        <Pause className="h-10 w-10 text-white drop-shadow-lg" />
-                      </span>
-                    )
-                  ) : (
-                    <span className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors">
-                      <Play className="h-8 w-8 text-white ml-1" />
-                    </span>
-                  )}
-                </div>
-
-                {/* mute toggle */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleMute(i);
-                  }}
-                  className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
-                  title={muted[i] ? "Unmute" : "Mute"}
-                >
-                  {muted[i] ? (
-                    <VolumeX className="h-4 w-4 text-white" />
-                  ) : (
-                    <Volume2 className="h-4 w-4 text-white" />
-                  )}
-                </button>
-
-                {/* title overlay */}
-                {s.title && (
-                  <div className="absolute bottom-3 left-3 z-20">
-                    <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
-                      <p className="text-white text-sm font-medium truncate">{s.title}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* actions */}
-              <div className="p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    {/* Share */}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
-                        navigator.clipboard.writeText(url);
-                        toast({ title: "Link copied!" });
-                      }}
-                      className="hover:text-green-500"
-                      title="Share"
-                    >
-                      <Share2 className="h-6 w-6" />
-                    </Button>
-                  </div>
-
-                  {/* Save / Saved */}
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => toggleFavorite(s.id)}
-                    disabled={saving}
-                    className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
-                    aria-pressed={isSaved}
-                    aria-label={isSaved ? "Saved" : "Save"}
-                    title={isSaved ? "Saved" : "Save"}
+          return (
+            <section
+              key={`${orderEpoch}-${i}-${s.id}`}
+              data-index={i}
+              className="snap-start min-h-[100svh] w-full flex items-center justify-center"
+            >
+              <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
+                {/* header */}
+                <div className="flex items-center justify-between p-3 border-b">
+                  <Link
+                    to={`/creator/${s.profile?.username || s.user_id}`}
+                    className="flex items-center gap-3 hover:opacity-80 transition-opacity"
                   >
-                    {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback>{initialsFor(s)}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-sm font-semibold">{nameFor(s)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(s.created_at), { addSuffix: true })}
+                      </p>
+                    </div>
+                  </Link>
+                  <Button size="icon" variant="ghost" title="More">
+                    <MoreVertical className="h-5 w-5" />
                   </Button>
                 </div>
 
-                {/* caption */}
-                {s.description && (
-                  <p className="text-sm">
-                    <span className="font-semibold mr-2">{nameFor(s)}</span>
-                    {s.description}
-                  </p>
-                )}
-              </div>
-            </Card>
-          </section>
-        );
-      })}
-    </div>
+                {/* video */}
+                <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
+                  <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
+                  <video
+                    ref={(el) => {
+                      videoRefs.current[i] = el;
+                      if (el) {
+                        el.setAttribute("playsinline", "true");
+                        // @ts-expect-error iOS attribute
+                        el.setAttribute("webkit-playsinline", "true");
+                        el.disablePictureInPicture = true;
+                        el.preload = isTouchDevice() ? "auto" : "metadata";
+                        el.crossOrigin = "anonymous";
+                        // default mute on touch; keep state on desktop
+                        el.muted = muted[i] ?? isTouchDevice();
+                      }
+                    }}
+                    src={s.video_url}
+                    poster={s.thumbnail_url ?? undefined}
+                    className="w-full h-full object-cover"
+                    playsInline
+                    preload={isTouchDevice() ? "auto" : "metadata"}
+                    muted={muted[i] ?? isTouchDevice()}
+                    onLoadedData={() => {
+                      // Safe seek when we have current data (prevents black frame)
+                      const v = videoRefs.current[i];
+                      const startAt = Number(spliks[i]?.trim_start ?? 0);
+                      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+                      if (v && v.readyState >= 2 && v.currentTime === 0) {
+                        try {
+                          v.currentTime = resetAt;
+                        } catch {}
+                      }
+                    }}
+                    onLoadedMetadata={() => {
+                      // Desktop can safely seek on metadata
+                      if (!isTouchDevice()) {
+                        const v = videoRefs.current[i];
+                        const startAt = Number(spliks[i]?.trim_start ?? 0);
+                        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+                        if (v && v.currentTime === 0) {
+                          try {
+                            v.currentTime = resetAt;
+                          } catch {}
+                        }
+                      }
+                    }}
+                    onCanPlayThrough={() => {
+                      // Mobile: fully buffered, now safe to seek
+                      if (isTouchDevice()) {
+                        const v = videoRefs.current[i];
+                        const startAt = Number(spliks[i]?.trim_start ?? 0);
+                        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+                        if (v && v.currentTime === 0) {
+                          try {
+                            v.currentTime = resetAt;
+                          } catch {}
+                        }
+                      }
+                    }}
+                    onError={(e) => console.warn("video error", s.id, e)}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", backgroundColor: "#000" }}
+                  />
+
+                  {/* Center play/pause controls */}
+                  <div
+                    className="absolute inset-0 flex items-center justify-center"
+                    onClick={() => handlePlayPause(i)}
+                  >
+                    {videoIsPlaying ? (
+                      shouldShowPauseButton && (
+                        <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4">
+                          <Pause className="h-10 w-10 text-white drop-shadow-lg" />
+                        </span>
+                      )
+                    ) : (
+                      <span className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors">
+                        <Play className="h-8 w-8 text-white ml-1" />
+                      </span>
+                    )}
+                  </div>
+
+                  {/* mute toggle */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleMute(i);
+                    }}
+                    className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
+                    title={muted[i] ? "Unmute" : "Mute"}
+                  >
+                    {muted[i] ? (
+                      <VolumeX className="h-4 w-4 text-white" />
+                    ) : (
+                      <Volume2 className="h-4 w-4 text-white" />
+                    )}
+                  </button>
+
+                  {/* title overlay */}
+                  {s.title && (
+                    <div className="absolute bottom-3 left-3 z-20">
+                      <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
+                        <p className="text-white text-sm font-medium truncate">{s.title}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* actions */}
+                <div className="p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {/* Share */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => {
+                          const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
+                          navigator.clipboard.writeText(url);
+                          toast({ title: "Link copied!" });
+                        }}
+                        className="hover:text-green-500"
+                        title="Share"
+                      >
+                        <Share2 className="h-6 w-6" />
+                      </Button>
+                    </div>
+
+                    {/* Save / Saved */}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => toggleFavorite(s.id)}
+                      disabled={saving}
+                      className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                      aria-pressed={isSaved}
+                      aria-label={isSaved ? "Saved" : "Save"}
+                      title={isSaved ? "Saved" : "Save"}
+                    >
+                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                    </Button>
+                  </div>
+
+                  {/* caption */}
+                  {s.description && (
+                    <p className="text-sm">
+                      <span className="font-semibold mr-2">{nameFor(s)}</span>
+                      {s.description}
+                    </p>
+                  )}
+                </div>
+              </Card>
+            </section>
+          );
+        })}
+      </div>
+
+      {/* Optional: small indicator while background preloads */}
+      {preloadingVideos.size > 0 && (
+        <div className="fixed bottom-4 right-4 bg-black/80 text-white px-3 py-2 rounded-lg text-sm z-50">
+          Loading videos… ({preloadingVideos.size})
+        </div>
+      )}
+    </>
   );
 }
