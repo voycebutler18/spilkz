@@ -200,6 +200,10 @@ const App = () => (
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
 
+              {/* ✅ Messaging */}
+              <Route path="/messages" element={<MessagesIndexRoute />} />
+              <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
+
               {/* Daily Prayers and Testimonies */}
               <Route path="/prayers" element={<PrayersPage />} />
               <Route path="/prayers/search" element={<PrayersSearchPage />} />
