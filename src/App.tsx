@@ -67,6 +67,9 @@ import PrayersTagPage from "./pages/PrayersTag";
 import PrayersSearchPage from "./pages/PrayersSearch";
 import AmenButton from "@/components/prayers/AmenButton";
 
+// 🔥 NEW: Vibes (text-only posts)
+import Vibes from "./pages/Vibes";
+
 // 404
 import NotFound from "./pages/NotFound";
 
@@ -202,6 +205,9 @@ const App = () => (
               <Route path="/prayers/search" element={<PrayersSearchPage />} />
               <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
               <Route path="/prayers/:id" element={<PrayerDetailPage />} />
+
+              {/* 🔥 NEW: Vibes (text-only posts) */}
+              <Route path="/vibes" element={<Vibes />} />
 
               {/* 404 */}
               <Route path="*" element={<NotFound />} />
