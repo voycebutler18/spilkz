@@ -1,11 +1,12 @@
+// RightActivityRail.tsx
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
-type ActivityKind = "video_post" | "prayer_post";
+type ActivityKind = "photo" | "video" | "quote";
 
 type Activity = {
-  id: string;               // highlight id or underlying row id as fallback
+  id: string;
   user_id: string | null;
   kind: ActivityKind;
   created_at: string;
@@ -27,162 +28,72 @@ function timeAgo(ts: number) {
 }
 
 export default function RightActivityRail({
-  includeKinds = ["video_post", "prayer_post"],
   limit = 60,
-}: {
-  includeKinds?: ActivityKind[];
-  limit?: number;
-}) {
+}: { limit?: number }) {
   const navigate = useNavigate();
-
   const [items, setItems] = React.useState<Activity[]>([]);
   const [profiles, setProfiles] = React.useState<Record<string, Profile>>({});
-  const [userId, setUserId] = React.useState<string | null>(null);
-
-  // track previous payload to avoid needless re-renders (reduces flicker)
-  const prevSig = React.useRef<string>("");
-
-  React.useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
-      setUserId(session?.user?.id ?? null)
-    );
-    return () => sub?.subscription?.unsubscribe();
-  }, []);
+  const sigRef = React.useRef("");
 
   React.useEffect(() => {
     let alive = true;
 
-    async function hydrateProfiles(userIds: string[]) {
-      const unknown = userIds.filter((id) => !!id && !profiles[id]);
-      if (unknown.length === 0) return;
+    const hydrateProfiles = async (userIds: string[]) => {
+      const missing = userIds.filter((id) => id && !profiles[id]);
+      if (!missing.length) return;
       const { data } = await supabase
         .from("profiles")
         .select("id, username, display_name, avatar_url")
-        .in("id", unknown);
+        .in("id", missing);
       if (!alive || !data) return;
       const map: Record<string, Profile> = {};
       (data as Profile[]).forEach((p) => (map[p.id] = p));
       setProfiles((prev) => ({ ...prev, ...map }));
-    }
+    };
 
-    async function loadFromHighlights() {
+    const load = async () => {
+      // right_rail_feed has: id, user_id, media_url, description, location, created_at, type
       const { data, error } = await supabase
-        .from("site_highlights_active")
-        .select("id, user_id, kind, created_at")
-        .in("kind", includeKinds as any)
+        .from("right_rail_feed")
+        .select("id, user_id, created_at, type")
         .order("created_at", { ascending: false })
         .limit(limit);
 
       if (error) throw error;
 
-      const rows = ((data ?? []) as any[])
-        .map((r) => ({
-          id: r.id as string,
+      const rows: Activity[] = (data || [])
+        .map((r: any) => ({
+          id: String(r.id),
           user_id: r.user_id ?? null,
-          kind: (r.kind || "") as ActivityKind,
+          kind: (r.type as ActivityKind) || "photo",
           created_at: r.created_at as string,
-        }))
-        // safety: enforce only known kinds
-        .filter((r) => includeKinds.includes(r.kind));
+        }));
 
-      // dedupe by (kind+id) and make stable signature
       const sig = JSON.stringify(rows.map((r) => [r.kind, r.id, r.created_at]));
-      if (sig !== prevSig.current) {
-        prevSig.current = sig;
+      if (sig !== sigRef.current) {
+        sigRef.current = sig;
         setItems(rows);
         await hydrateProfiles(
           Array.from(new Set(rows.map((r) => r.user_id).filter(Boolean) as string[]))
         );
       }
-    }
+    };
 
-    // fallback if highlights view/table isn’t present
-    async function fallbackQuery() {
-      const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    load().catch(() => { /* swallow */ });
 
-      // videos (guessing table name "videos"; adjust if yours differs)
-      let videoRows: Activity[] = [];
-      try {
-        const { data } = await supabase
-          .from("videos")
-          .select("id, user_id, created_at")
-          .gt("created_at", sinceISO)
-          .order("created_at", { ascending: false })
-          .limit(limit);
-        videoRows =
-          (data ?? []).map((v: any) => ({
-            id: `video_${v.id}`,
-            user_id: v.user_id ?? null,
-            kind: "video_post" as ActivityKind,
-            created_at: v.created_at as string,
-          })) ?? [];
-      } catch {
-        // swallow if table missing
-      }
-
-      // prayers (guessing table name "prayers"; adjust if yours differs)
-      let prayerRows: Activity[] = [];
-      try {
-        const { data } = await supabase
-          .from("prayers")
-          .select("id, user_id, created_at")
-          .gt("created_at", sinceISO)
-          .order("created_at", { ascending: false })
-          .limit(limit);
-        prayerRows =
-          (data ?? []).map((p: any) => ({
-            id: `prayer_${p.id}`,
-            user_id: p.user_id ?? null,
-            kind: "prayer_post" as ActivityKind,
-            created_at: p.created_at as string,
-          })) ?? [];
-      } catch {
-        // swallow if table missing
-      }
-
-      const rows = [...videoRows, ...prayerRows]
-        .filter((r) => includeKinds.includes(r.kind))
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
-        .slice(0, limit);
-
-      const sig = JSON.stringify(rows.map((r) => [r.kind, r.id, r.created_at]));
-      if (sig !== prevSig.current) {
-        prevSig.current = sig;
-        setItems(rows);
-        await hydrateProfiles(
-          Array.from(new Set(rows.map((r) => r.user_id).filter(Boolean) as string[]))
-        );
-      }
-    }
-
-    (async () => {
-      try {
-        await loadFromHighlights();
-      } catch {
-        await fallbackQuery();
-      }
-    })();
-
-    // realtime: throttle updates by re-fetching, but avoid flicker by signature check
-    const channel = supabase
-      .channel("right_activity_rail")
-      .on("postgres_changes", { event: "*", schema: "public", table: "site_highlights" }, () => {
-        (async () => {
-          try {
-            await loadFromHighlights();
-          } catch {
-            await fallbackQuery();
-          }
-        })();
-      })
+    // Realtime: refresh on new photo/video/quote
+    const ch = supabase
+      .channel("right-rail-activity")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "vibe_photos" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "spliks" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "quotes" }, load)
       .subscribe();
 
     return () => {
       alive = false;
-      supabase.removeChannel(channel);
+      supabase.removeChannel(ch);
     };
-  }, [includeKinds, limit, profiles]);
+  }, [limit, profiles]);
 
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
@@ -203,12 +114,16 @@ export default function RightActivityRail({
           const name = prof?.username || prof?.display_name || "User";
           const avatar = prof?.avatar_url || null;
 
+          const action =
+            it.kind === "video" ? "posted a video"
+            : it.kind === "photo" ? "posted a photo"
+            : "posted in ";
+
           return (
             <div
               key={`${it.kind}_${it.id}`}
               className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-white/5 transition"
             >
-              {/* Avatar -> clicking always goes to creator profile */}
               <button
                 className="h-10 w-10 rounded-full overflow-hidden bg-gradient-to-br from-fuchsia-500 to-indigo-500 ring-2 ring-neutral-800 shrink-0"
                 onClick={() => {
@@ -227,7 +142,6 @@ export default function RightActivityRail({
 
               <div className="min-w-0">
                 <div className="text-sm text-neutral-100 truncate">
-                  {/* Name -> profile */}
                   <button
                     className="font-semibold hover:underline"
                     onClick={() => {
@@ -237,19 +151,19 @@ export default function RightActivityRail({
                   >
                     {name}
                   </button>{" "}
-                  {it.kind === "video_post" ? (
-                    <span className="text-neutral-300">posted a video</span>
-                  ) : (
+                  {it.kind === "quote" ? (
                     <>
-                      <span className="text-neutral-300">posted in </span>
+                      <span className="text-neutral-300">{action}</span>
                       <button
-                        className="text-indigo-300 hover:underline"
+                        className="text-indigo-300 hover:underline ml-1"
                         onClick={() => navigate("/prayers")}
                         title="Go to Daily Prayers"
                       >
                         Daily Prayers
                       </button>
                     </>
+                  ) : (
+                    <span className="text-neutral-300">{action}</span>
                   )}
                 </div>
 
