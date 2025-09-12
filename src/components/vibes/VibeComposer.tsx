@@ -8,7 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Loader2, Send, Smile } from "lucide-react";
 
 type Props = {
-  onPosted?: () => void;
+  // still optional; now we may pass the new row so the page can append instantly
+  onPosted?: (newRow?: any) => void;
 };
 
 const MOODS = [
@@ -25,6 +26,7 @@ export default function VibeComposer({ onPosted }: Props) {
   const [content, setContent] = React.useState("");
   const [mood, setMood] = React.useState<string>("");
   const [posting, setPosting] = React.useState(false);
+
   const charCount = content.trim().length;
   const remaining = 500 - charCount;
 
@@ -39,19 +41,46 @@ export default function VibeComposer({ onPosted }: Props) {
         toast({ title: "Sign in to post a vibe", variant: "destructive" });
         return;
       }
-      const { error } = await supabase.from("vibes").insert({
-        user_id: user.id,
-        content: text,
-        mood: mood || null,
-      });
-      if (error) throw error;
 
+      // Insert and immediately SELECT the new row
+      const { data: inserted, error: ierr } = await supabase
+        .from("vibes")
+        .insert({
+          user_id: user.id,
+          content: text,
+          mood: mood || null,
+        })
+        .select("id, user_id, content, mood, created_at")
+        .single();
+
+      if (ierr) throw ierr;
+
+      // Hydrate profile so the card can render instantly
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const newVibe = {
+        ...inserted,
+        profile: prof ?? null,
+      };
+
+      // Clear inputs first so UI feels snappy
       setContent("");
       setMood("");
-      onPosted?.();
+
+      // 🔥 Notify parent with the new row so it can append immediately
+      onPosted?.(newVibe);
+
       toast({ title: "Vibe posted ✨" });
     } catch (e: any) {
-      toast({ title: "Couldn't post", description: e?.message || "Please try again", variant: "destructive" });
+      toast({
+        title: "Couldn't post",
+        description: e?.message || "Please try again",
+        variant: "destructive",
+      });
     } finally {
       setPosting(false);
     }
@@ -73,8 +102,10 @@ export default function VibeComposer({ onPosted }: Props) {
             <SelectValue placeholder="Add a mood (optional)" />
           </SelectTrigger>
           <SelectContent>
-            {MOODS.map(m => (
-              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+            {MOODS.map((m) => (
+              <SelectItem key={m.value} value={m.value}>
+                {m.label}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
