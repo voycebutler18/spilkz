@@ -3,12 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  X, Image as ImageIcon, Smile, ChevronLeft, ChevronRight,
-  Heart, Flag, Trash2
+  X, Image, Smile, ChevronLeft, ChevronRight,
+  Heart, Flag, Trash2, MessageCircle, Share, MoreHorizontal,
+  Camera, Video, MapPin, Calendar
 } from "lucide-react";
 
-/* minimal fallbacks so this file works without shadcn */
-let Button:any, Card:any, Badge:any, Textarea:any, Input:any;
+/* Enhanced UI Components with better styling */
+let Button: any, Card: any, Badge: any, Textarea: any, Input: any;
 try {
   ({ Button } = require("@/components/ui/button"));
   ({ Card } = require("@/components/ui/card"));
@@ -16,22 +17,50 @@ try {
   ({ Textarea } = require("@/components/ui/textarea"));
   ({ Input } = require("@/components/ui/input"));
 } catch {
-  Button = ({ className="", ...p }: any) => <button className={`px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 ${className}`} {...p} />;
-  Card = ({ className="", ...p }: any) => <div className={`rounded-2xl border border-neutral-800 bg-neutral-900 shadow-sm ${className}`} {...p} />;
-  Badge = ({ className="", ...p }: any) => <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-neutral-800 text-neutral-200 ${className}`} {...p} />;
-  const Base = (Tag:any) => ({ className="", ...p }: any) => <Tag className={`w-full border border-neutral-800 bg-neutral-900 text-neutral-100 rounded-xl px-4 py-3 placeholder:text-neutral-500 ${className}`} {...p} />;
-  Textarea = Base("textarea");
-  Input = Base("input");
+  // Enhanced fallback components with better styling
+  Button = ({ className = "", variant = "primary", size = "md", ...p }: any) => {
+    const variants = {
+      primary: "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white shadow-lg",
+      secondary: "bg-neutral-800/80 hover:bg-neutral-700 text-neutral-200 border border-neutral-700",
+      ghost: "hover:bg-neutral-800/50 text-neutral-300"
+    };
+    const sizes = {
+      sm: "px-3 py-1.5 text-sm",
+      md: "px-4 py-2",
+      lg: "px-6 py-3 text-lg"
+    };
+    return (
+      <button 
+        className={`rounded-xl font-medium transition-all duration-200 disabled:opacity-50 ${variants[variant]} ${sizes[size]} ${className}`} 
+        {...p} 
+      />
+    );
+  };
+  
+  Card = ({ className = "", ...p }: any) => (
+    <div className={`rounded-2xl border border-neutral-800/50 bg-neutral-900/80 backdrop-blur-sm shadow-xl ${className}`} {...p} />
+  );
+  
+  Badge = ({ className = "", ...p }: any) => (
+    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-gradient-to-r from-purple-600/20 to-blue-600/20 text-purple-300 border border-purple-500/30 ${className}`} {...p} />
+  );
+  
+  const BaseInput = (Tag: any) => ({ className = "", ...p }: any) => (
+    <Tag className={`w-full border border-neutral-700/50 bg-neutral-800/50 text-neutral-100 rounded-xl px-4 py-3 placeholder:text-neutral-500 focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all ${className}`} {...p} />
+  );
+  
+  Textarea = BaseInput("textarea");
+  Input = BaseInput("input");
 }
 
-/* ---- types ---- */
+/* Types */
 type Mood =
   | "Happy" | "Grateful" | "Blessed" | "Chill" | "Focused" | "Motivated"
   | "Tired" | "Anxious" | "Frustrated" | "Excited" | "Proud" | "Loved";
 
 const MOODS: Mood[] = [
-  "Happy","Grateful","Blessed","Chill","Focused","Motivated",
-  "Tired","Anxious","Frustrated","Excited","Proud","Loved"
+  "Happy", "Grateful", "Blessed", "Chill", "Focused", "Motivated",
+  "Tired", "Anxious", "Frustrated", "Excited", "Proud", "Loved"
 ];
 
 type DBPost = {
@@ -53,7 +82,7 @@ export default function ThoughtsFeed() {
   const { photoId } = useParams();
   const location = useLocation();
 
-  /* ---- FIXED AUTH: pull the current user from Supabase here ---- */
+  /* Authentication */
   const [user, setUser] = useState<any>(null);
   useEffect(() => {
     let mounted = true;
@@ -150,7 +179,7 @@ export default function ThoughtsFeed() {
     });
     setImagesByPost(prev => {
       const merged = { ...prev };
-      for (const pid of Object.keys(byPost)) merged[pid] = [ ...(prev[pid] || []), ...byPost[pid] ];
+      for (const pid of Object.keys(byPost)) merged[pid] = [...(prev[pid] || []), ...byPost[pid]];
       return merged;
     });
 
@@ -178,6 +207,7 @@ export default function ThoughtsFeed() {
     const safe = arr.filter(f => f.type.startsWith("image/") && f.size <= maxEachMB * 1024 * 1024);
     setFiles(prev => [...prev, ...safe]);
   }
+  
   function removeFile(i: number) { setFiles(prev => prev.filter((_, idx) => idx !== i)); }
 
   async function createPost() {
@@ -269,11 +299,13 @@ export default function ThoughtsFeed() {
       }
     }
   }
+  
   function closeLightbox() {
     setLightboxIndex(null);
     if (location.pathname.includes("/thoughts/photos/"))
       navigate("/thoughts", { replace: true });
   }
+  
   const prevPhoto = () => setLightboxIndex(i => (i === null ? i : (i + allPhotos.length - 1) % allPhotos.length));
   const nextPhoto = () => setLightboxIndex(i => (i === null ? i : (i + 1) % allPhotos.length));
 
@@ -288,142 +320,279 @@ export default function ThoughtsFeed() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lightboxOpen]);
+  
   useLightboxSwipe(lightboxOpen, prevPhoto, nextPhoto, closeLightbox);
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="mx-auto max-w-[1400px] px-3 sm:px-4 md:px-6 py-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] xl:grid-cols-[320px_1fr_340px] gap-6">
+    <div className="min-h-screen bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950">
+      <div className="mx-auto max-w-[1400px] px-3 sm:px-4 md:px-6 py-6 grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] xl:grid-cols-[320px_1fr_360px] gap-6">
 
-        {/* LEFT SIDEBAR - empty placeholder for nav or other content */}
+        {/* LEFT SIDEBAR - Enhanced */}
         <aside className="hidden lg:block">
-          <div className="sticky top-4">
-            {/* Add navigation or other left sidebar content here if needed */}
+          <div className="sticky top-6 space-y-4">
+            <Card className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-12 w-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-lg">
+                  {user?.email?.[0]?.toUpperCase() || 'U'}
+                </div>
+                <div>
+                  <h3 className="font-semibold text-neutral-100">
+                    {user?.email?.split('@')[0] || 'User'}
+                  </h3>
+                  <p className="text-sm text-neutral-400">View your activity</p>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <h3 className="font-semibold text-neutral-100 mb-4">Quick Actions</h3>
+              <div className="space-y-3">
+                <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-neutral-800/50 transition-colors text-left">
+                  <Camera className="h-5 w-5 text-purple-400" />
+                  <span className="text-neutral-200">Create Story</span>
+                </button>
+                <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-neutral-800/50 transition-colors text-left">
+                  <Video className="h-5 w-5 text-blue-400" />
+                  <span className="text-neutral-200">Go Live</span>
+                </button>
+                <button className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-neutral-800/50 transition-colors text-left">
+                  <Calendar className="h-5 w-5 text-green-400" />
+                  <span className="text-neutral-200">Create Event</span>
+                </button>
+              </div>
+            </Card>
           </div>
         </aside>
 
-        {/* CENTER FEED - Facebook style */}
-        <main className="space-y-4 md:space-y-5">
-          {/* Composer */}
-          <Card className="p-4 md:p-5">
-            <div className="flex items-start gap-3">
-              <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-fuchsia-500 to-indigo-500" />
+        {/* CENTER FEED - Enhanced Facebook style */}
+        <main className="space-y-6">
+          {/* Enhanced Composer */}
+          <Card className="p-6">
+            <div className="flex items-start gap-4">
+              <div className="h-12 w-12 shrink-0 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-lg">
+                {user?.email?.[0]?.toUpperCase() || 'U'}
+              </div>
               <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-3 mb-3">
-                  <Smile className="h-4 w-4 text-neutral-400" />
-                  {/* Native select for bulletproof visibility in dark mode */}
-                  <div className="relative">
-                    <select
-                      value={mood}
-                      onChange={(e) => setMood(e.target.value as Mood | "")}
-                      className="appearance-none rounded-xl border border-neutral-700 bg-neutral-900 text-neutral-100 px-4 py-2.5 pr-10 text-sm"
-                    >
-                      <option value="">Choose mood (optional)</option>
-                      {MOODS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500">▼</span>
-                  </div>
+                <div className="bg-neutral-800/30 rounded-2xl p-4 mb-4 border border-neutral-700/30">
+                  <Textarea
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    placeholder="What's on your mind?"
+                    rows={3}
+                    className="resize-none focus:outline-none text-lg"
+                  />
                 </div>
 
-                <Textarea
-                  value={text}
-                  onChange={e => setText(e.target.value)}
-                  placeholder="Share your thoughts…"
-                  rows={4}
-                  className="resize-y focus:ring-2 focus:ring-indigo-500/60"
-                />
-
-                {/* files preview */}
-                {files.length > 0 && (
-                  <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-                    {files.map((f, i) => {
-                      const url = URL.createObjectURL(f);
-                      return (
-                        <div key={i} className="relative group">
-                          <img src={url} alt="" className="h-24 w-full object-cover rounded-lg" />
-                          <button
-                            className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-1"
-                            onClick={() => removeFile(i)} aria-label="Remove"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      );
-                    })}
+                {/* Enhanced Mood Selector */}
+                {mood && (
+                  <div className="mb-4">
+                    <Badge className="text-sm">
+                      <Smile className="h-4 w-4 mr-1" />
+                      Feeling {mood}
+                    </Badge>
                   </div>
                 )}
 
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <label className="inline-flex items-center gap-2 cursor-pointer">
-                    <input type="file" accept="image/*" multiple className="hidden" onChange={e => onPickFiles(e.target.files)} />
-                    <span className="inline-flex items-center gap-2 text-indigo-400 hover:text-indigo-300">
-                      <ImageIcon className="h-5 w-5" /><span className="text-sm sm:text-base">Add photo(s)</span>
-                    </span>
-                  </label>
-
-                  <div className="flex items-center gap-2">
-                    {mood && <Badge className="bg-neutral-800 text-indigo-300">{mood}</Badge>}
-                    <Button onClick={createPost} disabled={posting || (!text.trim() && files.length === 0)} className="rounded-xl">
-                      {posting ? "Posting…" : "Post"}
-                    </Button>
+                {/* Enhanced files preview */}
+                {files.length > 0 && (
+                  <div className="mb-4 p-4 bg-neutral-800/20 rounded-2xl border border-neutral-700/30">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {files.map((f, i) => {
+                        const url = URL.createObjectURL(f);
+                        return (
+                          <div key={i} className="relative group">
+                            <img 
+                              src={url} 
+                              alt="" 
+                              className="h-32 w-full object-cover rounded-xl shadow-lg" 
+                            />
+                            <button
+                              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 shadow-lg opacity-0 group-hover:opacity-100 transition-all duration-200 hover:bg-red-600"
+                              onClick={() => removeFile(i)}
+                              aria-label="Remove"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-xl transition-all duration-200" />
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
+                )}
+
+                {/* Enhanced Action Bar */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer text-purple-400 hover:text-purple-300 transition-colors">
+                      <input type="file" accept="image/*" multiple className="hidden" onChange={e => onPickFiles(e.target.files)} />
+                      <Image className="h-6 w-6" />
+                      <span className="font-medium">Photo</span>
+                    </label>
+
+                    <button className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors">
+                      <Video className="h-6 w-6" />
+                      <span className="font-medium">Video</span>
+                    </button>
+
+                    <div className="relative">
+                      <select
+                        value={mood}
+                        onChange={(e) => setMood(e.target.value as Mood | "")}
+                        className="appearance-none bg-transparent text-green-400 hover:text-green-300 cursor-pointer font-medium"
+                      >
+                        <option value="" className="bg-neutral-800 text-neutral-200">😊 Mood</option>
+                        {MOODS.map(m => (
+                          <option key={m} value={m} className="bg-neutral-800 text-neutral-200">
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <Button 
+                    onClick={createPost} 
+                    disabled={posting || (!text.trim() && files.length === 0)}
+                    className="min-w-[100px]"
+                  >
+                    {posting ? "Posting..." : "Post"}
+                  </Button>
                 </div>
               </div>
             </div>
           </Card>
 
-          {/* FEED */}
-          <div className="space-y-3 md:space-y-4">
+          {/* Enhanced FEED */}
+          <div className="space-y-6">
             {posts.map(p => (
-              <Card key={p.id} className="p-4 md:p-5">
-                <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-rose-500 to-orange-500" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 text-[13px] sm:text-sm text-neutral-400">
-                      <span className="font-medium text-neutral-100">User</span>
-                      <span>· {timeAgo(new Date(p.created_at).getTime())}</span>
-                      {p.mood && <Badge className="bg-neutral-800 text-neutral-200">{p.mood}</Badge>}
+              <Card key={p.id} className="overflow-hidden">
+                {/* Enhanced Post Header */}
+                <div className="p-6 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-rose-500 to-orange-500 flex items-center justify-center text-white font-bold text-lg">
+                      U
                     </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-neutral-100">User</h3>
+                        {p.mood && (
+                          <Badge className="text-xs">
+                            <Smile className="h-3 w-3 mr-1" />
+                            {p.mood}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-neutral-400">
+                        {timeAgo(new Date(p.created_at).getTime())} • 🌍
+                      </p>
+                    </div>
+                    <button className="p-2 hover:bg-neutral-800 rounded-full transition-colors">
+                      <MoreHorizontal className="h-5 w-5 text-neutral-400" />
+                    </button>
+                  </div>
+                </div>
 
-                    {p.text_content && <p className="mt-3 text-neutral-100 whitespace-pre-wrap text-[15px] sm:text-base leading-relaxed">{p.text_content}</p>}
+                {/* Post Content */}
+                {p.text_content && (
+                  <div className="px-6 pb-4">
+                    <p className="text-neutral-100 text-base leading-relaxed whitespace-pre-wrap">
+                      {p.text_content}
+                    </p>
+                  </div>
+                )}
 
-                    {(imagesByPost[p.id]?.length ?? 0) > 0 && (
-                      <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {imagesByPost[p.id].map((img) => (
-                          <button key={img.id} className="relative group" onClick={() => openLightboxFor(img.id)} aria-label="Open photo">
-                            <img src={img.src} alt="" loading="lazy" className="rounded-xl object-cover w-full h-40 sm:h-48 hover:opacity-90 transition-opacity" />
+                {/* Enhanced Post Images */}
+                {(imagesByPost[p.id]?.length ?? 0) > 0 && (
+                  <div className="relative">
+                    {imagesByPost[p.id].length === 1 ? (
+                      <button 
+                        onClick={() => openLightboxFor(imagesByPost[p.id][0].id)}
+                        className="w-full"
+                      >
+                        <img 
+                          src={imagesByPost[p.id][0].src} 
+                          alt="" 
+                          loading="lazy"
+                          className="w-full h-96 object-cover hover:opacity-95 transition-opacity cursor-pointer" 
+                        />
+                      </button>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1">
+                        {imagesByPost[p.id].slice(0, 4).map((img, i) => (
+                          <button
+                            key={img.id}
+                            onClick={() => openLightboxFor(img.id)}
+                            className="relative"
+                          >
+                            <img 
+                              src={img.src} 
+                              alt="" 
+                              loading="lazy"
+                              className="w-full h-48 object-cover hover:opacity-95 transition-opacity cursor-pointer" 
+                            />
+                            {i === 3 && imagesByPost[p.id].length > 4 && (
+                              <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                                <span className="text-white text-2xl font-bold">
+                                  +{imagesByPost[p.id].length - 4}
+                                </span>
+                              </div>
+                            )}
                           </button>
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
 
-                    {/* Reactions + actions */}
-                    <div className="mt-4 flex items-center gap-6">
+                {/* Enhanced Reactions + actions */}
+                <div className="p-6 pt-4">
+                  {/* Reaction Summary */}
+                  {(likesCount[p.id] || 0) > 0 && (
+                    <div className="flex items-center gap-2 mb-3 text-sm text-neutral-400">
+                      <div className="flex -space-x-1">
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-r from-red-500 to-pink-500 flex items-center justify-center text-white text-xs">
+                          ❤️
+                        </div>
+                      </div>
+                      <span>{likesCount[p.id]} {likesCount[p.id] === 1 ? 'person likes' : 'people like'} this</span>
+                    </div>
+                  )}
+
+                  {/* Enhanced Action Buttons */}
+                  <div className="flex items-center justify-between pt-3 border-t border-neutral-800">
+                    <button 
+                      onClick={() => toggleLike(p.id)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all hover:bg-neutral-800/50 ${
+                        myLikeId[p.id] 
+                          ? 'text-red-400' 
+                          : 'text-neutral-300 hover:text-red-400'
+                      }`}
+                    >
+                      <Heart className={`h-5 w-5 ${myLikeId[p.id] ? 'fill-current' : ''}`} />
+                      <span>Like</span>
+                    </button>
+
+                    <CommentsThread postId={p.id} currentUserId={user?.id} />
+
+                    <button className="flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-neutral-300 hover:text-green-400 hover:bg-neutral-800/50 transition-all">
+                      <Share className="h-5 w-5" />
+                      <span>Share</span>
+                    </button>
+
+                    {/* Report + Delete in dropdown */}
+                    <div className="flex items-center gap-2">
                       <button
-                        className={`inline-flex items-center gap-1.5 text-sm hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors ${
-                          myLikeId[p.id] ? "text-rose-400" : "text-neutral-300"
-                        }`}
-                        onClick={() => toggleLike(p.id)}
-                        aria-label="Like"
-                      >
-                        <Heart className={`h-5 w-5 ${myLikeId[p.id] ? "fill-current" : ""}`} />
-                        <span>{likesCount[p.id] || 0}</span>
-                      </button>
-
-                      <CommentsThread postId={p.id} currentUserId={user?.id} />
-
-                      {/* Report post */}
-                      <button
-                        className="ml-auto inline-flex items-center gap-1.5 text-sm text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors"
+                        className="p-2 text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 rounded-lg transition-colors"
                         onClick={() => toggleReportPost(p.id)}
                         aria-label="Report post"
                       >
                         <Flag className="h-4 w-4" />
                       </button>
 
-                      {/* Soft delete (owner only) */}
                       {user?.id === p.user_id && (
                         <button
-                          className="inline-flex items-center gap-1.5 text-sm text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors"
+                          className="p-2 text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 rounded-lg transition-colors"
                           onClick={() => softDeletePost(p.id)}
                           aria-label="Delete post"
                         >
@@ -443,71 +612,141 @@ export default function ThoughtsFeed() {
           </div>
         </main>
 
-        {/* RIGHT PHOTO RAIL */}
-        <aside className="hidden lg:block sticky top-4 h-[calc(100vh-2rem)] overflow-auto">
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-neutral-200">Photos</h3>
-              <span className="text-xs text-neutral-500">{allPhotos.length}</span>
-            </div>
+        {/* RIGHT PHOTO RAIL - Enhanced */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-6 h-[calc(100vh-2rem)] overflow-auto">
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-neutral-100">Photos</h3>
+                <span className="text-sm text-neutral-400 bg-neutral-800 px-2 py-1 rounded-full">
+                  {allPhotos.length}
+                </span>
+              </div>
 
-            {/* vertical bubble list */}
-            <div className="flex flex-col gap-3">
-              {allPhotos.length === 0 && (
-                <p className="text-sm text-neutral-400">Photos you post will appear here.</p>
+              {allPhotos.length === 0 ? (
+                <div className="text-center py-8">
+                  <Image className="h-12 w-12 text-neutral-600 mx-auto mb-3" />
+                  <p className="text-sm text-neutral-400">
+                    Photos you share will appear here
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {[...allPhotos].reverse().slice(0, 120).map((photo, i) => (
+                    <button
+                      key={photo.id}
+                      onClick={() => openLightboxFor(photo.id)}
+                      className="relative group aspect-square"
+                    >
+                      <img
+                        src={photo.src}
+                        alt=""
+                        loading="lazy"
+                        className="w-full h-full object-cover rounded-lg group-hover:opacity-90 transition-opacity"
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-lg transition-all duration-200" />
+                    </button>
+                  ))}
+                </div>
               )}
-              {[...allPhotos].reverse().slice(0, 120).map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => openLightboxFor(p.id)}
-                  className="flex items-center gap-3 text-left hover:bg-neutral-800/50 rounded-lg p-2 -m-2 transition-colors"
-                >
-                  <img
-                    src={p.src}
-                    alt=""
-                    loading="lazy"
-                    className="h-12 w-12 rounded-full object-cover ring-2 ring-neutral-800"
-                  />
-                  <div className="flex-1 border-b border-neutral-800/70" />
+              
+              {allPhotos.length > 120 && (
+                <button className="w-full mt-3 text-center text-purple-400 hover:text-purple-300 font-medium text-sm">
+                  View all photos ({allPhotos.length})
                 </button>
-              ))}
-            </div>
-          </Card>
+              )}
+            </Card>
+          </div>
         </aside>
       </div>
 
-      {/* LIGHTBOX (dark) */}
-      {lightboxOpen && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-3 sm:p-6" aria-modal="true" role="dialog">
+      {/* Mobile-Optimized LIGHTBOX */}
+      {lightboxOpen && lightboxIndex !== null && (
+        <div 
+          className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2 sm:p-4" 
+          onClick={closeLightbox}
+          style={{ touchAction: 'manipulation' }}
+        >
           <button
-            className="absolute top-[env(safe-area-inset-top,0)+1rem] right-[env(safe-area-inset-right,0)+1rem] text-white p-3 rounded-full bg-white/10 backdrop-blur"
+            className="absolute top-2 right-2 sm:top-4 sm:right-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl"
+            onClick={closeLightbox}
+            aria-label="Close"
+          >
+            <X className="h-5 w-5 sm:h-6 sm:w-6" />
+          </button>
+
+          <button 
+            className="absolute left-2 sm:left-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl" 
+            onClick={prevPhoto}
+            aria-label="Previous"
+          >
+            <ChevronLeft className="h-6 w-6 sm:h-7 sm:w-7" />
+          </button>
+
+          <img
+            src={allPhotos[lightboxIndex].src}
+            alt=""
+            className="max-h-[85vh] max-w-[90vw] sm:max-h-[90vh] sm:max-w-[90vw] object-contain rounded-lg sm:rounded-xl shadow-2xl"
+            onClick={e => e.stopPropagation()}
+            style={{ touchAction: 'manipulation' }}
+          />
+
+          <button 
+            className="absolute right-2 sm:right-4 text-white p-2 sm:p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10 text-lg sm:text-xl" 
+            onClick={nextPhoto}
+            aria-label="Next"
+          >
+            <ChevronRight className="h-6 w-6 sm:h-7 sm:w-7" />
+          </button>
+
+          {/* Mobile-Friendly Photo Counter */}
+          <div className="absolute bottom-2 sm:bottom-4 left-1/2 transform -translate-x-1/2 text-white bg-black/70 backdrop-blur px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm z-10 font-medium">
+            {lightboxIndex + 1} / {allPhotos.length}
+          </div>
+        </div>
+      )}-4" onClick={closeLightbox}>
+          <button
+            className="absolute top-4 right-4 text-white p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10"
             onClick={closeLightbox}
             aria-label="Close"
           >
             <X className="h-6 w-6" />
           </button>
 
-          <button className="absolute left-2 sm:left-4 text-white p-3 rounded-full bg-white/10 backdrop-blur" onClick={prevPhoto} aria-label="Previous">
+          <button 
+            className="absolute left-4 text-white p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10" 
+            onClick={prevPhoto}
+            aria-label="Previous"
+          >
             <ChevronLeft className="h-7 w-7" />
           </button>
 
           <img
-            src={allPhotos[lightboxIndex!].src}
+            src={allPhotos[lightboxIndex].src}
             alt=""
-            className="max-h:[80vh] sm:max-h-[85vh] max-w-[92vw] object-contain rounded-xl shadow-2xl"
-            onClick={nextPhoto}
+            className="max-h-[90vh] max-w-[90vw] object-contain rounded-xl shadow-2xl"
+            onClick={e => e.stopPropagation()}
           />
 
-          <button className="absolute right-2 sm:right-4 text-white p-3 rounded-full bg-white/10 backdrop-blur" onClick={nextPhoto} aria-label="Next">
+          <button 
+            className="absolute right-4 text-white p-3 rounded-full bg-black/50 backdrop-blur hover:bg-black/70 transition-colors z-10" 
+            onClick={nextPhoto}
+            aria-label="Next"
+          >
             <ChevronRight className="h-7 w-7" />
           </button>
+
+          {/* Photo counter */}
+          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 text-white bg-black/50 backdrop-blur px-3 py-1 rounded-full text-sm z-10">
+            {lightboxIndex + 1} / {allPhotos.length}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-/* -------------------- Comments Thread (dark) -------------------- */
+/* -------------------- Enhanced Comments Thread -------------------- */
 function CommentsThread({ postId, currentUserId }: { postId: string; currentUserId?: string }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -558,32 +797,43 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
   }
 
   return (
-    <div className="inline-flex items-center gap-2">
+    <div className="flex flex-col">
       <button
         onClick={() => setOpen(v => !v)}
-        className="inline-flex items-center gap-1.5 text-sm text-neutral-300 hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-neutral-300 hover:text-blue-400 hover:bg-neutral-800/50 transition-all"
         aria-expanded={open}
       >
-        <span>{open ? "Hide comments" : "View comments"}</span>
+        <MessageCircle className="h-5 w-5" />
+        <span>Comment</span>
       </button>
+      
       {open && (
-        <div className="mt-3 w-full">
+        <div className="mt-4 space-y-3 pl-4 border-l-2 border-neutral-800">
           {loading && <div className="text-sm text-neutral-400">Loading comments…</div>}
           {!loading && (
-            <div className="mt-2 space-y-3">
+            <>
               {items.map(c => (
-                <div key={c.id} className="flex items-start gap-2">
-                  <div className="h-8 w-8 rounded-full bg-neutral-800" />
-                  <div className="flex-1">
+                <div key={c.id} className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-medium">
+                    U
+                  </div>
+                  <div className="flex-1 bg-neutral-800/30 rounded-2xl p-3">
+                    <div className="text-sm font-medium text-neutral-200 mb-1">User</div>
                     <div className="text-sm text-neutral-100">{c.text}</div>
-                    <div className="mt-1 flex items-center gap-3 text-xs text-neutral-400">
+                    <div className="mt-2 flex items-center gap-3 text-xs text-neutral-400">
                       <span>{timeAgo(new Date(c.created_at).getTime())}</span>
-                      <button className="inline-flex items-center gap-1" onClick={() => toggleReport(c.id)}>
-                        <Flag className="h-3.5 w-3.5" /> Report
+                      <button 
+                        className="inline-flex items-center gap-1 hover:text-neutral-300" 
+                        onClick={() => toggleReport(c.id)}
+                      >
+                        <Flag className="h-3 w-3" /> Report
                       </button>
                       {c.user_id === currentUserId && (
-                        <button className="inline-flex items-center gap-1" onClick={() => removeComment(c.id)}>
-                          <Trash2 className="h-3.5 w-3.5" /> Delete
+                        <button 
+                          className="inline-flex items-center gap-1 hover:text-neutral-300" 
+                          onClick={() => removeComment(c.id)}
+                        >
+                          <Trash2 className="h-3 w-3" /> Delete
                         </button>
                       )}
                     </div>
@@ -591,18 +841,26 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
                 </div>
               ))}
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-sm font-medium">
+                  Y
+                </div>
                 <Input
                   value={text}
-                  onChange={(e:any) => setText(e.target.value)}
+                  onChange={(e: any) => setText(e.target.value)}
                   placeholder="Write a comment…"
-                  className="flex-1"
+                  className="flex-1 h-10"
+                  onKeyPress={(e: any) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), addComment())}
                 />
-                <Button onClick={addComment} disabled={posting || !text.trim()}>
-                  Post
+                <Button 
+                  onClick={addComment} 
+                  disabled={posting || !text.trim()}
+                  size="sm"
+                >
+                  {posting ? "..." : "Post"}
                 </Button>
               </div>
-            </div>
+            </>
           )}
         </div>
       )}
@@ -610,7 +868,7 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
   );
 }
 
-/* -------------------- helpers -------------------- */
+/* -------------------- Helper Functions -------------------- */
 function timeAgo(ts: number) {
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60) return `${s}s`;
@@ -631,13 +889,25 @@ function useLightboxSwipe(
   useEffect(() => {
     if (!enabled) return;
     let startX = 0, startY = 0, dx = 0, dy = 0, touching = false;
-    const onTouchStart = (e: TouchEvent) => { touching = true; startX = e.touches[0].clientX; startY = e.touches[0].clientY; };
-    const onTouchMove = (e: TouchEvent) => { if (!touching) return; dx = e.touches[0].clientX - startX; dy = e.touches[0].clientY - startY; };
+    const onTouchStart = (e: TouchEvent) => { 
+      touching = true; 
+      startX = e.touches[0].clientX; 
+      startY = e.touches[0].clientY; 
+    };
+    const onTouchMove = (e: TouchEvent) => { 
+      if (!touching) return; 
+      dx = e.touches[0].clientX - startX; 
+      dy = e.touches[0].clientY - startY; 
+    };
     const onTouchEnd = () => {
-      if (!touching) return; touching = false;
+      if (!touching) return; 
+      touching = false;
       const absX = Math.abs(dx), absY = Math.abs(dy);
-      if (absX > 40 && absX > absY) { dx > 0 ? onPrev() : onNext(); }
-      else if (absY < 10 && absX < 10) { onClose(); }
+      if (absX > 40 && absX > absY) { 
+        dx > 0 ? onPrev() : onNext(); 
+      } else if (absY < 10 && absX < 10) { 
+        onClose(); 
+      }
       startX = startY = dx = dy = 0;
     };
     const root = document.documentElement;
