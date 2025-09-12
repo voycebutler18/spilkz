@@ -12,7 +12,7 @@ export default function VibesPage() {
   const hydrateProfile = React.useCallback(async (v: any): Promise<Vibe> => {
     const { data: prof } = await supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url")
+      .select("id, username, display_name, first_name, last_name, avatar_url") // ✅ include first/last
       .eq("id", v.user_id)
       .maybeSingle();
     return { ...v, profile: prof || null } as Vibe;
@@ -70,8 +70,12 @@ export default function VibesPage() {
         <VibeComposer
           onPosted={async (newRow) => {
             if (newRow) {
-              // composer already hydrated the profile; prepend
-              setRows((prev) => [newRow as Vibe, ...prev]);
+              // Composer usually attaches profile; if not, hydrate it.
+              const next =
+                (newRow as Vibe).profile
+                  ? (newRow as Vibe)
+                  : await hydrateProfile(newRow);
+              setRows((prev) => [next, ...prev]);
             } else {
               await fetchVibes();
             }
