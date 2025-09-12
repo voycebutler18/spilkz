@@ -12,13 +12,15 @@ import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
 import { MapPin, Calendar, Film, Users, MessageSquare, Heart } from "lucide-react";
 import { toast } from "sonner";
+import { ENABLE_DMS } from "@/config/features"; // ⬅️ feature flag to hide/show DMs
 
 interface Profile {
   id: string;
   username: string | null;
   display_name: string | null;
-  first_name?: string | null;   // ✅ new
-  last_name?: string | null;    // ✅ new
+  first_name?: string | null;   // names supported
+  last_name?: string | null;
+  full_name?: string | null;
   bio: string | null;
   avatar_url: string | null;
   city: string | null;
@@ -230,7 +232,7 @@ export default function CreatorProfile() {
         (data || []).map(async (s) => {
           const { data: p } = await supabase
             .from("profiles")
-            .select("username, display_name, first_name, last_name, avatar_url") // ✅ include names
+            .select("username, display_name, first_name, last_name, avatar_url")
             .eq("id", s.user_id)
             .maybeSingle();
           return { ...s, profiles: p || undefined };
@@ -244,7 +246,7 @@ export default function CreatorProfile() {
     }
   };
 
-  // ✅ Liked tab now uses hype_reactions
+  // Liked tab uses hype_reactions
   const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
     try {
       setLikedLoading(true);
@@ -275,7 +277,7 @@ export default function CreatorProfile() {
         (splikRows || []).map(async (s) => {
           const { data: p } = await supabase
             .from("profiles")
-            .select("username, display_name, first_name, last_name, avatar_url") // ✅ include names
+            .select("username, display_name, first_name, last_name, avatar_url")
             .eq("id", s.user_id)
             .maybeSingle();
           return { ...s, profiles: p || undefined };
@@ -370,11 +372,14 @@ export default function CreatorProfile() {
     );
   }
 
-  // ✅ Strong fallback: display_name → first+last → username → "User"
-  const fullName =
-    [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  // Strong fallback: display_name → full_name → first+last → username → "User"
+  const joinedFirstLast = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
   const nameOrUsername =
-    profile.display_name || fullName || profile.username || "User";
+    profile.display_name?.trim() ||
+    profile.full_name?.trim() ||
+    (joinedFirstLast || undefined) ||
+    profile.username?.trim() ||
+    "User";
 
   return (
     <div className="min-h-screen bg-background">
@@ -408,7 +413,8 @@ export default function CreatorProfile() {
 
               {profile.bio && <p className="mb-4">{profile.bio}</p>}
 
-              {currentUserId !== profile.id && (
+              {/* ⬇️ Hide the Message button unless DMs are enabled */}
+              {ENABLE_DMS && currentUserId !== profile.id && (
                 <div className="mb-4">
                   <Button
                     variant="secondary"
