@@ -2,25 +2,39 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Camera, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import {
+  Camera,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Helpers
-────────────────────────────────────────────────────────────────────────── */
+// ───────────────────────────────────────────────────────────────────────────
+// Config
+// ───────────────────────────────────────────────────────────────────────────
+const PHOTOS_BUCKET =
+  import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
+
+// ───────────────────────────────────────────────────────────────────────────
+// Helpers
+// ───────────────────────────────────────────────────────────────────────────
 const preconnect = (url?: string | null) => {
   if (!url) return;
   try {
@@ -69,11 +83,9 @@ type Splik = {
   profile?: Profile;
 };
 
-/* ──────────────────────────────────────────────────────────────────────────
-   SPLIKZ PHOTOS RAIL (photos only)
-   - Invisible scrollbar (scrolls up/down, bar hidden)
-   - Realtime + optimistic insert
-────────────────────────────────────────────────────────────────────────── */
+// ───────────────────────────────────────────────────────────────────────────
+// Splikz Photos rail
+// ───────────────────────────────────────────────────────────────────────────
 type RailProfile = {
   id: string;
   username: string | null;
@@ -87,6 +99,8 @@ type PhotoItem = {
   user_id: string;
   photo_url: string;
   created_at: string;
+  description?: string | null;
+  location?: string | null;
   profile?: RailProfile | null;
 };
 
@@ -98,19 +112,171 @@ const displayName = (p?: RailProfile | null) => {
 const slugFor = (p?: RailProfile | null) =>
   p?.username ? p.username : p?.id || "";
 
+const pathFromPublicUrl = (url: string) => {
+  try {
+    const u = new URL(url);
+    // Common public URL formats:
+    // .../storage/v1/object/public/<bucket>/<path>
+    // .../object/public/<bucket>/<path>
+    const parts = u.pathname.split("/");
+    const idx = parts.findIndex((p) => p === PHOTOS_BUCKET);
+    if (idx >= 0) {
+      return decodeURIComponent(parts.slice(idx + 1).join("/"));
+    }
+  } catch {}
+  return null;
+};
+
+function timeAgo(iso?: string) {
+  if (!iso) return "";
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+// Activity card (right side, above photos)
+function ActivityCard({ userId }: { userId?: string | null }) {
+  const [items, setItems] = useState<PhotoItem[]>([]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      const { data } = await supabase
+        .from("vibe_photos")
+        .select("id,user_id,created_at,description")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (!cancelled) setItems((data || []) as any);
+    };
+    load();
+
+    const ch = supabase
+      .channel("activity-photos")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "vibe_photos",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          const r: any = payload.new || {};
+          setItems((prev) =>
+            [{ id: r.id, user_id: r.user_id, created_at: r.created_at, description: r.description }, ...prev].slice(0, 5)
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      try { supabase.removeChannel(ch); } catch {}
+      cancelled = true;
+    };
+  }, [userId]);
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-semibold">Activity</h3>
+        </div>
+        {(!items || items.length === 0) ? (
+          <p className="text-sm text-muted-foreground">
+            New videos and Daily Prayers updates will show up here.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {items.map((a) => (
+              <li key={a.id} className="text-sm">
+                <span className="font-medium">You posted a photo</span>
+                {a.description ? (
+                  <>
+                    : <span className="text-muted-foreground">{a.description.slice(0, 60)}</span>
+                  </>
+                ) : null}
+                <span className="ml-2 text-xs text-muted-foreground">{timeAgo(a.created_at)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function RightPhotoRail({
   title = "Splikz Photos",
   maxListHeight = "calc(100vh - 220px)",
   limit = 60,
   reloadToken = 0,
+  currentUserId,
 }: {
   title?: string;
   maxListHeight?: string | number;
   limit?: number;
   reloadToken?: number;
+  currentUserId?: string | null;
 }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PhotoItem[]>([]);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [active, setActive] = useState<PhotoItem | null>(null);
+  const { toast } = useToast();
+
+  const openViewer = (ph: PhotoItem) => {
+    setActive(ph);
+    setViewerOpen(true);
+  };
+
+  const closeViewer = () => {
+    setViewerOpen(false);
+    setTimeout(() => setActive(null), 200);
+  };
+
+  const removeLocally = (id: string) =>
+    setItems((prev) => prev.filter((p) => p.id !== id));
+
+  const deleteActive = async () => {
+    if (!active || !currentUserId) return;
+    if (active.user_id !== currentUserId) return;
+
+    try {
+      // remove DB row
+      const { error } = await supabase
+        .from("vibe_photos")
+        .delete()
+        .eq("id", active.id)
+        .eq("user_id", currentUserId);
+      if (error) throw error;
+
+      // remove storage file (best-effort)
+      const path = pathFromPublicUrl(active.photo_url);
+      if (path) {
+        await supabase.storage.from(PHOTOS_BUCKET).remove([path]);
+      }
+
+      removeLocally(active.id);
+      closeViewer();
+      toast({ title: "Deleted", description: "Your photo was removed." });
+    } catch (e: any) {
+      console.error(e);
+      toast({
+        title: "Delete failed",
+        description: e?.message || "Please try again",
+        variant: "destructive",
+      });
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -120,16 +286,18 @@ function RightPhotoRail({
       try {
         const { data, error } = await supabase
           .from("vibe_photos")
-          .select("id, user_id, photo_url, created_at")
+          .select("*")
           .order("created_at", { ascending: false })
           .limit(limit);
         if (error) throw error;
 
-        const rows = (data || []).map((r) => ({
+        const rows = (data || []).map((r: any) => ({
           id: String(r.id),
           user_id: String(r.user_id),
           photo_url: String(r.photo_url),
           created_at: r.created_at || new Date().toISOString(),
+          description: r.description ?? r.caption ?? null,
+          location: r.location ?? null,
         })) as PhotoItem[];
 
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
@@ -169,7 +337,7 @@ function RightPhotoRail({
     // optimistic insert from local upload
     const onOptimistic = async (e: Event) => {
       // @ts-ignore
-      const { user_id, photo_url } = e.detail || {};
+      const { user_id, photo_url, description, location } = e.detail || {};
       if (!user_id || !photo_url) return;
       try {
         const { data: p } = await supabase
@@ -185,6 +353,8 @@ function RightPhotoRail({
             user_id,
             photo_url,
             created_at: new Date().toISOString(),
+            description: description || null,
+            location: location || null,
             profile: (p as RailProfile) || null,
           },
           ...prev,
@@ -242,9 +412,11 @@ function RightPhotoRail({
             const name = displayName(person);
             const slug = slugFor(person);
             return (
-              <div
+              <button
                 key={ph.id}
-                className="relative aspect-square bg-muted/40 rounded-xl border border-border/40 overflow-hidden group"
+                onClick={() => openViewer(ph)}
+                className="relative aspect-square bg-muted/40 rounded-xl border border-border/40 overflow-hidden group text-left"
+                title="Open photo"
               >
                 <img
                   src={ph.photo_url}
@@ -253,37 +425,126 @@ function RightPhotoRail({
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
 
-                {/* Creator avatar → profile with all content */}
-                <Link
-                  to={slug ? `/creator/${slug}` : "#"}
-                  className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
-                  title={name}
-                >
-                  {person?.avatar_url ? (
-                    <img
-                      src={person.avatar_url}
-                      alt={name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-white text-xs font-semibold">
-                      {name?.charAt(0).toUpperCase()}
-                    </span>
-                  )}
-                </Link>
-
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="absolute bottom-2 left-2 right-2">
-                    <p className="text-white text-xs font-medium truncate">
-                      {name}
-                    </p>
+                {/* Bottom caption row (avatar + name + desc) */}
+                <div className="absolute inset-x-0 bottom-0 px-2 pb-2 pt-10 bg-gradient-to-t from-black/60 via-black/10 to-transparent">
+                  <div className="flex items-end gap-2">
+                    <Link
+                      to={slug ? `/creator/${slug}` : "#"}
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 w-8 h-8 rounded-full border border-white/40 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
+                      title={name}
+                    >
+                      {person?.avatar_url ? (
+                        <img
+                          src={person.avatar_url}
+                          alt={name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-white text-xs font-semibold">
+                          {name?.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+                    </Link>
+                    <div className="min-w-0">
+                      <p className="text-xs text-white/95 font-medium truncate">
+                        {name}
+                      </p>
+                      {ph.description && (
+                        <p className="text-[11px] leading-tight text-white/90 line-clamp-2 break-words">
+                          {ph.description}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
       </div>
+
+      {/* Photo Viewer */}
+      <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
+        <DialogContent className="sm:max-w-3xl p-0 overflow-hidden">
+          {!!active && (
+            <div className="relative">
+              {/* Top-right close & delete */}
+              <div className="absolute top-2 right-2 z-10 flex gap-2">
+                {currentUserId && active.user_id === currentUserId && (
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="h-9 w-9 rounded-full"
+                    onClick={deleteActive}
+                    title="Delete photo"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="h-9 w-9 rounded-full"
+                  onClick={closeViewer}
+                  title="Close"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <img
+                src={active.photo_url}
+                alt={displayName(active.profile)}
+                className="w-full max-h-[75vh] object-contain bg-black"
+              />
+
+              {/* Bottom bar: avatar + name + desc + location */}
+              <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+                <div className="flex items-end gap-3">
+                  <Link
+                    to={
+                      slugFor(active.profile)
+                        ? `/creator/${slugFor(active.profile)}`
+                        : "#"
+                    }
+                    className="shrink-0 w-10 h-10 rounded-full border border-white/40 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
+                    title={displayName(active.profile)}
+                  >
+                    {active.profile?.avatar_url ? (
+                      <img
+                        src={active.profile.avatar_url}
+                        alt={displayName(active.profile)}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-white text-sm font-semibold">
+                        {displayName(active.profile).charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </Link>
+
+                  <div className="min-w-0">
+                    <p className="text-sm text-white/95 font-semibold truncate">
+                      {displayName(active.profile)}
+                    </p>
+                    {active.description && (
+                      <p className="text-[12px] text-white/90 break-words line-clamp-3">
+                        {active.description}
+                      </p>
+                    )}
+                    {active.location && (
+                      <p className="text-[11px] text-white/70 mt-1 truncate">
+                        📍 {active.location}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* invisible scrollbar */}
       <style>{`
@@ -294,11 +555,9 @@ function RightPhotoRail({
   );
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed (no Nearby) + Splikz Photos
-   - Desktop: left feed + right photo rail
-   - Mobile: stacked (same order)
-────────────────────────────────────────────────────────────────────────── */
+// ───────────────────────────────────────────────────────────────────────────
+// PAGE: Home feed (no Nearby) + Activity + Splikz Photos
+// ───────────────────────────────────────────────────────────────────────────
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
   const [loading, setLoading] = useState(true);
@@ -309,6 +568,8 @@ const Explore = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [photoDescription, setPhotoDescription] = useState("");
+  const [photoLocation, setPhotoLocation] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -322,7 +583,7 @@ const Explore = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch the main Home feed (no tabs, no location)
+  // Fetch the main Home feed
   const fetchHomeFeed = async (showRefreshToast = false) => {
     try {
       showRefreshToast ? setRefreshing(true) : setLoading(true);
@@ -335,21 +596,14 @@ const Explore = () => {
       if (error) throw error;
 
       if (spliksData && spliksData.length) {
-        // batch hydrate profiles
         const rows = spliksData as Splik[];
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         let byId: Record<string, Profile> = {};
         if (userIds.length) {
-          const { data: profs } = await supabase
-            .from("profiles")
-            .select("*")
-            .in("id", userIds);
+          const { data: profs } = await supabase.from("profiles").select("*").in("id", userIds);
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
-        const withProfiles = rows.map((r) => ({
-          ...r,
-          profile: byId[r.user_id],
-        }));
+        const withProfiles = rows.map((r) => ({ ...r, profile: byId[r.user_id] }));
         setFeedSpliks(withProfiles);
         preconnect(withProfiles[0]?.video_url);
         warmFirstVideoMeta(withProfiles[0]?.video_url);
@@ -358,18 +612,11 @@ const Explore = () => {
       }
 
       if (showRefreshToast) {
-        toast({
-          title: "Feed updated",
-          description: "Showing the latest videos",
-        });
+        toast({ title: "Feed updated", description: "Showing the latest videos" });
       }
     } catch (e) {
       console.error("Home feed load error:", e);
-      toast({
-        title: "Error",
-        description: "Failed to load your feed",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to load your feed", variant: "destructive" });
       setFeedSpliks([]);
     } finally {
       setLoading(false);
@@ -382,7 +629,7 @@ const Explore = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // autoplay helpers (same logic, for this single feed)
+  // autoplay for the feed
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
       const host = hostRef.current;
@@ -408,8 +655,7 @@ const Explore = () => {
         );
       };
 
-      const allVideos = () =>
-        Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
+      const allVideos = () => Array.from(host.querySelectorAll("video")) as HTMLVideoElement[];
 
       const pauseAll = (except?: HTMLVideoElement) => {
         allVideos().forEach((v) => {
@@ -430,10 +676,7 @@ const Explore = () => {
         try {
           const target = mostVisible();
 
-          if (
-            currentPlayingVideo &&
-            (videoVisibility.get(currentPlayingVideo) || 0) < 0.45
-          ) {
+          if (currentPlayingVideo && (videoVisibility.get(currentPlayingVideo) || 0) < 0.45) {
             currentPlayingVideo.pause();
             currentPlayingVideo = null;
           }
@@ -446,8 +689,7 @@ const Explore = () => {
               target.load();
               await new Promise((r) => setTimeout(r, 100));
             }
-            if (target.currentTime === 0 && target.duration > 0)
-              target.currentTime = 0.1;
+            if (target.currentTime === 0 && target.duration > 0) target.currentTime = 0.1;
 
             try {
               await target.play();
@@ -477,10 +719,7 @@ const Explore = () => {
       const io = new IntersectionObserver(
         (entries) => {
           entries.forEach((e) => {
-            videoVisibility.set(
-              e.target as HTMLVideoElement,
-              e.intersectionRatio
-            );
+            videoVisibility.set(e.target as HTMLVideoElement, e.intersectionRatio);
           });
           drive();
         },
@@ -526,74 +765,75 @@ const Explore = () => {
         toast({ title: "Link copied!", description: "Copied to clipboard" });
       }
     } catch {
-      toast({
-        title: "Failed to share",
-        description: "Please try again",
-        variant: "destructive",
-      });
+      toast({ title: "Failed to share", description: "Please try again", variant: "destructive" });
     }
   };
 
-  // Upload → Storage 'vibe_photos' → insert into public.vibe_photos → optimistic update
+  // Upload → Storage + DB (with description/location)
   const uploadPhoto = async () => {
     if (!user) {
-      toast({
-        title: "Sign in required",
-        description: "Log in to upload a photo",
-        variant: "destructive",
-      });
+      toast({ title: "Sign in required", description: "Log in to upload a photo", variant: "destructive" });
       return;
     }
     if (!file) {
-      toast({
-        title: "No file selected",
-        description: "Choose a photo first",
-        variant: "destructive",
-      });
+      toast({ title: "No file selected", description: "Choose a photo first", variant: "destructive" });
+      return;
+    }
+    if (!photoDescription.trim()) {
+      toast({ title: "Add a description", description: "Please enter a brief description", variant: "destructive" });
       return;
     }
     try {
       setUploading(true);
 
-      const bucket = "vibe_photos"; // change if your bucket differs
       const path = `${user.id}/${Date.now()}-${file.name}`;
-
-      const { error: upErr } = await supabase.storage
-        .from(bucket)
-        .upload(path, file, {
-          cacheControl: "3600",
-          upsert: false,
-        });
+      const { error: upErr } = await supabase.storage.from(PHOTOS_BUCKET).upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+      });
       if (upErr) throw upErr;
 
-      const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
+      const { data: pub } = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path);
       const photo_url = pub?.publicUrl;
       if (!photo_url) throw new Error("Failed to resolve public URL");
 
-      const { error: insertErr } = await supabase
-        .from("vibe_photos")
-        .insert({ user_id: user.id, photo_url });
+      const payload: Record<string, any> = {
+        user_id: user.id,
+        photo_url,
+        description: photoDescription.trim(),
+      };
+      if (photoLocation.trim()) payload.location = photoLocation.trim();
+
+      const { error: insertErr } = await supabase.from("vibe_photos").insert(payload);
       if (insertErr) throw insertErr;
 
-      // tell the rail to insert immediately
+      // Optimistic update to the rail + will trigger ActivityCard via realtime
       window.dispatchEvent(
         new CustomEvent("vibe-photo-uploaded", {
-          detail: { user_id: user.id, photo_url },
+          detail: {
+            user_id: user.id,
+            photo_url,
+            description: photoDescription.trim(),
+            location: photoLocation.trim() || null,
+          },
         })
       );
       setReloadToken((n) => n + 1);
 
-      toast({
-        title: "Photo posted!",
-        description: "Your photo is live in Splikz Photos",
-      });
+      toast({ title: "Photo posted!", description: "Your photo is live in Splikz Photos" });
       setFile(null);
+      setPhotoDescription("");
+      setPhotoLocation("");
       setUploadOpen(false);
     } catch (e: any) {
       console.error(e);
+      const msg = e?.message || "";
       toast({
         title: "Upload failed",
-        description: e?.message || "Please try a different image",
+        description:
+          msg.includes("not found") || msg.includes("No such bucket")
+            ? `Storage bucket "${PHOTOS_BUCKET}" not found.`
+            : msg || "Please try again",
         variant: "destructive",
       });
     } finally {
@@ -620,9 +860,7 @@ const Explore = () => {
                 onClick={() => fetchHomeFeed(true)}
                 disabled={refreshing || loading}
               >
-                <RefreshCw
-                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-                />
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 Update
               </Button>
               <Button size="sm" onClick={() => setUploadOpen(true)}>
@@ -634,7 +872,7 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* GRID: Desktop side-by-side; Mobile stacked (same order) */}
+      {/* GRID: Desktop side-by-side; Mobile stacked */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* LEFT / TOP: HOME FEED */}
@@ -673,13 +911,18 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): PHOTOS RAIL */}
-          <div className="lg:col-span-3 hidden lg:block">
-            <RightPhotoRail title="Splikz Photos" />
+          {/* RIGHT (DESKTOP): Activity + PHOTOS RAIL */}
+          <div className="lg:col-span-3 hidden lg:flex lg:flex-col lg:gap-6">
+            <ActivityCard userId={user?.id} />
+            <RightPhotoRail
+              title="Splikz Photos"
+              currentUserId={user?.id}
+              reloadToken={reloadToken}
+            />
           </div>
         </div>
 
-        {/* MOBILE: Photos rail full-width */}
+        {/* MOBILE: Photos rail full-width below feed */}
         <div className="mt-10 lg:hidden">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-semibold">Splikz Photos</h2>
@@ -687,7 +930,12 @@ const Explore = () => {
               <Camera className="h-4 w-4 mr-1" /> Upload
             </Button>
           </div>
-          <RightPhotoRail title="Latest photos" maxListHeight="60vh" reloadToken={reloadToken} />
+          <RightPhotoRail
+            title="Latest photos"
+            maxListHeight="60vh"
+            reloadToken={reloadToken}
+            currentUserId={user?.id}
+          />
         </div>
       </div>
 
@@ -696,32 +944,43 @@ const Explore = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Upload a photo</DialogTitle>
+            <DialogDescription>Write a short description (required). Add a location if you want.</DialogDescription>
           </DialogHeader>
+
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label htmlFor="file">Choose image</Label>
+              <Input id="file" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="desc">Description</Label>
+              <Textarea
+                id="desc"
+                value={photoDescription}
+                onChange={(e) => setPhotoDescription(e.target.value.slice(0, 200))}
+                placeholder="Say something about this photo (max 200 chars)"
+              />
+              <div className="text-xs text-muted-foreground text-right">{photoDescription.length}/200</div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="loc">Location (optional)</Label>
               <Input
-                id="file"
-                type="file"
-                accept="image/*"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                id="loc"
+                value={photoLocation}
+                onChange={(e) => setPhotoLocation(e.target.value.slice(0, 80))}
+                placeholder="City, venue, etc."
               />
             </div>
           </div>
+
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setUploadOpen(false)}
-              disabled={uploading}
-            >
+            <Button variant="outline" onClick={() => setUploadOpen(false)} disabled={uploading}>
               Cancel
             </Button>
             <Button onClick={uploadPhoto} disabled={uploading}>
-              {uploading ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <Camera className="h-4 w-4 mr-2" />
-              )}
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Camera className="h-4 w-4 mr-2" />}
               Post Photo
             </Button>
           </DialogFooter>
