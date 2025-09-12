@@ -196,6 +196,7 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
+              <Route path="/thoughts/photos/:photoId" element={<ThoughtsFeed />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
