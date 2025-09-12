@@ -209,6 +209,7 @@ export default function SplikCard({
       el.removeEventListener("touchend", onTap);
       vid.removeEventListener("loadeddata", onLoaded);
       vid.removeEventListener("canplay", onCanPlay);
+      vid.removeEventListener("volumechange", onVolumeChange);
       vid.removeEventListener("stalled", () => tryPlay());
       vid.removeEventListener("waiting", () => tryPlay());
       pause();
