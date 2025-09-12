@@ -20,7 +20,6 @@ import {
   Circle,
   Mail,
   MessageSquare,
-  Clock,
   Loader2,
 } from "lucide-react";
 
@@ -74,7 +73,6 @@ export default function CombinedMessages() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const subRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // Scroll the messages container only (not the window)
   const scrollThreadToBottom = (smooth = true) => {
     const el = messagesRef.current;
     if (!el) return;
@@ -84,7 +82,7 @@ export default function CombinedMessages() {
 
   const commonEmojis = ["😀", "😂", "❤️", "👍", "👎", "😢", "😮", "😡", "🎉", "🔥", "💯", "😊"];
 
-  // Get current user
+  // Who am I?
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
   }, []);
@@ -94,7 +92,7 @@ export default function CombinedMessages() {
     return me < (otherId as string) ? `${me}|${otherId}` : `${otherId}|${me}`;
   }, [me, otherId]);
 
-  // Load inbox messages
+  // Load inbox (left list)
   useEffect(() => {
     if (!me) return;
     let cancelled = false;
@@ -116,7 +114,7 @@ export default function CombinedMessages() {
 
       setAllMessages((data as Msg[]) ?? []);
 
-      // Load partner profiles
+      // Load partner profiles for everyone visible in the inbox
       const partnerIds = Array.from(
         new Set((data || []).map((m: Msg) => (m.sender_id === me ? m.recipient_id : m.sender_id)))
       );
@@ -134,7 +132,7 @@ export default function CombinedMessages() {
 
     loadInbox();
 
-    // Setup realtime for inbox
+    // Realtime for inbox
     if (subRef.current) supabase.removeChannel(subRef.current);
 
     const ch = supabase
@@ -150,7 +148,6 @@ export default function CombinedMessages() {
         (payload) => {
           const newMsg = payload.new as Msg;
           setAllMessages((prev) => [newMsg, ...prev]);
-          // If it's for the active thread, add to thread messages too and keep at bottom
           if (activeThreadKey && newMsg.thread_key === activeThreadKey) {
             setActiveThreadMsgs((prev) => [...prev, newMsg]);
             setTimeout(() => scrollThreadToBottom(true), 0);
@@ -170,7 +167,6 @@ export default function CombinedMessages() {
             copy[idx] = m;
             return copy;
           });
-          // Update active thread too
           setActiveThreadMsgs((prev) => prev.map((p) => (p.id === m.id ? m : p)));
         }
       )
@@ -185,7 +181,23 @@ export default function CombinedMessages() {
     };
   }, [me, activeThreadKey]);
 
-  // Load active thread messages
+  // ✅ Ensure the selected partner profile is loaded even if no prior messages exist
+  useEffect(() => {
+    (async () => {
+      if (!otherId) return;
+      if (profiles[otherId as string]) return;
+      const { data } = await supabase
+        .from("profiles")
+        .select("id,username,display_name,avatar_url")
+        .eq("id", otherId as string)
+        .maybeSingle();
+      if (data) {
+        setProfiles((prev) => ({ ...prev, [data.id]: data as ProfileLite }));
+      }
+    })();
+  }, [otherId, profiles]);
+
+  // Load active thread history
   useEffect(() => {
     if (!activeThreadKey || !me || !otherId) {
       setActiveThreadMsgs([]);
@@ -215,14 +227,13 @@ export default function CombinedMessages() {
         setUnreadCount(0);
       }
 
-      // ensure we're at the bottom when loading a thread
       setTimeout(() => scrollThreadToBottom(false), 0);
     };
 
     loadActiveThread();
   }, [activeThreadKey, me, otherId]);
 
-  // Setup presence and typing for active thread
+  // Presence + typing
   useEffect(() => {
     if (!activeThreadKey || !me || !otherId) return;
 
@@ -247,7 +258,7 @@ export default function CombinedMessages() {
     };
   }, [activeThreadKey, me, otherId]);
 
-  // Track whether user is scrolled up (so we don't auto-jump)
+  // Scroll tracking for auto-jump
   const handleScroll = () => {
     const el = messagesRef.current;
     if (!el) return;
@@ -255,7 +266,6 @@ export default function CombinedMessages() {
     setIsScrolledUp(!isAtBottom);
   };
 
-  // Auto scroll only when not scrolled up
   useEffect(() => {
     if (!isScrolledUp) {
       scrollThreadToBottom(true);
@@ -263,7 +273,7 @@ export default function CombinedMessages() {
     }
   }, [activeThreadMsgs.length, isScrolledUp]);
 
-  // Typing broadcast
+  // Typing indicator
   useEffect(() => {
     if (!me || !otherId || !activeThreadKey) return;
     const ch = supabase.channel(`dm-${activeThreadKey}`);
@@ -278,7 +288,7 @@ export default function CombinedMessages() {
     };
   }, [text, me, otherId, activeThreadKey]);
 
-  // Compute threads from messages
+  // Build threads for left list
   const threads = useMemo<ThreadRow[]>(() => {
     if (!me) return [];
     const map: Record<string, ThreadRow> = {};
@@ -327,7 +337,6 @@ export default function CombinedMessages() {
     };
     setActiveThreadMsgs((prev) => [...prev, optimistic]);
     setText("");
-    // keep the view pinned to the bottom after send
     setTimeout(() => scrollThreadToBottom(false), 0);
 
     const { error } = await supabase.from("messages").insert({
@@ -342,7 +351,6 @@ export default function CombinedMessages() {
       return;
     }
 
-    // Refresh active thread
     const { data: latest } = await supabase
       .from("messages")
       .select("*")
@@ -354,9 +362,7 @@ export default function CombinedMessages() {
     }
   };
 
-  const selectThread = (partnerId: string) => {
-    navigate(`/messages/${partnerId}`);
-  };
+  const selectThread = (partnerId: string) => navigate(`/messages/${partnerId}`);
 
   const addEmoji = (emoji: string) => {
     setText((prev) => prev + emoji);
@@ -374,7 +380,7 @@ export default function CombinedMessages() {
     return d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
-  const formatWhen = (iso: string | undefined) => {
+  const formatWhen = (iso?: string) => {
     if (!iso) return "";
     const d = new Date(iso);
     const now = new Date();
@@ -395,7 +401,7 @@ export default function CombinedMessages() {
     return profile?.display_name || profile?.username || "User";
   };
 
-  const otherProfile = profiles[otherId as string];
+  const otherProfile = profiles[otherId as string] || null;
 
   if (me === null) {
     return (
@@ -428,22 +434,14 @@ export default function CombinedMessages() {
           line-height: 20px !important;
           outline: none !important;
         }
-        .force-input:focus {
-          box-shadow: 0 0 0 2px rgba(124,58,237,.35) !important;
-          border-color: rgba(124,58,237,.75) !important;
-        }
-        .force-input::placeholder {
-          color: #6b7280 !important;
-          -webkit-text-fill-color: #6b7280 !important;
-          opacity: 1 !important;
-        }
+        .force-input:focus { box-shadow: 0 0 0 2px rgba(124,58,237,.35) !important; border-color: rgba(124,58,237,.75) !important; }
+        .force-input::placeholder { color: #6b7280 !important; -webkit-text-fill-color: #6b7280 !important; opacity: 1 !important; }
       `}</style>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex gap-4 h-[85vh]">
-          {/* Left Sidebar - Conversations List */}
+          {/* Left Sidebar */}
           <div className="w-80 bg-slate-800/80 backdrop-blur-sm rounded-2xl border border-slate-700/50 flex flex-col">
-            {/* Sidebar Header */}
             <div className="p-4 border-b border-slate-700/50">
               <div className="flex items-center justify-between mb-4">
                 <h1 className="text-xl font-bold text-white flex items-center gap-2">
@@ -455,7 +453,6 @@ export default function CombinedMessages() {
                 </Button>
               </div>
 
-              {/* Search */}
               <div className="relative">
                 <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
@@ -469,7 +466,6 @@ export default function CombinedMessages() {
               </div>
             </div>
 
-            {/* Conversations List */}
             <div className="flex-1 overflow-y-auto">
               {loading ? (
                 <div className="p-8 text-center text-slate-400 flex items-center justify-center gap-2">
@@ -484,7 +480,6 @@ export default function CombinedMessages() {
               ) : (
                 threads.map((t) => {
                   const name = t.partner?.display_name || t.partner?.username || "User";
-                  const username = t.partner?.username ? `@${t.partner.username}` : "";
                   const avatar = t.partner?.avatar_url || null;
                   const last = t.lastMessage?.body?.trim() || "";
                   const when = formatWhen(t.lastMessage?.created_at);
@@ -529,9 +524,9 @@ export default function CombinedMessages() {
 
           {/* Right Side - Active Chat */}
           <div className="flex-1 bg-slate-800/80 backdrop-blur-sm rounded-2xl border border-slate-700/50 flex flex-col">
-            {otherId && otherProfile ? (
+            {otherId ? (
               <>
-                {/* Chat Header */}
+                {/* Header */}
                 <div className="p-4 border-b border-slate-700/50">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -555,9 +550,7 @@ export default function CombinedMessages() {
                       <div>
                         <h2 className="text-white font-semibold text-lg">{nameFor(otherId as string)}</h2>
                         <div className="flex items-center gap-2 text-sm">
-                          <Circle
-                            className={`w-2 h-2 fill-current ${otherOnline ? "text-green-500" : "text-slate-500"}`}
-                          />
+                          <Circle className={`w-2 h-2 fill-current ${otherOnline ? "text-green-500" : "text-slate-500"}`} />
                           <span className="text-slate-400">
                             {otherOnline ? "Online" : "Offline"}
                             {otherTyping && <span className="ml-2 text-purple-400 animate-pulse">typing...</span>}
@@ -603,12 +596,12 @@ export default function CombinedMessages() {
                   )}
                 </div>
 
-                {/* Messages Area */}
+                {/* Thread */}
                 <div
                   ref={messagesRef}
                   onScroll={handleScroll}
                   className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent"
-                  style={{ overscrollBehaviorY: "contain" }} // prevent scroll chaining to body
+                  style={{ overscrollBehaviorY: "contain" }}
                 >
                   {activeThreadMsgs.map((m, index) => {
                     const mine = m.sender_id === me;
@@ -681,7 +674,7 @@ export default function CombinedMessages() {
                   )}
                 </div>
 
-                {/* Message Composer */}
+                {/* Composer */}
                 <div className="p-4 border-t border-slate-700/50">
                   {showEmojiPicker && (
                     <div className="mb-3 p-3 bg-slate-700/80 rounded-xl border border-slate-600/50">
@@ -746,7 +739,6 @@ export default function CombinedMessages() {
                 </div>
               </>
             ) : (
-              /* No conversation selected */
               <div className="flex-1 flex items-center justify-center text-slate-400">
                 <div className="text-center">
                   <MessageSquare className="h-16 w-16 mx-auto mb-4 opacity-50" />
