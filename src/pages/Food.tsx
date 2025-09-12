@@ -62,7 +62,7 @@ const slugFor = (p?: Profile | null) => (p?.username ? p.username : p?.id || "")
    Right Food Photo Rail (vertical)
 ──────────────────────────────────────────────────────────────────────────── */
 function RightFoodRail({
-  title = "Food Photos",
+  title = "Splikz Food Photos",
   maxListHeight = "calc(100vh - 220px)",
   limit = 80,
   showUploader = true,
@@ -622,7 +622,7 @@ export default function FoodPage() {
                 onClick={() => setShowMobileRail((v) => !v)}
               >
                 <Camera className="h-4 w-4 mr-2" />
-                {showMobileRail ? "Hide Photos" : "Food Photos"}
+                {showMobileRail ? "Hide Splikz Photos" : "Splikz Food Photos"}
               </Button>
               <Button onClick={() => window.location.reload()}>
                 <RefreshCw className="h-4 w-4 mr-2" />
