@@ -7,14 +7,10 @@ import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { applySessionRotation, type SplikWithScore } from "@/lib/feed";
 
-// upload dialog
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,10 +67,9 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   RIGHT-SIDE / INLINE PHOTO RAIL
-   Reads from public.vibe_photos and hydrates uploader profiles.
-   Shows vertical scroll and creator avatar → /creator/:slug
-   Also listens for a 'vibe-photo-uploaded' event for instant optimistic insert.
+   SPLIKZ PHOTOS RAIL (photos only)
+   - invisible scrollbar (scrolls up/down, bar hidden)
+   - realtime + optimistic insert
 ────────────────────────────────────────────────────────────────────────── */
 type RailProfile = {
   id: string;
@@ -108,7 +103,6 @@ function RightPhotoRail({
   title?: string;
   maxListHeight?: string | number;
   limit?: number;
-  /** bump this to force reload */
   reloadToken?: number;
 }) {
   const [loading, setLoading] = useState(true);
@@ -134,7 +128,6 @@ function RightPhotoRail({
           created_at: r.created_at || new Date().toISOString(),
         })) as PhotoItem[];
 
-        // hydrate profiles
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         if (userIds.length) {
           const { data: profs } = await supabase
@@ -167,19 +160,17 @@ function RightPhotoRail({
       )
       .subscribe();
 
-    // optimistic insert when our own upload finishes
+    // optimistic insert from local upload
     const onOptimistic = async (e: Event) => {
       // @ts-ignore
       const { user_id, photo_url } = e.detail || {};
       if (!user_id || !photo_url) return;
-
       try {
         const { data: p } = await supabase
           .from("profiles")
           .select("id, username, display_name, first_name, last_name, avatar_url")
           .eq("id", user_id)
           .maybeSingle();
-
         setItems((prev) => [
           {
             id: `local-${Date.now()}`,
@@ -196,9 +187,7 @@ function RightPhotoRail({
     window.addEventListener("vibe-photo-uploaded", onOptimistic as EventListener);
 
     return () => {
-      try {
-        supabase.removeChannel(ch);
-      } catch {}
+      try { supabase.removeChannel(ch); } catch {}
       window.removeEventListener("vibe-photo-uploaded", onOptimistic as EventListener);
       cancelled = true;
     };
@@ -213,7 +202,7 @@ function RightPhotoRail({
         </div>
 
         <div
-          className="space-y-3 overflow-y-auto custom-scrollbar pr-1"
+          className="space-y-3 overflow-y-auto pr-1 hide-scroll"
           style={{ maxHeight: typeof maxListHeight === "number" ? `${maxListHeight}px` : maxListHeight }}
         >
           {loading && (
@@ -239,7 +228,7 @@ function RightPhotoRail({
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
 
-                {/* creator avatar → profile with ALL content */}
+                {/* Creator avatar → profile with all content */}
                 <Link
                   to={slug ? `/creator/${slug}` : "#"}
                   className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
@@ -249,7 +238,7 @@ function RightPhotoRail({
                     <img src={person.avatar_url} alt={name} className="w-full h-full object-cover" />
                   ) : (
                     <span className="text-white text-xs font-semibold">
-                      {name.charAt(0).toUpperCase()}
+                      {name?.charAt(0).toUpperCase()}
                     </span>
                   )}
                 </Link>
@@ -265,20 +254,17 @@ function RightPhotoRail({
         </div>
       </div>
 
+      {/* invisible scrollbar */}
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,.5); border-radius: 3px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.8); }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
       `}</style>
     </aside>
   );
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   HOME (Nearby + Photos + Upload)
-   Desktop: left=nearby feed, right=photo rail (scrolls).
-   Mobile: same order but stacked; photo rail is FULL-WIDTH section beneath feed.
+   PAGE: ONLY Nearby + Splikz Photos (desktop side-by-side, mobile stacked)
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [nearbySpliks, setNearbySpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -291,8 +277,6 @@ const Explore = () => {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
-
-  // allow forcing the photo rail to reload
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -317,8 +301,14 @@ const Explore = () => {
         .limit(100);
 
       if (spliksData) {
+        const rotated = applySessionRotation(spliksData as SplikWithScore[], {
+          userId: user?.id,
+          feedType: "nearby",
+          maxResults: 30,
+        });
+
         const withProfiles = await Promise.all(
-          spliksData.map(async (s: any) => {
+          rotated.map(async (s: any) => {
             const { data: p } = await supabase
               .from("profiles")
               .select("*")
@@ -472,6 +462,8 @@ const Explore = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  const { toast } = useToast();
+
   const handleShare = async (splikId: string) => {
     const url = `${window.location.origin}/video/${splikId}`;
     try {
@@ -486,7 +478,7 @@ const Explore = () => {
     }
   };
 
-  // ── Upload Photo (Storage bucket → insert into vibe_photos) + optimistic insert
+  // Upload → Storage 'vibe_photos' → insert into public.vibe_photos → optimistic update
   const uploadPhoto = async () => {
     if (!user) {
       toast({ title: "Sign in required", description: "Log in to upload a photo", variant: "destructive" });
@@ -499,7 +491,7 @@ const Explore = () => {
     try {
       setUploading(true);
 
-      const bucket = "vibe_photos"; // change if your bucket name differs
+      const bucket = "vibe_photos"; // change if your bucket differs
       const path = `${user.id}/${Date.now()}-${file.name}`;
 
       const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, {
@@ -517,10 +509,8 @@ const Explore = () => {
         .insert({ user_id: user.id, photo_url });
       if (insertErr) throw insertErr;
 
-      // optimistic: notify rails immediately
+      // tell the rail to insert immediately
       window.dispatchEvent(new CustomEvent("vibe-photo-uploaded", { detail: { user_id: user.id, photo_url } }));
-
-      // optional hard reload for safety
       setReloadToken((n) => n + 1);
 
       toast({ title: "Photo posted!", description: "Your photo is live in Splikz Photos" });
@@ -540,15 +530,14 @@ const Explore = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* header */}
+      {/* HEADER: label 'Home', Update + Upload */}
       <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
           <div className="flex items-center justify-between">
             <div>
-              {/* Discover → Home */}
               <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
               <p className="text-muted-foreground">
-                Watch nearby splikz • Post a photo • See the latest Splikz Photos
+                Nearby videos on the left • Splikz Photos on the side (invisible scroll)
               </p>
             </div>
             <div className="flex gap-2">
@@ -565,10 +554,10 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* grid: desktop mirrors mobile (stacked) */}
+      {/* GRID: Desktop side-by-side; Mobile stacked (mirrors content) */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* left (desktop) / top (mobile): NEARBY */}
+          {/* LEFT / TOP: NEARBY */}
           <div className="lg:col-span-9 space-y-6">
             {locationPermission !== "granted" ? (
               <Card>
@@ -636,13 +625,13 @@ const Explore = () => {
             )}
           </div>
 
-          {/* right (desktop only): Photo rail */}
+          {/* RIGHT (DESKTOP): PHOTOS RAIL with invisible scroll */}
           <div className="lg:col-span-3 hidden lg:block">
             <RightPhotoRail title="Splikz Photos" />
           </div>
         </div>
 
-        {/* MOBILE INLINE PHOTO RAIL (full width, same scroll) */}
+        {/* MOBILE: same sections, stacked; Photos rail full-width with invisible scroll */}
         <div className="mt-10 lg:hidden">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-semibold">Splikz Photos</h2>
