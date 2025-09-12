@@ -19,6 +19,8 @@ export type Vibe = {
     id: string;
     username?: string | null;
     display_name?: string | null;
+    first_name?: string | null;  // ✅ added
+    last_name?: string | null;   // ✅ added
     avatar_url?: string | null;
   } | null;
 };
@@ -41,7 +43,9 @@ export default function VibeCard({ vibe }: Props) {
         .eq("vibe_id", vibe.id);
       if (!cancelled) setHypeCount(count || 0);
 
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
         const { data } = await supabase
           .from("vibe_hype")
@@ -53,12 +57,16 @@ export default function VibeCard({ vibe }: Props) {
       }
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [vibe.id]);
 
   const toggleHype = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) {
         toast({ title: "Sign in to hype", variant: "default" });
         return;
@@ -75,7 +83,9 @@ export default function VibeCard({ vibe }: Props) {
         setHasHyped(false);
         setHypeCount((n) => Math.max(0, n - 1));
       } else {
-        await supabase.from("vibe_hype").insert({ vibe_id: vibe.id, user_id: user.id });
+        await supabase
+          .from("vibe_hype")
+          .insert({ vibe_id: vibe.id, user_id: user.id });
         setHasHyped(true);
         setHypeCount((n) => n + 1);
       }
@@ -84,8 +94,18 @@ export default function VibeCard({ vibe }: Props) {
     }
   };
 
+  // ✅ Robust display name fallback
+  const fullName = [
+    vibe.profile?.first_name,
+    vibe.profile?.last_name,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
   const name =
     vibe.profile?.display_name ||
+    (fullName || undefined) ||
     vibe.profile?.username ||
     "User";
 
@@ -97,13 +117,8 @@ export default function VibeCard({ vibe }: Props) {
       <div className="flex items-center justify-between gap-3">
         <Link to={creatorHref} className="flex items-center gap-3">
           <Avatar className="h-9 w-9">
-            <AvatarImage
-              src={vibe.profile?.avatar_url || undefined}
-              alt={name}
-            />
-            <AvatarFallback className="font-semibold">
-              {initial}
-            </AvatarFallback>
+            <AvatarImage src={vibe.profile?.avatar_url || undefined} alt={name} />
+            <AvatarFallback className="font-semibold">{initial}</AvatarFallback>
           </Avatar>
           <div className="leading-tight">
             <p className="font-semibold">{name}</p>
