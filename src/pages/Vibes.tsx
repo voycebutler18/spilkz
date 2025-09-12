@@ -1,10 +1,11 @@
+// src/pages/Vibes.tsx
 import * as React from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/components/ui/use-toast";
-import { formatDistanceToNow } from "date-fns";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { formatDistanceToNow } from "date-fns";
+import { useToast } from "@/hooks/use-toast"; // ✅ match your project import
 
 type Profile = {
   id: string;
@@ -20,8 +21,7 @@ type Vibe = {
   mood?: string | null;
   created_at: string;
   profile?: Profile | null;
-  // client-only flags
-  _optimistic?: boolean;
+  _optimistic?: boolean; // client-only
 };
 
 const MOODS = [
@@ -41,17 +41,20 @@ const MAX_LEN = 500;
 export default function Vibes() {
   const { toast } = useToast();
 
+  // auth
   const [me, setMe] = React.useState<any>(null);
   const [myProfile, setMyProfile] = React.useState<Profile | null>(null);
 
+  // composer
   const [text, setText] = React.useState("");
   const [mood, setMood] = React.useState<string>("");
 
+  // list
   const [vibes, setVibes] = React.useState<Vibe[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [posting, setPosting] = React.useState(false);
 
-  // Load auth & my profile
+  // --- auth & my profile
   React.useEffect(() => {
     let mounted = true;
 
@@ -66,7 +69,7 @@ export default function Vibes() {
           .select("id, username, display_name, avatar_url")
           .eq("id", data.user.id)
           .maybeSingle();
-        setMyProfile(prof ?? null);
+        if (mounted) setMyProfile(prof ?? null);
       }
     })();
 
@@ -74,10 +77,10 @@ export default function Vibes() {
       setMe(session?.user ?? null);
     });
 
-    return () => sub?.subscription.unsubscribe();
+    return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // Initial fetch
+  // --- initial fetch
   React.useEffect(() => {
     let alive = true;
 
@@ -85,22 +88,19 @@ export default function Vibes() {
       setLoading(true);
       const { data, error } = await supabase
         .from("vibes")
-        .select(
-          `
+        .select(`
           id, user_id, text, mood, created_at,
           profile:profiles(id, username, display_name, avatar_url)
-        `
-        )
+        `)
         .order("created_at", { ascending: false })
         .limit(LIMIT);
 
       if (!alive) return;
-
       if (error) {
         console.error(error);
         setVibes([]);
       } else {
-        setVibes((data as any[]) ?? []);
+        setVibes((data as Vibe[]) ?? []);
       }
       setLoading(false);
     })();
@@ -110,7 +110,7 @@ export default function Vibes() {
     };
   }, []);
 
-  // Realtime: push new vibes to the top (dedupe by id)
+  // --- realtime inserts
   React.useEffect(() => {
     const ch = supabase
       .channel("vibes-realtime")
@@ -120,7 +120,7 @@ export default function Vibes() {
         async (payload) => {
           const row = payload.new as Vibe;
 
-          // Hydrate profile for the inserted user
+          // hydrate profile
           let profile: Profile | null = null;
           if (row.user_id === me?.id && myProfile) {
             profile = myProfile;
@@ -134,8 +134,7 @@ export default function Vibes() {
           }
 
           setVibes((prev) => {
-            // avoid duplicates (e.g., optimistic item already present)
-            if (prev.some((v) => v.id === row.id)) return prev;
+            if (prev.some((v) => v.id === row.id)) return prev; // dedupe
             return [{ ...row, profile }, ...prev];
           });
         }
@@ -147,7 +146,7 @@ export default function Vibes() {
     };
   }, [me?.id, myProfile]);
 
-  // Helpers
+  // --- helpers
   const nameFor = (p?: Profile | null) =>
     (p?.display_name || p?.username || "Someone").toString();
 
@@ -157,18 +156,7 @@ export default function Vibes() {
       nameFor(p)
     )}`;
 
-  const addOrReplace = (incoming: Vibe) =>
-    setVibes((prev) => {
-      const i = prev.findIndex((v) => v.id === incoming.id);
-      if (i >= 0) {
-        const clone = [...prev];
-        clone[i] = { ...prev[i], ...incoming };
-        return clone;
-      }
-      return [incoming, ...prev];
-    });
-
-  // Post a vibe (optimistic)
+  // --- post with optimistic UI
   const onPost = async () => {
     const body = text.trim();
     if (!me?.id) {
@@ -179,7 +167,6 @@ export default function Vibes() {
 
     setPosting(true);
 
-    // optimistic item
     const tempId = `temp-${Date.now()}`;
     const optimistic: Vibe = {
       id: tempId,
@@ -187,27 +174,27 @@ export default function Vibes() {
       text: body,
       mood: mood || null,
       created_at: new Date().toISOString(),
-      profile: myProfile ?? { id: me.id, username: null, display_name: "You", avatar_url: null },
+      profile:
+        myProfile ?? { id: me.id, username: null, display_name: "You", avatar_url: null },
       _optimistic: true,
     };
 
-    setVibes((prev) => [optimistic, ...prev]); // show immediately
+    // show immediately
+    setVibes((prev) => [optimistic, ...prev]);
     setText("");
 
     // send to server
     const { data, error } = await supabase
       .from("vibes")
       .insert({ text: body, mood: mood || null, user_id: me.id })
-      .select(
-        `
+      .select(`
         id, user_id, text, mood, created_at,
         profile:profiles(id, username, display_name, avatar_url)
-      `
-      )
+      `)
       .single();
 
     if (error || !data) {
-      // rollback optimistic item
+      // rollback
       setVibes((prev) => prev.filter((v) => v.id !== tempId));
       setPosting(false);
       toast({ title: "Couldn’t post your vibe. Try again.", variant: "destructive" });
@@ -218,7 +205,7 @@ export default function Vibes() {
     setVibes((prev) => {
       const idx = prev.findIndex((v) => v.id === tempId);
       if (idx === -1) {
-        // (if realtime already added it, just ensure dedupe/replace)
+        // already arrived via realtime; ensure single instance
         return [data as Vibe, ...prev.filter((v) => v.id !== (data as Vibe).id)];
       }
       const clone = [...prev];
@@ -303,7 +290,10 @@ export default function Vibes() {
                       </Badge>
                     ) : null}
                     <span className="text-xs text-muted-foreground ml-auto">
-                      {formatDistanceToNow(new Date(v.created_at), { addSuffix: true })}
+                      {formatDistanceToNow(
+                        v.created_at ? new Date(v.created_at) : new Date(),
+                        { addSuffix: true }
+                      )}
                     </span>
                   </div>
                   <p className="mt-1 whitespace-pre-wrap break-words">{v.text}</p>
