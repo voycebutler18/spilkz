@@ -1,4 +1,3 @@
-// src/pages/Vibes.tsx (or VibesPage.tsx if that's your filename)
 import * as React from "react";
 import VibeComposer from "@/components/vibes/VibeComposer";
 import VibeCard, { Vibe } from "@/components/vibes/VibeCard";
@@ -12,68 +11,63 @@ export default function VibesPage() {
 
   const fetchVibes = React.useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("vibes")
-      .select(`
-        id, user_id, content, mood, created_at,
-        profile:profiles(id, username, display_name, avatar_url)
-      `)
-      .order("created_at", { ascending: false })
-      .limit(100);
+    try {
+      // 1) Get vibes without a join (can’t be blocked by profiles RLS)
+      const { data: vibes, error } = await supabase
+        .from("vibes")
+        .select("id, user_id, content, mood, created_at")
+        .order("created_at", { ascending: false })
+        .limit(100);
 
-    if (!error && data) setRows(data as any);
-    setLoading(false);
-  }, []);
+      if (error) throw error;
 
-  // ✅ If the composer ever gives us the new row, append immediately; otherwise refresh.
-  const handlePosted = React.useCallback(
-    (maybeRow?: Partial<Vibe>) => {
-      if (maybeRow && (maybeRow as any).id) {
-        const next = maybeRow as Vibe;
-        setRows((prev) => (prev.some((v) => v.id === next.id) ? prev : [next, ...prev]));
-      } else {
-        fetchVibes();
+      const base: Vibe[] =
+        (vibes ?? []).map((v: any) => ({ ...v, profile: null })) as Vibe[];
+
+      // 2) Hydrate profiles in a separate query
+      const userIds = Array.from(new Set(base.map((v) => v.user_id))).filter(Boolean);
+      if (userIds.length) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, username, display_name, avatar_url")
+          .in("id", userIds);
+
+        const map = new Map((profs ?? []).map((p: any) => [p.id, p]));
+        base.forEach((v) => {
+          (v as any).profile = map.get(v.user_id) ?? null;
+        });
       }
-    },
-    [fetchVibes]
-  );
+
+      setRows(base);
+    } catch (e) {
+      console.error("vibes fetch failed:", e);
+      setRows([]); // don’t leave stale UI
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   React.useEffect(() => {
     fetchVibes();
 
-    // ✅ Realtime: append new insert immediately (with profile), no full refetch
+    // Live inserts → prepend
     const ch = supabase
       .channel("live-vibes")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "vibes" },
         async (payload) => {
-          const r = payload.new as {
-            id: string;
-            user_id: string;
-            content: string;
-            mood?: string | null;
-            created_at: string;
-          };
-
-          // hydrate profile so the card can render names/avatars right away
+          const v = payload.new as any;
+          // hydrate just this profile
+          let profile: any = null;
           const { data: prof } = await supabase
             .from("profiles")
             .select("id, username, display_name, avatar_url")
-            .eq("id", r.user_id)
+            .eq("id", v.user_id)
             .maybeSingle();
+          if (prof) profile = prof;
 
-          const newVibe: Vibe = {
-            id: r.id,
-            user_id: r.user_id,
-            content: r.content,
-            mood: r.mood ?? null,
-            created_at: r.created_at,
-            // @ts-ignore (VibeCard expects this shape)
-            profile: prof ?? null,
-          };
-
-          setRows((prev) => (prev.some((v) => v.id === newVibe.id) ? prev : [newVibe, ...prev]));
+          setRows((prev) => [{ ...v, profile }, ...prev]);
         }
       )
       .subscribe();
@@ -82,6 +76,15 @@ export default function VibesPage() {
       supabase.removeChannel(ch);
     };
   }, [fetchVibes]);
+
+  // Optimistic append from composer (works even if realtime is slow)
+  const handlePosted = (newRow?: Vibe) => {
+    if (newRow) {
+      setRows((prev) => [newRow, ...prev]);
+    } else {
+      fetchVibes();
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -95,7 +98,7 @@ export default function VibesPage() {
           </p>
         </div>
 
-        {/* ⬇️ was: onPosted={fetchVibes} — now a wrapper that still calls fetch if needed */}
+        {/* composer now passes the new row back so the list updates immediately */}
         <VibeComposer onPosted={handlePosted} />
 
         {loading ? (
