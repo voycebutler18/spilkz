@@ -71,149 +71,103 @@ export default function SplikCard({
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // ——————————— Enhanced Autoplay / visibility control for mobile ———————————
+  // ——— Autoplay / visibility control (fixed & mobile-safe) ———
   React.useEffect(() => {
     const el = cardRef.current;
     const vid = videoRef.current;
     if (!el || !vid) return;
 
-    // Enhanced mobile-friendly defaults
+    let destroyed = false;
+    let visible = false;
+    let trying = false;
+
+    // Mobile-safe defaults
     vid.playsInline = true;
     (vid as any).webkitPlaysInline = true;
-    vid.muted = true;
+    vid.setAttribute("playsinline", "true");
+    vid.setAttribute("webkit-playsinline", "true");
     vid.preload = "auto";
-    vid.setAttribute('playsinline', 'true');
-    vid.setAttribute('webkit-playsinline', 'true');
-
-    let lastVisible = 0;
-    let playAttempts = 0;
-    const maxPlayAttempts = 3;
-
-    const tryPlay = async (forceAttempt = false) => {
-      if (!vid.src || (!forceAttempt && playAttempts >= maxPlayAttempts)) return;
-      
-      playAttempts++;
-      
-      try {
-        // Ensure video is loaded
-        if (vid.readyState < 2) {
-          vid.load();
-          // Wait a bit for load
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        
-        // Force muted for autoplay compliance
-        vid.muted = true;
-        setIsMuted(true);
-        
-        await vid.play();
-        setIsPlaying(true);
-        playAttempts = 0; // reset on success
-      } catch (err) {
-        // Enhanced fallback strategy
-        try {
-          // Second attempt with explicit muted and slight delay
-          await new Promise(resolve => setTimeout(resolve, 50));
-          vid.muted = true;
-          vid.volume = 0;
-          await vid.play();
-          setIsPlaying(true);
-          playAttempts = 0;
-        } catch (secondErr) {
-          // Third attempt: reset and retry
-          try {
-            vid.currentTime = 0;
-            vid.muted = true;
-            await vid.play();
-            setIsPlaying(true);
-            playAttempts = 0;
-          } catch (finalErr) {
-            // Last resort: enable controls for manual play
-            if (playAttempts >= maxPlayAttempts) {
-              vid.controls = true;
-              setIsPlaying(false);
-            }
-          }
-        }
-      }
-    };
+    vid.muted = true; // start muted for autoplay compliance
+    setIsMuted(true);
 
     const pause = () => {
-      try {
-        vid.pause();
-      } catch {}
+      try { vid.pause(); } catch {}
       setIsPlaying(false);
     };
 
+    const attemptPlay = async (force = false) => {
+      if (destroyed || !visible || !shouldLoad) return;
+      if (trying && !force) return;
+      trying = true;
+
+      try {
+        // Nudge iOS to paint the first frame (prevents black flicker)
+        if (vid.readyState < 2 && vid.currentTime === 0) {
+          try { vid.currentTime = 0.01; } catch {}
+          await new Promise(r => setTimeout(r, 50));
+        }
+        await vid.play();
+        setIsPlaying(true);
+      } catch {
+        // Fall back to manual controls if blocked
+        vid.controls = true;
+        setIsPlaying(false);
+      } finally {
+        trying = false;
+      }
+    };
+
+    // Stable handler refs (so cleanup actually removes them)
+    const handleLoadedData = () => {
+      if (vid.currentTime === 0) {
+        try { vid.currentTime = 0.01; } catch {}
+      }
+      if (visible) attemptPlay(true);
+    };
+    const handleCanPlay = () => { if (visible) attemptPlay(); };
+    const handleStalled = () => { if (visible) attemptPlay(true); };
+    const handleWaiting = () => { if (visible) attemptPlay(); };
+    const onTap = () => attemptPlay(true);
+    const onVisibility = () => {
+      if (document.hidden) pause();
+      else if (visible) attemptPlay(true);
+    };
+
     const io = new IntersectionObserver(
-      (entries) => {
-        for (const ent of entries) {
-          lastVisible = ent.intersectionRatio;
-          if (ent.isIntersecting && ent.intersectionRatio >= VISIBILITY_THRESHOLD) {
-            onPrimaryVisible?.(index);
-            // Start playback immediately when visible
-            tryPlay();
-          } else if (ent.intersectionRatio < 0.35) {
-            pause();
-          }
+      ([entry]) => {
+        visible = entry.isIntersecting && entry.intersectionRatio >= VISIBILITY_THRESHOLD;
+        if (visible) {
+          onPrimaryVisible?.(index);
+          attemptPlay();
+        } else {
+          pause();
         }
       },
-      { threshold: [0, 0.35, VISIBILITY_THRESHOLD, 0.9, 1] }
+      { threshold: [0, 0.35, VISIBILITY_THRESHOLD, 1] }
     );
     io.observe(el);
 
-    // Enhanced touch/click handlers for mobile
-    const onTap = (e: Event) => {
-      e.preventDefault();
-      e.stopPropagation();
-      tryPlay(true); // force attempt on user interaction
-    };
-    
-    const onTouch = (e: TouchEvent) => {
-      e.stopPropagation();
-      tryPlay(true);
-    };
-
-    el.addEventListener("click", onTap, { passive: false });
-    el.addEventListener("touchstart", onTouch, { passive: true });
-    el.addEventListener("touchend", onTap, { passive: false });
-
-    // Enhanced iOS compatibility
-    const onLoaded = () => {
-      if (vid.currentTime === 0) {
-        try { 
-          vid.currentTime = 0.01; // Tiny nudge to prevent stall
-        } catch {}
-      }
-      // Try to play once loaded if visible
-      if (lastVisible >= VISIBILITY_THRESHOLD) {
-        tryPlay();
-      }
-    };
-    
-    const onCanPlay = () => {
-      if (lastVisible >= VISIBILITY_THRESHOLD && !isPlaying) {
-        tryPlay();
-      }
-    };
-
-    vid.addEventListener("loadeddata", onLoaded);
-    vid.addEventListener("canplay", onCanPlay);
-    vid.addEventListener("stalled", () => tryPlay());
-    vid.addEventListener("waiting", () => tryPlay());
+    vid.addEventListener("loadeddata", handleLoadedData);
+    vid.addEventListener("canplay", handleCanPlay);
+    vid.addEventListener("stalled", handleStalled);
+    vid.addEventListener("waiting", handleWaiting);
+    el.addEventListener("click", onTap, { passive: true });
+    el.addEventListener("touchstart", onTap, { passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
+      destroyed = true;
       io.disconnect();
-      el.removeEventListener("click", onTap);
-      el.removeEventListener("touchstart", onTouch);
-      el.removeEventListener("touchend", onTap);
-      vid.removeEventListener("loadeddata", onLoaded);
-      vid.removeEventListener("canplay", onCanPlay);
-      vid.removeEventListener("stalled", () => tryPlay());
-      vid.removeEventListener("waiting", () => tryPlay());
+      vid.removeEventListener("loadeddata", handleLoadedData);
+      vid.removeEventListener("canplay", handleCanPlay);
+      vid.removeEventListener("stalled", handleStalled);
+      vid.removeEventListener("waiting", handleWaiting);
+      el.removeEventListener("click", onTap as any);
+      el.removeEventListener("touchstart", onTap as any);
+      document.removeEventListener("visibilitychange", onVisibility);
       pause();
     };
-  }, [index, onPrimaryVisible, isPlaying]);
+  }, [index, onPrimaryVisible, shouldLoad]);
 
   // ——————————— Load hype count and user interaction state ———————————
   React.useEffect(() => {
@@ -222,41 +176,38 @@ export default function SplikCard({
     const loadData = async () => {
       if (!splik?.id) return;
       setLoadingCounts(true);
-      
+
       try {
         // Get hype count
         const { count: hypeCountResult } = await supabase
           .from("hype_reactions")
           .select("*", { head: true, count: "exact" })
           .eq("splik_id", splik.id);
-        
+
         if (!cancelled && typeof hypeCountResult === "number") {
           setHypeCount(hypeCountResult);
         }
 
         // Check user's interactions if logged in
         if (user?.id) {
-          // Check if user has hyped
+          // Hype
           const { data: hypeData } = await supabase
             .from("hype_reactions")
             .select("id")
             .eq("splik_id", splik.id)
             .eq("user_id", user.id)
             .maybeSingle();
-          
           if (!cancelled) setHasHyped(!!hypeData);
 
-          // Check if user has saved
+          // Save
           const { data: saveData } = await supabase
             .from("favorites")
             .select("id")
             .eq("video_id", splik.id)
             .eq("user_id", user.id)
             .maybeSingle();
-          
           if (!cancelled) setIsSaved(!!saveData);
         }
-
       } catch (error) {
         console.error("Error loading splik data:", error);
       } finally {
@@ -265,10 +216,7 @@ export default function SplikCard({
     };
 
     loadData();
-    
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [splik?.id, user?.id]);
 
   const ensureAuth = async () => {
@@ -297,12 +245,10 @@ export default function SplikCard({
         .maybeSingle();
 
       if (existingHype?.id) {
-        // Remove hype
         await supabase.from("hype_reactions").delete().eq("id", existingHype.id);
         setHasHyped(false);
         setHypeCount((prev) => Math.max(0, prev - 1));
       } else {
-        // Add hype
         await supabase
           .from("hype_reactions")
           .insert({ splik_id: splik.id, user_id: u.id, amount: 1 });
@@ -311,10 +257,10 @@ export default function SplikCard({
       }
     } catch (error: any) {
       if (error?.message !== "auth_required") {
-        toast({ 
-          title: "Couldn't update hype", 
+        toast({
+          title: "Couldn't update hype",
           description: "Please try again",
-          variant: "destructive" 
+          variant: "destructive",
         });
       }
     }
@@ -331,25 +277,23 @@ export default function SplikCard({
         .maybeSingle();
 
       if (existingSave?.id) {
-        // Remove from favorites
         await supabase.from("favorites").delete().eq("id", existingSave.id);
         setIsSaved(false);
         toast({ title: "Removed from favorites" });
       } else {
-        // Add to favorites
-        await supabase.from("favorites").insert({ 
-          video_id: splik.id, 
-          user_id: u.id 
+        await supabase.from("favorites").insert({
+          video_id: splik.id,
+          user_id: u.id,
         });
         setIsSaved(true);
         toast({ title: "Saved to favorites" });
       }
     } catch (error: any) {
       if (error?.message !== "auth_required") {
-        toast({ 
-          title: "Couldn't save", 
+        toast({
+          title: "Couldn't save",
           description: "Please try again",
-          variant: "destructive" 
+          variant: "destructive",
         });
       }
     }
@@ -358,18 +302,17 @@ export default function SplikCard({
   const onToggleMute = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     const v = videoRef.current;
     if (!v) return;
-    
-    const nextMuted = !v.muted; // Use video's actual muted state
+
+    const nextMuted = !v.muted; // use the video's current state
     v.muted = nextMuted;
     setIsMuted(nextMuted);
-    
-    // If unmuting, try to play if not already playing
+
+    // If unmuting, try to play if not already
     if (!nextMuted && !isPlaying) {
       v.play().catch(() => {
-        // If play fails, re-mute
         v.muted = true;
         setIsMuted(true);
       });
@@ -389,9 +332,7 @@ export default function SplikCard({
           ref={videoRef}
           poster={splik.thumbnail_url || undefined}
           className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
-          style={{
-            objectPosition: 'center center'
-          }}
+          style={{ objectPosition: "center center" }}
           src={shouldLoad ? splik.video_url : ""}
           playsInline
           muted
@@ -404,43 +345,38 @@ export default function SplikCard({
             e.stopPropagation();
             const v = videoRef.current;
             if (!v) return;
-            
-            if (isPlaying) { 
-              v.pause(); 
-              setIsPlaying(false); 
-            } else { 
+
+            if (isPlaying) {
+              v.pause();
+              setIsPlaying(false);
+            } else {
               v.play()
                 .then(() => setIsPlaying(true))
                 .catch(() => {
                   // Enable controls as fallback
                   v.controls = true;
-                }); 
+                });
             }
           }}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={() => setIsMuted(videoRef.current?.muted ?? true)}
           onError={() => {
-            // Fallback: enable controls so user can still play
             const v = videoRef.current;
             if (v) {
-              v.controls = true;
+              v.controls = true; // user can still try
               console.error("Video failed to load:", splik.video_url);
             }
           }}
         />
-        
+
         {/* Mute/Unmute button */}
         <button
           onClick={onToggleMute}
           className="absolute right-3 bottom-3 rounded-full bg-black/70 hover:bg-black/80 p-2 ring-1 ring-white/30 transition-colors"
           aria-label={isMuted ? "Unmute" : "Mute"}
         >
-          {isMuted ? (
-            <VolumeX className="h-5 w-5 text-white" />
-          ) : (
-            <Volume2 className="h-5 w-5 text-white" />
-          )}
+          {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
         </button>
       </div>
 
@@ -457,8 +393,8 @@ export default function SplikCard({
           />
         </Link>
         <div className="min-w-0 flex-1">
-          <Link 
-            to={creatorHref} 
+          <Link
+            to={creatorHref}
             className="block font-medium hover:text-primary transition-colors truncate"
           >
             {splik.profile?.display_name || splik.profile?.username || "Creator"}
@@ -472,7 +408,7 @@ export default function SplikCard({
       {/* Actions */}
       <div className="px-4 pb-4 pt-3">
         <div className="flex items-center gap-2">
-          {/* Hype button */}
+          {/* Hype */}
           <Button
             variant={hasHyped ? "default" : "outline"}
             size="sm"
@@ -487,7 +423,7 @@ export default function SplikCard({
             {hypeCount}
           </Button>
 
-          {/* Save button */}
+          {/* Save */}
           <Button
             variant="outline"
             size="sm"
@@ -508,14 +444,9 @@ export default function SplikCard({
             )}
           </Button>
 
-          {/* Share button */}
+          {/* Share */}
           <div className="ml-auto">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={onShare}
-            >
+            <Button variant="outline" size="sm" className="gap-2" onClick={onShare}>
               <Share2 className="h-4 w-4" />
               Share
             </Button>
@@ -524,9 +455,7 @@ export default function SplikCard({
 
         {/* Description */}
         {splik.description && (
-          <p className="mt-3 text-sm text-muted-foreground">
-            {splik.description}
-          </p>
+          <p className="mt-3 text-sm text-muted-foreground">{splik.description}</p>
         )}
       </div>
     </div>
