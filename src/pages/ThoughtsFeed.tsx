@@ -292,12 +292,19 @@ export default function ThoughtsFeed() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="mx-auto max-w-[110rem] px-3 sm:px-4 md:px-6 py-4 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-4 md:gap-6">
+      <div className="mx-auto max-w-[1400px] px-3 sm:px-4 md:px-6 py-4 grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] xl:grid-cols-[320px_1fr_340px] gap-6">
 
-        {/* MAIN */}
-        <div className="space-y-4 md:space-y-5">
+        {/* LEFT SIDEBAR - empty placeholder for nav or other content */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-4">
+            {/* Add navigation or other left sidebar content here if needed */}
+          </div>
+        </aside>
+
+        {/* CENTER FEED - Facebook style */}
+        <main className="space-y-4 md:space-y-5">
           {/* Composer */}
-          <Card className="p-3 sm:p-4 md:p-5">
+          <Card className="p-4 md:p-5">
             <div className="flex items-start gap-3">
               <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-fuchsia-500 to-indigo-500" />
               <div className="flex-1 min-w-0">
@@ -367,7 +374,7 @@ export default function ThoughtsFeed() {
           {/* FEED */}
           <div className="space-y-3 md:space-y-4">
             {posts.map(p => (
-              <Card key={p.id} className="p-3 sm:p-4">
+              <Card key={p.id} className="p-4 md:p-5">
                 <div className="flex items-start gap-3">
                   <div className="h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-rose-500 to-orange-500" />
                   <div className="flex-1 min-w-0">
@@ -377,22 +384,22 @@ export default function ThoughtsFeed() {
                       {p.mood && <Badge className="bg-neutral-800 text-neutral-200">{p.mood}</Badge>}
                     </div>
 
-                    {p.text_content && <p className="mt-2 text-neutral-100 whitespace-pre-wrap text-[15px] sm:text-base">{p.text_content}</p>}
+                    {p.text_content && <p className="mt-3 text-neutral-100 whitespace-pre-wrap text-[15px] sm:text-base leading-relaxed">{p.text_content}</p>}
 
                     {(imagesByPost[p.id]?.length ?? 0) > 0 && (
-                      <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-2">
+                      <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {imagesByPost[p.id].map((img) => (
                           <button key={img.id} className="relative group" onClick={() => openLightboxFor(img.id)} aria-label="Open photo">
-                            <img src={img.src} alt="" loading="lazy" className="rounded-xl object-cover w-full h-40 sm:h-48" />
+                            <img src={img.src} alt="" loading="lazy" className="rounded-xl object-cover w-full h-40 sm:h-48 hover:opacity-90 transition-opacity" />
                           </button>
                         ))}
                       </div>
                     )}
 
                     {/* Reactions + actions */}
-                    <div className="mt-4 flex items-center gap-4">
+                    <div className="mt-4 flex items-center gap-6">
                       <button
-                        className={`inline-flex items-center gap-1.5 text-sm ${
+                        className={`inline-flex items-center gap-1.5 text-sm hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors ${
                           myLikeId[p.id] ? "text-rose-400" : "text-neutral-300"
                         }`}
                         onClick={() => toggleLike(p.id)}
@@ -406,21 +413,21 @@ export default function ThoughtsFeed() {
 
                       {/* Report post */}
                       <button
-                        className="ml-auto inline-flex items-center gap-1.5 text-sm text-neutral-300"
+                        className="ml-auto inline-flex items-center gap-1.5 text-sm text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors"
                         onClick={() => toggleReportPost(p.id)}
                         aria-label="Report post"
                       >
-                        <Flag className="h-4 w-4" /> Report
+                        <Flag className="h-4 w-4" />
                       </button>
 
                       {/* Soft delete (owner only) */}
                       {user?.id === p.user_id && (
                         <button
-                          className="inline-flex items-center gap-1.5 text-sm text-neutral-300"
+                          className="inline-flex items-center gap-1.5 text-sm text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors"
                           onClick={() => softDeletePost(p.id)}
                           aria-label="Delete post"
                         >
-                          <Trash2 className="h-4 w-4" /> Delete
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       )}
                     </div>
@@ -434,32 +441,32 @@ export default function ThoughtsFeed() {
             {!initialLoading && posts.length === 0 && <Card className="p-6 text-center text-neutral-400">No posts yet. Be the first!</Card>}
             {loadingMore && <Card className="p-4 text-center text-neutral-400">Loading more…</Card>}
           </div>
-        </div>
+        </main>
 
-        {/* RIGHT PHOTO RAIL — “bubbles” */}
+        {/* RIGHT PHOTO RAIL */}
         <aside className="hidden lg:block sticky top-4 h-[calc(100vh-2rem)] overflow-auto">
           <Card className="p-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-neutral-200">Latest Photos</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-neutral-200">Photos</h3>
               <span className="text-xs text-neutral-500">{allPhotos.length}</span>
             </div>
 
             {/* vertical bubble list */}
-            <div className="mt-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-3">
               {allPhotos.length === 0 && (
-                <p className="text-sm text-neutral-400">Photos you post here will appear on the right.</p>
+                <p className="text-sm text-neutral-400">Photos you post will appear here.</p>
               )}
               {[...allPhotos].reverse().slice(0, 120).map((p) => (
                 <button
                   key={p.id}
                   onClick={() => openLightboxFor(p.id)}
-                  className="flex items-center gap-3 text-left"
+                  className="flex items-center gap-3 text-left hover:bg-neutral-800/50 rounded-lg p-2 -m-2 transition-colors"
                 >
                   <img
                     src={p.src}
                     alt=""
                     loading="lazy"
-                    className="h-14 w-14 rounded-full object-cover ring-2 ring-neutral-800"
+                    className="h-12 w-12 rounded-full object-cover ring-2 ring-neutral-800"
                   />
                   <div className="flex-1 border-b border-neutral-800/70" />
                 </button>
@@ -554,10 +561,10 @@ function CommentsThread({ postId, currentUserId }: { postId: string; currentUser
     <div className="inline-flex items-center gap-2">
       <button
         onClick={() => setOpen(v => !v)}
-        className="text-sm text-neutral-300"
+        className="inline-flex items-center gap-1.5 text-sm text-neutral-300 hover:bg-neutral-800 px-2 py-1 rounded-lg transition-colors"
         aria-expanded={open}
       >
-        {open ? "Hide comments" : "View comments"}
+        <span>{open ? "Hide comments" : "View comments"}</span>
       </button>
       {open && (
         <div className="mt-3 w-full">
