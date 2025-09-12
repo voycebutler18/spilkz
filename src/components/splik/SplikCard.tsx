@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import FollowButton from "@/components/FollowButton"; // ✅ show Follow on every card
 
 type Profile = {
   id: string;
@@ -408,6 +409,14 @@ export default function SplikCard({
       {/* Actions */}
       <div className="px-4 pb-4 pt-3">
         <div className="flex items-center gap-2">
+          {/* ✅ Follow (new) */}
+          <FollowButton
+            profileId={splik.user_id}
+            username={splik.profile?.username || undefined}
+            size="sm"
+            variant="outline"
+          />
+
           {/* Hype */}
           <Button
             variant={hasHyped ? "default" : "outline"}
