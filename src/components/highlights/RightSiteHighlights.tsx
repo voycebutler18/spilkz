@@ -1,4 +1,3 @@
-// src/components/highlights/RightSiteHighlights.tsx
 import * as React from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -10,7 +9,7 @@ type Highlight = {
   kind: "thought_post" | "thought_image" | "food_post" | "food_image" | "other";
   route: string;
   ref_table: string;
-  ref_id: string;
+  ref_id: string; // <- the *real* row id in the source table
   image_path: string | null;
   text_preview: string | null;
   mood: string | null;
@@ -18,53 +17,33 @@ type Highlight = {
   expires_at: string;
 };
 
-type Profile = {
-  id: string;
-  username: string | null;
-  display_name: string | null;
-  avatar_url: string | null;
-};
-
+type Profile = { id: string; username: string | null; display_name: string | null; avatar_url: string | null };
 type LocalItem = Highlight & { post_id?: string | null; owner_id?: string | null };
 
 const BUCKET_FOR_KIND: Record<string, string> = {
   thought_image: "thoughts-images",
   food_image: "food-images",
 };
-
 const publicUrl = (bucket: string, path: string) =>
   supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 
-// build a cheap “signature” so we only set state when data really changed
-function signature(items: LocalItem[]) {
-  return items
-    .map(
-      (i) =>
-        `${i.kind}|${i.ref_table}|${i.ref_id}|${i.created_at}|${i.image_path ?? ""}|${i.text_preview ?? ""}|${i.mood ?? ""}`
-    )
-    .join("§");
-}
+// Cheap signature to avoid unnecessary re-renders
+const sig = (arr: LocalItem[]) =>
+  arr.map(i => `${i.kind}|${i.ref_table}|${i.ref_id}|${i.created_at}|${i.image_path ?? ""}|${i.text_preview ?? ""}|${i.mood ?? ""}`).join("§");
 
 export default function RightSiteHighlights({
   includeKinds = ["thought_post", "thought_image"],
   limit = 120,
-}: {
-  includeKinds?: Highlight["kind"][];
-  limit?: number;
-}) {
+}: { includeKinds?: Highlight["kind"][]; limit?: number }) {
   const navigate = useNavigate();
-
   const [items, setItems] = React.useState<LocalItem[]>([]);
-  const itemsSigRef = React.useRef<string>("");
+  const sigRef = React.useRef("");
   const [profiles, setProfiles] = React.useState<Record<string, Profile>>({});
   const [user, setUser] = React.useState<any>(null);
 
   // lightbox
   const [lightIdx, setLightIdx] = React.useState<number | null>(null);
-  const images = React.useMemo(
-    () => items.filter((i) => i.image_path && i.kind.endsWith("_image")),
-    [items]
-  );
+  const images = React.useMemo(() => items.filter(i => i.image_path && i.kind.endsWith("_image")), [items]);
   const isOpen = lightIdx !== null;
   const current = lightIdx !== null ? images[lightIdx] : null;
 
@@ -75,117 +54,73 @@ export default function RightSiteHighlights({
   // auth
   React.useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
-      setUser(session?.user ?? null)
-    );
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => setUser(session?.user ?? null));
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // debounce + latest-request guard
+  // debounce refresh
   const refreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestReq = React.useRef(0);
   const scheduleRefresh = React.useCallback(() => {
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(() => {
-      void refreshData();
-    }, 300);
+    refreshTimer.current = setTimeout(() => void refreshData(), 250);
   }, []);
 
   const applyIfChanged = React.useCallback((next: LocalItem[]) => {
-    const sig = signature(next);
-    if (sig !== itemsSigRef.current) {
-      itemsSigRef.current = sig;
+    const nextSig = sig(next);
+    if (nextSig !== sigRef.current) {
+      sigRef.current = nextSig;
       setItems(next);
     }
   }, []);
 
   // data loaders
-  const hydrate = React.useCallback(
-    async (raw: Highlight[]) => {
-      // base items (do NOT setItems yet — avoid mid-hydration paint)
-      let locals: LocalItem[] = raw.map((r) => ({ ...r }));
+  const hydrate = React.useCallback(async (raw: Highlight[]) => {
+    let locals: LocalItem[] = raw.map(r => ({ ...r }));
 
-      // for image items, map to post + owner
-      const imageIds = locals
-        .filter((i) => i.kind.endsWith("_image"))
-        .map((i) => i.ref_id);
-      let postMap: Record<string, { post_id: string; owner_id: string | null }> = {};
-      if (imageIds.length) {
-        const { data: imgRows } = await supabase
-          .from("thoughts_images")
-          .select("id, post_id")
-          .in("id", imageIds);
-        const postIds = (imgRows ?? []).map((r) => r.post_id);
-        if (postIds.length) {
-          const { data: posts } = await supabase
-            .from("thoughts_posts")
-            .select("id, user_id")
-            .in("id", postIds);
-          const ownerByPost: Record<string, string | null> = {};
-          (posts ?? []).forEach((p) => (ownerByPost[p.id] = p.user_id));
-          (imgRows ?? []).forEach(
-            (r) =>
-              (postMap[r.id] = {
-                post_id: r.post_id,
-                owner_id: ownerByPost[r.post_id] ?? null,
-              })
-          );
-        }
-      }
-
-      // ensure owner_id exists on images (fallback to user_id if present)
-      locals = locals.map((i) =>
-        i.kind.endsWith("_image")
-          ? {
-              ...i,
-              post_id: postMap[i.ref_id]?.post_id,
-              owner_id: postMap[i.ref_id]?.owner_id ?? i.user_id ?? null,
-            }
-          : i
-      );
-
-      // gather owner profiles
-      const userIds = Array.from(
-        new Set(locals.map((i) => i.owner_id || i.user_id).filter(Boolean) as string[])
-      );
-      if (userIds.length) {
-        const { data: profs } = await supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar_url")
-          .in("id", userIds);
-        const map: Record<string, Profile> = {};
-        (profs ?? []).forEach((p) => (map[p.id] = p as Profile));
-        setProfiles((prev) => ({ ...prev, ...map }));
-      }
-
-      // hydrate hype counts once we know post_ids
-      const postIds = Array.from(
-        new Set(locals.map((i) => i.post_id).filter(Boolean) as string[])
-      );
+    // Map images -> their post + owner
+    const imageIds = locals.filter(i => i.kind.endsWith("_image")).map(i => i.ref_id);
+    let postMap: Record<string, { post_id: string; owner_id: string | null }> = {};
+    if (imageIds.length) {
+      const { data: imgRows } = await supabase.from("thoughts_images").select("id, post_id").in("id", imageIds);
+      const postIds = (imgRows ?? []).map(r => r.post_id);
       if (postIds.length) {
-        const { data: reacts } = await supabase
-          .from("thoughts_reactions")
-          .select("id, post_id, user_id, type")
-          .in("post_id", postIds);
-
-        const counts: Record<string, number> = {};
-        const mine: Record<string, string | null> = {};
-
-        (reacts ?? []).forEach((r: any) => {
-          if (r.type === "like") counts[r.post_id] = (counts[r.post_id] || 0) + 1;
-          if (user?.id && r.user_id === user.id && r.type === "like")
-            mine[r.post_id] = r.id;
-        });
-
-        setHypeCounts(counts);
-        setMyHypeId(mine);
+        const { data: posts } = await supabase.from("thoughts_posts").select("id, user_id").in("id", postIds);
+        const ownerByPost: Record<string, string | null> = {};
+        (posts ?? []).forEach(p => (ownerByPost[p.id] = p.user_id ?? null));
+        (imgRows ?? []).forEach(r => (postMap[r.id] = { post_id: r.post_id, owner_id: ownerByPost[r.post_id] ?? null }));
       }
+    }
+    locals = locals.map(i =>
+      i.kind.endsWith("_image")
+        ? { ...i, post_id: postMap[i.ref_id]?.post_id, owner_id: postMap[i.ref_id]?.owner_id ?? i.user_id ?? null }
+        : i
+    );
 
-      // finally apply — single paint
-      applyIfChanged(locals);
-    },
-    [applyIfChanged, user?.id]
-  );
+    // profiles
+    const ids = Array.from(new Set(locals.map(i => i.owner_id || i.user_id).filter(Boolean) as string[]));
+    if (ids.length) {
+      const { data: profs } = await supabase.from("profiles").select("id, username, display_name, avatar_url").in("id", ids);
+      const map: Record<string, Profile> = {};
+      (profs ?? []).forEach(p => (map[p.id] = p as Profile));
+      setProfiles(prev => ({ ...prev, ...map }));
+    }
+
+    // hype counts
+    const postIds = Array.from(new Set(locals.map(i => i.post_id).filter(Boolean) as string[]));
+    if (postIds.length) {
+      const { data: reacts } = await supabase.from("thoughts_reactions").select("id, post_id, user_id, type").in("post_id", postIds);
+      const counts: Record<string, number> = {};
+      const mine: Record<string, string | null> = {};
+      (reacts ?? []).forEach((r: any) => {
+        if (r.type === "like") counts[r.post_id] = (counts[r.post_id] || 0) + 1;
+        if (user?.id && r.user_id === user.id && r.type === "like") mine[r.post_id] = r.id;
+      });
+      setHypeCounts(counts);
+      setMyHypeId(mine);
+    }
+
+    applyIfChanged(locals);
+  }, [applyIfChanged, user?.id]);
 
   const loadFromHighlights = React.useCallback(async () => {
     const { data, error } = await supabase
@@ -201,49 +136,35 @@ export default function RightSiteHighlights({
   const fallbackFromThoughts = React.useCallback(async () => {
     const sinceISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    // recent photos
     const { data: photos } = await supabase
-      .from("thoughts_images")
-      .select("id, post_id, path, created_at")
-      .gt("created_at", sinceISO)
-      .order("created_at", { ascending: false })
-      .limit(limit);
+      .from("thoughts_images").select("id, post_id, path, created_at")
+      .gt("created_at", sinceISO).order("created_at", { ascending: false }).limit(limit);
 
-    // map photo -> post.owner (user_id)
     const photoPostIds = Array.from(new Set((photos ?? []).map((p: any) => p.post_id)));
     let ownerByPost: Record<string, string | null> = {};
     if (photoPostIds.length) {
-      const { data: photoPosts } = await supabase
-        .from("thoughts_posts")
-        .select("id, user_id")
-        .in("id", photoPostIds);
-      (photoPosts ?? []).forEach((pp: any) => {
-        ownerByPost[pp.id] = pp.user_id ?? null;
-      });
+      const { data: postRows } = await supabase.from("thoughts_posts").select("id, user_id").in("id", photoPostIds);
+      (postRows ?? []).forEach((r: any) => (ownerByPost[r.id] = r.user_id ?? null));
     }
 
-    // recent text posts
     const { data: posts } = await supabase
-      .from("thoughts_posts")
-      .select("id, user_id, text_content, mood, created_at")
-      .gt("created_at", sinceISO)
-      .order("created_at", { ascending: false })
-      .limit(limit);
+      .from("thoughts_posts").select("id, user_id, text_content, mood, created_at")
+      .gt("created_at", sinceISO).order("created_at", { ascending: false }).limit(limit);
 
     const photoItems: LocalItem[] = (photos ?? []).map((p: any) => ({
-      id: p.id,
-      user_id: null, // owner via owner_id
+      id: p.id, // fallback uses real image id
+      user_id: null,
       kind: "thought_image",
       route: `/thoughts/photos/${p.id}`,
       ref_table: "thoughts_images",
-      ref_id: p.id,
+      ref_id: p.id, // critical
       image_path: p.path,
       text_preview: null,
       mood: null,
       created_at: p.created_at,
       expires_at: new Date(Date.parse(p.created_at) + 86400000).toISOString(),
       post_id: p.post_id,
-      owner_id: ownerByPost[p.post_id] ?? null, // ensure creator
+      owner_id: ownerByPost[p.post_id] ?? null,
     }));
 
     const postItems: LocalItem[] = (posts ?? [])
@@ -264,117 +185,71 @@ export default function RightSiteHighlights({
         owner_id: t.user_id,
       }));
 
-    await hydrate(
-      [...photoItems, ...postItems]
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
-        .slice(0, limit)
-    );
+    await hydrate([...photoItems, ...postItems].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit));
   }, [limit, hydrate]);
 
   const refreshData = React.useCallback(async () => {
-    const req = ++latestReq.current;
-    try {
-      await loadFromHighlights();
-    } catch {
-      await fallbackFromThoughts();
-    } finally {
-      // only apply results from the latest request; hydrate already respects this via applyIfChanged
-      if (req !== latestReq.current) {
-        // stale refresh — ignore
-      }
-    }
+    try { await loadFromHighlights(); } catch { await fallbackFromThoughts(); }
   }, [loadFromHighlights, fallbackFromThoughts]);
 
-  // initial load
-  React.useEffect(() => {
-    void refreshData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [includeKinds.join("|"), limit]);
-
-  // realtime: listen, but coalesce with debounce
+  // initial + realtime
+  React.useEffect(() => { void refreshData(); }, [refreshData]);
   React.useEffect(() => {
     const ch = supabase
       .channel("rail_highlights")
-      // highlights table — INSERT/DELETE are enough
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "site_highlights" }, scheduleRefresh)
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "site_highlights" }, scheduleRefresh)
-      // images — insert/delete change the rail; we don't need UPDATE noise
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "thoughts_images" }, scheduleRefresh)
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "thoughts_images" }, scheduleRefresh)
-      // posts — new post (INSERT) or soft delete (UPDATE) should refresh
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "thoughts_posts" }, scheduleRefresh)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "thoughts_posts" }, scheduleRefresh)
       .subscribe();
-
-    return () => {
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      supabase.removeChannel(ch);
-    };
+    return () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); supabase.removeChannel(ch); };
   }, [scheduleRefresh]);
 
   // open / close / nav
   const openAtId = (id: string) => {
-    const idx = images.findIndex((i) => i.id === id);
+    const idx = images.findIndex(i => i.id === id);
     if (idx >= 0) setLightIdx(idx);
   };
   const close = () => setLightIdx(null);
-  const prev = () =>
-    setLightIdx((i) => (i === null ? i : (i + images.length - 1) % images.length));
-  const next = () =>
-    setLightIdx((i) => (i === null ? i : (i + 1) % images.length));
+  const prev  = () => setLightIdx(i => (i === null ? i : (i + images.length - 1) % images.length));
+  const next  = () => setLightIdx(i => (i === null ? i : (i + 1) % images.length));
 
   // HYPE toggle
   async function toggleHype(postId?: string | null) {
-    if (!postId || !user?.id) {
-      alert("Please sign in to hype.");
-      return;
-    }
+    if (!postId || !user?.id) { alert("Please sign in to hype."); return; }
     const mine = myHypeId[postId];
     if (mine) {
       await supabase.from("thoughts_reactions").delete().eq("id", mine);
-      setMyHypeId((prev) => ({ ...prev, [postId]: null }));
-      setHypeCounts((prev) => ({
-        ...prev,
-        [postId]: Math.max(0, (prev[postId] || 1) - 1),
-      }));
+      setMyHypeId(prev => ({ ...prev, [postId]: null }));
+      setHypeCounts(prev => ({ ...prev, [postId]: Math.max(0, (prev[postId] || 1) - 1) }));
     } else {
       const { data } = await supabase
-        .from("thoughts_reactions")
-        .insert({ post_id: postId, user_id: user.id, type: "like" })
-        .select("id")
-        .single();
+        .from("thoughts_reactions").insert({ post_id: postId, user_id: user.id, type: "like" })
+        .select("id").single();
       if (data) {
-        setMyHypeId((prev) => ({ ...prev, [postId]: data.id }));
-        setHypeCounts((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }));
+        setMyHypeId(prev => ({ ...prev, [postId]: data.id }));
+        setHypeCounts(prev => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }));
       }
     }
   }
 
-  // unified delete helper (rail thumbnail + lightbox)
-  async function deletePhotoById(imageId: string, ownerId?: string | null) {
+  // ✅ PERMANENTLY delete a photo by the true image id (ref_id), also purge highlight rows
+  async function deletePhotoByRefId(imageRefId: string, ownerId?: string | null, kind: LocalItem["kind"] = "thought_image") {
     if (!user?.id) return;
     if (ownerId && ownerId !== user.id) return;
 
-    const { data: img } = await supabase
-      .from("thoughts_images")
-      .select("id, path")
-      .eq("id", imageId)
-      .single();
+    // fetch path for storage delete
+    const { data: img } = await supabase.from("thoughts_images").select("id, path").eq("id", imageRefId).single();
     if (!img) return;
 
-    await supabase
-      .storage
-      .from(BUCKET_FOR_KIND["thought_image"] ?? "thoughts-images")
-      .remove([img.path]);
+    await supabase.storage.from(BUCKET_FOR_KIND[kind] ?? "thoughts-images").remove([img.path]);
+    await supabase.from("thoughts_images").delete().eq("id", imageRefId);
+    await supabase.from("site_highlights").delete().match({ ref_table: "thoughts_images", ref_id: imageRefId });
 
-    await supabase.from("thoughts_images").delete().eq("id", imageId);
-    await supabase
-      .from("site_highlights")
-      .delete()
-      .match({ ref_table: "thoughts_images", ref_id: imageId });
-
-    // update UI
-    applyIfChanged(items.filter((i) => !(i.kind === "thought_image" && i.id === imageId)));
+    // update UI locally
+    applyIfChanged(items.filter(i => !(i.kind === "thought_image" && i.ref_id === imageRefId)));
     setLightIdx(null);
   }
 
@@ -388,54 +263,35 @@ export default function RightSiteHighlights({
 
         <div className="mt-4 flex flex-col gap-3">
           {items.length === 0 && (
-            <p className="text-sm text-neutral-400">
-              New photos & status posts will appear here for 24 hours.
-            </p>
+            <p className="text-sm text-neutral-400">New photos & status posts will appear here for 24 hours.</p>
           )}
 
-          {items.map((h) => {
+          {items.map(h => {
             const isImage = !!h.image_path && h.kind.endsWith("_image");
             const owner = h.owner_id || h.user_id || null;
             const prof = owner ? profiles[owner] : undefined;
             const name = prof?.username || prof?.display_name || "User";
-            const avatar = prof?.avatar_url || "";
 
             if (isImage) {
               const src = publicUrl(BUCKET_FOR_KIND[h.kind] ?? "thoughts-images", h.image_path!);
               const isOwner = owner === user?.id;
-
               return (
-                <div key={h.id} className="flex items-center gap-3">
+                <div key={`${h.ref_table}:${h.ref_id}`} className="flex items-center gap-3">
                   <div className="relative">
-                    <button
-                      onClick={() => openAtId(h.id)}
-                      className="group"
-                      aria-label="Open photo"
-                      title={name}
-                    >
-                      <img
-                        src={src}
-                        alt=""
-                        loading="lazy"
-                        className="h-14 w-14 rounded-full object-cover ring-2 ring-neutral-800 group-hover:ring-indigo-500/60 transition"
-                      />
+                    <button onClick={() => openAtId(h.id)} className="group" aria-label="Open photo" title={name}>
+                      <img src={src} alt="" loading="lazy" className="h-14 w-14 rounded-full object-cover ring-2 ring-neutral-800 group-hover:ring-indigo-500/60 transition" />
                     </button>
-
                     {isOwner && (
                       <button
                         className="absolute -top-1 -right-1 p-1.5 rounded-full bg-black/70 text-white hover:bg-black/85"
                         title="Delete"
                         aria-label="Delete photo"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void deletePhotoById(h.id, owner);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); void deletePhotoByRefId(h.ref_id, owner, h.kind); }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
-
                   <div className="flex-1 border-b border-neutral-800/70" />
                 </div>
               );
@@ -444,23 +300,19 @@ export default function RightSiteHighlights({
             // status item
             return (
               <button
-                key={h.id}
+                key={`${h.ref_table}:${h.ref_id}`}
                 onClick={() => navigate(h.route)}
                 className="flex items-center gap-3 text-left rounded-xl px-2 py-2 hover:bg-white/5 transition"
                 aria-label="Open post"
               >
                 <div className="h-10 w-10 rounded-full overflow-hidden bg-gradient-to-br from-fuchsia-500 to-indigo-500 ring-2 ring-neutral-800">
-                  {avatar ? (
-                    <img src={avatar} alt="" className="h-full w-full object-cover" />
+                  {owner && profiles[owner]?.avatar_url ? (
+                    <img src={profiles[owner]!.avatar_url!} alt="" className="h-full w-full object-cover" />
                   ) : null}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[12px] text-neutral-400">
-                    {h.mood ? `Feeling ${h.mood}` : "Status"}
-                  </div>
-                  <div className="text-sm text-neutral-100 truncate max-w-[210px]">
-                    {h.text_preview ?? "View post"}
-                  </div>
+                  <div className="text-[12px] text-neutral-400">{h.mood ? `Feeling ${h.mood}` : "Status"}</div>
+                  <div className="text-sm text-neutral-100 truncate max-w-[210px]">{h.text_preview ?? "View post"}</div>
                 </div>
               </button>
             );
@@ -468,131 +320,72 @@ export default function RightSiteHighlights({
         </div>
       </div>
 
-      {/* Lightbox for image items */}
+      {/* Lightbox */}
       {isOpen && current && (
-        <div
-          className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-3 sm:p-6"
-          onClick={close}
-        >
-          {/* top bar with creator */}
+        <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-3 sm:p-6" onClick={close}>
+          {/* creator header (avatar + name click to profile) */}
           <div className="absolute top-3 left-3 sm:top-4 sm:left-4 flex items-center gap-3">
             <button
               className="h-10 w-10 rounded-full overflow-hidden ring-2 ring-white/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (current.owner_id)
-                  navigate(
-                    `/creator/${profiles[current.owner_id]?.username || current.owner_id}`
-                  );
-              }}
+              onClick={(e) => { e.stopPropagation(); if (current.owner_id) navigate(`/creator/${profiles[current.owner_id]?.username || current.owner_id}`); }}
             >
-              {current.owner_id && profiles[current.owner_id]?.avatar_url ? (
-                <img
-                  src={profiles[current.owner_id]!.avatar_url!}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="h-full w-full bg-white/20" />
-              )}
+              {current.owner_id && profiles[current.owner_id]?.avatar_url
+                ? <img src={profiles[current.owner_id]!.avatar_url!} alt="" className="h-full w-full object-cover" />
+                : <div className="h-full w-full bg-white/20" />}
             </button>
             <button
               className="text-white/90 font-medium hover:underline"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (current.owner_id)
-                  navigate(
-                    `/creator/${profiles[current.owner_id]?.username || current.owner_id}`
-                  );
-              }}
+              onClick={(e) => { e.stopPropagation(); if (current.owner_id) navigate(`/creator/${profiles[current.owner_id]?.username || current.owner_id}`); }}
             >
-              {current.owner_id
-                ? profiles[current.owner_id]?.username ||
-                  profiles[current.owner_id]?.display_name ||
-                  "User"
-                : "User"}
+              {current.owner_id ? (profiles[current.owner_id]?.username || profiles[current.owner_id]?.display_name || "User") : "User"}
             </button>
           </div>
 
-          <button
-            className="absolute top-3 right-3 sm:top-4 sm:right-4 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
-            onClick={(e) => {
-              e.stopPropagation();
-              close();
-            }}
-            aria-label="Close"
-          >
+          {/* close */}
+          <button className="absolute top-3 right-3 sm:top-4 sm:right-4 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); close(); }} aria-label="Close">
             <X className="h-6 w-6" />
           </button>
 
+          {/* owner delete (hard) */}
           {current.owner_id === user?.id && current.kind === "thought_image" && (
             <button
               className="absolute top-3 right-16 sm:top-4 sm:right-20 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                void deletePhotoById(current.id, current.owner_id);
-              }}
-              title="Delete photo"
-              aria-label="Delete photo"
+              onClick={(e) => { e.stopPropagation(); void deletePhotoByRefId(current.ref_id, current.owner_id, current.kind); }}
+              title="Delete photo" aria-label="Delete photo"
             >
               <Trash2 className="h-6 w-6" />
             </button>
           )}
 
           {/* nav */}
-          <button
-            className="absolute left-2 sm:left-4 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
-            onClick={(e) => {
-              e.stopPropagation();
-              prev();
-            }}
-            aria-label="Previous"
-          >
+          <button className="absolute left-2 sm:left-4 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); prev(); }} aria-label="Previous">
             <ChevronLeft className="h-7 w-7" />
           </button>
 
           <img
-            src={publicUrl(
-              BUCKET_FOR_KIND[current.kind] ?? "thoughts-images",
-              current.image_path!
-            )}
+            src={publicUrl(BUCKET_FOR_KIND[current.kind] ?? "thoughts-images", current.image_path!)}
             alt=""
             className="max-h-[85vh] max-w-[92vw] object-contain rounded-xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           />
 
-          <button
-            className="absolute right-2 sm:right-4 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
-            onClick={(e) => {
-              e.stopPropagation();
-              next();
-            }}
-            aria-label="Next"
-          >
+          <button className="absolute right-2 sm:right-4 text-white p-3 rounded-full bg-white/10 backdrop-blur hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); next(); }} aria-label="Next">
             <ChevronRight className="h-7 w-7" />
           </button>
 
-          {/* Hype control */}
+          {/* hype */}
           <div className="absolute bottom-3 sm:bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/10 backdrop-blur rounded-full px-4 py-2">
             <button
-              className={`flex items-center gap-2 px-2 py-1 rounded-lg ${
-                myHypeId[current.post_id || ""] ? "text-pink-300" : "text-white/90"
-              }`}
-              onClick={(e) => {
-                e.stopPropagation();
-                void toggleHype(current.post_id);
-              }}
+              className={`flex items-center gap-2 px-2 py-1 rounded-lg ${myHypeId[current.post_id || ""] ? "text-pink-300" : "text-white/90"}`}
+              onClick={(e) => { e.stopPropagation(); void toggleHype(current.post_id); }}
             >
-              <Heart
-                className={`h-5 w-5 ${
-                  myHypeId[current.post_id || ""] ? "fill-current" : ""
-                }`}
-              />
+              <Heart className={`h-5 w-5 ${myHypeId[current.post_id || ""] ? "fill-current" : ""}`} />
               <span className="text-sm">Hype</span>
             </button>
-            <span className="text-white/90 text-sm">
-              {hypeCounts[current.post_id || ""] || 0}
-            </span>
+            <span className="text-white/90 text-sm">{hypeCounts[current.post_id || ""] || 0}</span>
           </div>
         </div>
       )}
