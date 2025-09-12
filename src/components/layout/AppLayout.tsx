@@ -1,4 +1,3 @@
-
 // src/components/layout/AppLayout.tsx
 import * as React from "react";
 import { Outlet, Link } from "react-router-dom";
@@ -13,6 +12,9 @@ import MobileMenu from "@/components/layout/MobileMenu";
 import MobileTabBar from "@/components/layout/MobileTabBar";
 import { useUploadModal } from "@/contexts/UploadModalContext";
 import { supabase } from "@/integrations/supabase/client";
+
+/* ✅ NEW: global right-rail highlights (photos + text posts, 24h) */
+import RightSiteHighlights from "@/components/highlights/RightSiteHighlights";
 
 const AppLayout: React.FC = () => {
   /* mobile state only */
@@ -34,12 +36,12 @@ const AppLayout: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* ───────────────── DESKTOP (unchanged) ───────────────── */}
+      {/* ───────────────── DESKTOP (unchanged structure) ───────────────── */}
       <div className="hidden md:block">
         {/* Global top bar */}
         <Header />
 
-        {/* 3-column shell: Left rail (fixed), Main content, optional Right rail */}
+        {/* 3-column shell: Left rail (fixed), Main content, Right rail */}
         <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[260px_1fr] lg:grid-cols-[260px_1fr_320px]">
           {/* Fixed left rail (desktop only) */}
           <LeftSidebar />
@@ -53,9 +55,12 @@ const AppLayout: React.FC = () => {
             <Outlet />
           </main>
 
-          {/* (Optional) right rail placeholder; keep empty for now */}
-          <aside className="hidden border-l border-border/60 p-3 lg:block">
-            {/* Right rail content can go here later (Trending, etc.) */}
+          {/* ✅ RIGHT RAIL ON ALL PAGES (desktop only) */}
+          <aside className="hidden lg:block border-l border-border/60 p-3">
+            {/* sticky rail so it stays visible while scrolling */}
+            <div className="sticky top-4">
+              <RightSiteHighlights />
+            </div>
           </aside>
         </div>
 
