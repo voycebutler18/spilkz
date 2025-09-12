@@ -50,7 +50,7 @@ const nameOf = (p?: ProfileLite | null) => {
 const slugFor = (p?: ProfileLite | null) => (p?.username ? p.username : p?.id || "");
 
 function RightPhotoRail({
-  title = "Splikz Photos",
+  title = "Photo Reels",
   maxListHeight = "24rem",
   limit = 50,
 }: {
@@ -623,7 +623,7 @@ export default function VibesPage() {
 
             {/* Right Sidebar – Desktop only */}
             <div className="lg:col-span-3 space-y-6 hidden lg:block">
-              <RightPhotoRail title="Splikz Photos" maxListHeight="calc(100vh - 220px)" />
+              <RightPhotoRail title="Photo Reels" maxListHeight="calc(100vh - 220px)" />
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl rounded-2xl border border-slate-700/30 p-6">
                 <h3 className="text-lg font-semibold text-slate-200 mb-4">Recent Activity</h3>
                 <div className="space-y-3">
@@ -656,7 +656,7 @@ export default function VibesPage() {
                      hover:from-purple-700 hover:to-blue-700 active:scale-[0.98] transition"
         >
           <span className="inline-flex items-center gap-2">
-            <Camera className="h-5 w-5" /> Splikz Photos
+            <Camera className="h-5 w-5" /> Photos
           </span>
         </button>
 
@@ -668,11 +668,11 @@ export default function VibesPage() {
             <SheetHeader className="p-4 border-b border-slate-800">
               <SheetTitle className="flex items-center gap-2 text-slate-200">
                 <Camera className="h-5 w-5 text-slate-400" />
-                Splikz Photos
+                Photo Reels
               </SheetTitle>
             </SheetHeader>
             <div className="p-4">
-              <RightPhotoRail title="Splikz Photos" maxListHeight="50vh" />
+              <RightPhotoRail title="Photo Reels" maxListHeight="calc(100svh - 7.5rem)" />
             </div>
           </SheetContent>
         </Sheet>
