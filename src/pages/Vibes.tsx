@@ -5,14 +5,7 @@ import VibeComposer from "@/components/vibes/VibeComposer";
 import VibeCard, { Vibe } from "@/components/vibes/VibeCard";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Camera,
-  Plus,
-  Users,
-  TrendingUp,
-  X,
-  ChevronUp,
-  ChevronDown,
-  Loader2,
+  Camera, Plus, Users, TrendingUp, X, ChevronUp, ChevronDown, Loader2,
 } from "lucide-react";
 import {
   Sheet,
@@ -22,12 +15,9 @@ import {
 } from "@/components/ui/sheet";
 import { toast } from "sonner";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Right-Side Vertical Photo Rail (NOT “stories”)
-   - Visible on right sidebar (desktop), and inline + in a sheet on mobile
-   - “Upload Photo” posts to Storage → adds to text feed (vibes) → shows in rail
-   - Realtime refreshes from vibe_photos and vibes
-──────────────────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────────
+   Shared types / helpers
+────────────────────────────────────────────────────────────────────── */
 type ProfileLite = {
   id: string;
   username: string | null;
@@ -37,6 +27,29 @@ type ProfileLite = {
   avatar_url?: string | null;
 };
 
+const nameOf = (p?: ProfileLite | null) => {
+  if (!p) return "User";
+  const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
+  return p.display_name?.trim() || full || p.username?.trim() || "User";
+};
+const slugFor = (p?: ProfileLite | null) => (p?.username ? p.username : p?.id || "");
+
+// Very small module-scope cache to avoid refetching the same profile
+const profileCache = new Map<string, ProfileLite | null>();
+async function fetchProfileOnce(userId: string) {
+  if (profileCache.has(userId)) return profileCache.get(userId) ?? null;
+  const { data } = await supabase
+    .from("profiles")
+    .select("id, username, display_name, first_name, last_name, avatar_url")
+    .eq("id", userId)
+    .maybeSingle();
+  profileCache.set(userId, (data as ProfileLite) ?? null);
+  return (data as ProfileLite) ?? null;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Right-side vertical photo rail (photos only, with upload)
+────────────────────────────────────────────────────────────────────── */
 type PhotoItem = {
   id: string;
   url: string;
@@ -45,20 +58,13 @@ type PhotoItem = {
   profile?: ProfileLite | null;
 };
 
-// 🔧 Change this if your Storage bucket name is different
+// 🔧 your Storage bucket for photos
 const PHOTO_BUCKET = "vibes";
-
-const nameOf = (p?: ProfileLite | null) => {
-  if (!p) return "User";
-  const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-  return p.display_name?.trim() || full || p.username?.trim() || "User";
-};
-const slugFor = (p?: ProfileLite | null) => (p?.username ? p.username : p?.id || "");
 
 function RightPhotoRail({
   title = "Splikz Photos",
   maxListHeight = "24rem",
-  limit = 50,
+  limit = 36,
 }: {
   title?: string;
   maxListHeight?: string | number;
@@ -75,7 +81,7 @@ function RightPhotoRail({
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
-      // 1) Preferred table: vibe_photos
+      // Preferred: table vibe_photos
       let photos: any[] = [];
       const { data: p1, error: e1 } = await supabase
         .from("vibe_photos")
@@ -84,7 +90,7 @@ function RightPhotoRail({
         .limit(limit);
       if (!e1 && p1?.length) photos = p1;
 
-      // 2) Fallback to vibes.* (image_url or media_url)
+      // Fallback: vibes.image_url/media_url
       if (!photos.length) {
         const { data: p2 } = await supabase
           .from("vibes")
@@ -109,7 +115,7 @@ function RightPhotoRail({
         user_id: String(r.user_id),
       }));
 
-      // hydrate profiles
+      // hydrate profiles in one batch
       const userIds = Array.from(new Set(mapped.map((m) => m.user_id)));
       if (userIds.length) {
         const { data: profs } = await supabase
@@ -117,7 +123,10 @@ function RightPhotoRail({
           .select("id, username, display_name, first_name, last_name, avatar_url")
           .in("id", userIds);
         const byId: Record<string, ProfileLite> = {};
-        (profs || []).forEach((p: any) => (byId[p.id] = p));
+        (profs || []).forEach((p: any) => {
+          byId[p.id] = p;
+          profileCache.set(p.id, p);
+        });
         mapped.forEach((m) => (m.profile = byId[m.user_id] || null));
       }
 
@@ -130,43 +139,40 @@ function RightPhotoRail({
   }, [limit]);
 
   React.useEffect(() => {
-    let mounted = true;
     load();
-
-    // Realtime with a single channel instance
     const ch = supabase
       .channel("right-photo-rail")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "vibe_photos" },
-        () => mounted && load()
+        () => load()
       )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "vibes" },
-        () => mounted && load()
+        () => load()
       )
       .subscribe();
-
     return () => {
-      mounted = false;
       try { supabase.removeChannel(ch); } catch {}
     };
   }, [load]);
 
   const open = (i: number) => setViewerIndex(i);
-  const close = () => setViewerIndex(null);
+  const closeViewer = () => {
+    const img = document.querySelector("#vibes-viewer-img") as HTMLImageElement | null;
+    if (img) img.src = "";
+    setViewerIndex(null);
+  };
   const up = () => setViewerIndex((i) => (i === null || i <= 0 ? i : i - 1));
-  const down = () =>
-    setViewerIndex((i) => (i === null || i >= items.length - 1 ? i : i + 1));
+  const down = () => setViewerIndex((i) => (i === null || i >= items.length - 1 ? i : i + 1));
 
-  // Keys in viewer
   React.useEffect(() => {
     if (viewerIndex === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowUp") { e.preventDefault(); up(); }
       else if (e.key === "ArrowDown") { e.preventDefault(); down(); }
-      else if (e.key === "Escape") { e.preventDefault(); close(); }
+      else if (e.key === "Escape") { e.preventDefault(); closeViewer(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -178,61 +184,40 @@ function RightPhotoRail({
     try {
       setIsUploading(true);
 
-      if (!file.type.startsWith("image/")) {
-        toast.error("Please upload an image file.");
-        return;
-      }
-      if (file.size > 12 * 1024 * 1024) {
-        toast.error("Image is too large (max 12 MB).");
-        return;
-      }
+      if (!file.type.startsWith("image/")) return toast.error("Please upload an image file.");
+      if (file.size > 12 * 1024 * 1024) return toast.error("Image is too large (max 12 MB).");
 
-      // who is uploading?
       const { data: auth } = await supabase.auth.getUser();
       const uid = auth.user?.id;
-      if (!uid) {
-        toast.error("Please log in to upload a photo.");
-        return;
-      }
+      if (!uid) return toast.error("Please log in to upload a photo.");
 
       // upload to Storage
       const ext = file.name.split(".").pop() || "jpg";
       const path = `${uid}/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
+      const { error: upErr } = await supabase
+        .storage
         .from(PHOTO_BUCKET)
         .upload(path, file, { contentType: file.type, upsert: false });
       if (upErr) {
-        toast.error("Upload failed. Check bucket permissions.");
         console.error(upErr);
-        return;
+        return toast.error("Upload failed. Check bucket permissions.");
       }
 
       const { data: pub } = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path);
       const publicUrl = pub?.publicUrl;
-      if (!publicUrl) {
-        toast.error("Could not get public URL for image.");
-        return;
-      }
+      if (!publicUrl) return toast.error("Could not get public URL for image.");
 
-      // 1) Insert in vibes for the TEXT FEED (try image_url, fallback to media_url)
-      let vibeError = null;
+      // add to text feed (vibes)
       {
         const { error } = await supabase
           .from("vibes")
           .insert([{ user_id: uid, content: "", image_url: publicUrl }]);
-        vibeError = error || null;
-        if (vibeError) {
-          const { error: e2 } = await supabase
-            .from("vibes")
-            .insert([{ user_id: uid, content: "", media_url: publicUrl }]);
-          vibeError = e2 || null;
+        if (error) {
+          // try media_url fallback
+          await supabase.from("vibes").insert([{ user_id: uid, content: "", media_url: publicUrl }]);
         }
       }
-      if (vibeError) {
-        console.warn("Insert into vibes failed:", (vibeError as any).message);
-      }
-
-      // 2) Insert in vibe_photos for the RIGHT RAIL (if table exists)
+      // add to rail table (ignore if missing)
       {
         const { error } = await supabase
           .from("vibe_photos")
@@ -242,14 +227,14 @@ function RightPhotoRail({
         }
       }
 
-      // Optimistic add (in case realtime is not yet delivered)
+      // Optimistic update
       setItems((prev) => [
         {
           id: `tmp-${Date.now()}`,
           url: publicUrl,
           created_at: new Date().toISOString(),
           user_id: uid,
-          profile: prev.find((p) => p.user_id === uid)?.profile ?? undefined,
+          profile: profileCache.get(uid) ?? undefined,
         },
         ...prev,
       ]);
@@ -272,21 +257,15 @@ function RightPhotoRail({
   return (
     <>
       {/* Hidden file input */}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={onFileChange}
-      />
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFileChange} />
 
-      <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-xl rounded-2xl border border-slate-700/50 shadow-2xl p-6">
+      <div className="bg-card/60 backdrop-blur-xl rounded-2xl border border-border/50 shadow-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-200">{title}</h2>
-          <Camera className="h-5 w-5 text-slate-400" />
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <Camera className="h-5 w-5 text-muted-foreground" />
         </div>
 
-        {/* Upload Photo → goes to right rail + text feed */}
+        {/* Upload Photo */}
         <div className="mb-4">
           <button
             onClick={onPickFile}
@@ -296,7 +275,7 @@ function RightPhotoRail({
                        hover:from-purple-700 hover:to-blue-700
                        disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <div className="flex items-center justify-center space-x-2">
+            <div className="flex items-center justify-center gap-2">
               {isUploading ? (
                 <>
                   <Loader2 className="h-5 w-5 text-white animate-spin" />
@@ -314,18 +293,15 @@ function RightPhotoRail({
 
         {/* Vertical list */}
         <div
-          className="space-y-3 overflow-y-auto custom-scrollbar"
+          className="space-y-3 overflow-y-auto custom-scrollbar pr-1"
           style={{
-            maxHeight:
-              typeof maxListHeight === "number" ? `${maxListHeight}px` : maxListHeight,
+            maxHeight: typeof maxListHeight === "number" ? `${maxListHeight}px` : maxListHeight,
+            contentVisibility: "auto",
+            containIntrinsicSize: "1px 350px",
           }}
         >
-          {loading && (
-            <div className="py-12 text-center text-slate-400">Loading photos…</div>
-          )}
-          {!loading && items.length === 0 && (
-            <div className="py-10 text-center text-slate-400">No photos yet</div>
-          )}
+          {loading && <div className="py-12 text-center text-muted-foreground">Loading photos…</div>}
+          {!loading && items.length === 0 && <div className="py-10 text-center text-muted-foreground">No photos yet</div>}
 
           {items.map((ph, idx) => {
             const person = ph.profile;
@@ -334,29 +310,28 @@ function RightPhotoRail({
             return (
               <div
                 key={ph.id}
-                className="relative aspect-square bg-gradient-to-br from-slate-700/50 to-slate-800/50 rounded-xl border border-slate-600/30 overflow-hidden group hover:from-slate-600/50 hover:to-slate-700/50 transition-all cursor-pointer"
+                className="relative aspect-square bg-muted/40 rounded-xl border border-border/40 overflow-hidden group cursor-pointer"
                 onClick={() => open(idx)}
               >
                 <img
                   src={ph.url}
                   alt={display}
                   loading="lazy"
+                  decoding="async"
+                  fetchPriority="low"
+                  sizes="(min-width:1024px) 280px, 45vw"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
 
-                {/* Small avatar → creator profile (don’t open viewer) */}
+                {/* Small avatar → creator profile */}
                 <Link
                   to={slug ? `/creator/${slug}` : "#"}
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/20 overflow-hidden bg-white/10 backdrop-blur flex items-center justify-center"
+                  className="absolute top-2 left-2 w-9 h-9 rounded-full border border-white/30 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
                   title={display}
                 >
                   {person?.avatar_url ? (
-                    <img
-                      src={person.avatar_url}
-                      alt={display}
-                      className="w-full h-full object-cover"
-                    />
+                    <img src={person.avatar_url} alt={display} className="w-full h-full object-cover" />
                   ) : (
                     <span className="text-white text-xs font-semibold">
                       {display.charAt(0).toUpperCase()}
@@ -382,8 +357,8 @@ function RightPhotoRail({
           <div className="relative max-w-4xl max-h-screen p-4">
             {/* Close */}
             <button
-              onClick={() => setViewerIndex(null)}
-              className="absolute top-6 right-6 w-10 h-10 bg-white/5 hover:bg-white/10 rounded-full flex items-center justify-center transition-colors"
+              onClick={closeViewer}
+              className="absolute top-6 right-6 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
               aria-label="Close viewer"
             >
               <X className="h-6 w-6 text-white" />
@@ -393,7 +368,7 @@ function RightPhotoRail({
             {viewerIndex > 0 && (
               <button
                 onClick={up}
-                className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/5 hover:bg-white/10 rounded-full flex items-center justify-center transition-colors"
+                className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
                 aria-label="Previous photo"
               >
                 <ChevronUp className="h-6 w-6 text-white" />
@@ -402,7 +377,7 @@ function RightPhotoRail({
             {viewerIndex < items.length - 1 && (
               <button
                 onClick={down}
-                className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/5 hover:bg-white/10 rounded-full flex items-center justify-center transition-colors"
+                className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors"
                 aria-label="Next photo"
               >
                 <ChevronDown className="h-6 w-6 text-white" />
@@ -410,14 +385,15 @@ function RightPhotoRail({
             )}
 
             {/* Image */}
-            <div className="bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-xl rounded-2xl border border-slate-700/50 overflow-hidden">
+            <div className="bg-card/60 backdrop-blur-xl rounded-2xl border border-border/50 overflow-hidden">
               <img
+                id="vibes-viewer-img"
                 src={items[viewerIndex].url}
                 alt={nameOf(items[viewerIndex].profile)}
                 className="w-full h-auto max-h-[80vh] object-contain"
               />
-              <div className="p-6 border-t border-slate-700/50">
-                <div className="flex items-center space-x-3">
+              <div className="p-6 border-t border-border/50">
+                <div className="flex items-center gap-3">
                   <Link
                     to={`/creator/${slugFor(items[viewerIndex].profile)}`}
                     className="w-10 h-10 rounded-full overflow-hidden bg-white/10 border border-white/20 flex items-center justify-center"
@@ -438,7 +414,7 @@ function RightPhotoRail({
                     <h3 className="text-white font-semibold">
                       {nameOf(items[viewerIndex].profile)}
                     </h3>
-                    <p className="text-slate-400 text-xs">
+                    <p className="text-white/70 text-xs">
                       {new Date(items[viewerIndex].created_at).toLocaleString()}
                     </p>
                   </div>
@@ -454,63 +430,67 @@ function RightPhotoRail({
         </div>
       )}
 
-      {/* Scoped scrollbar */}
+      {/* Tiny scrollbar styling scoped here */}
       <style>{`
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(51,65,85,.3); border-radius: 2px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(139,92,246,.6); border-radius: 2px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,.8); }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148,163,184,.5); border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.8); }
       `}</style>
     </>
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Vibes Page
-──────────────────────────────────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────────────────────────────
+   Main page
+────────────────────────────────────────────────────────────────────── */
 export default function VibesPage() {
   const [loading, setLoading] = React.useState(true);
   const [rows, setRows] = React.useState<Vibe[]>([]);
   const [railOpen, setRailOpen] = React.useState(false);
 
-  // keep only ONE realtime channel
-  const vibeChannelRef = React.useRef<ReturnType<typeof supabase.channel> | null>(null);
-
-  const hydrateProfile = React.useCallback(async (v: any): Promise<Vibe> => {
-    const { data: prof } = await supabase
-      .from("profiles")
-      .select("id, username, display_name, first_name, last_name, avatar_url")
-      .eq("id", v.user_id)
-      .maybeSingle();
-    return { ...v, profile: prof || null } as Vibe;
-  }, []);
-
   const fetchVibes = React.useCallback(async () => {
     setLoading(true);
     try {
+      // Cap initial load to avoid huge memory usage
       const { data, error } = await supabase
         .from("vibes")
         .select("id, user_id, content, mood, created_at, image_url, media_url")
         .order("created_at", { ascending: false })
-        .limit(100);
+        .limit(60);
+
       if (error) throw error;
-      const hydrated = await Promise.all((data ?? []).map(hydrateProfile));
+
+      const rows = data ?? [];
+      // batch load profiles ONCE
+      const ids = Array.from(new Set(rows.map((r) => r.user_id)));
+      let profMap = new Map<string, ProfileLite | null>();
+      if (ids.length) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id, username, display_name, first_name, last_name, avatar_url")
+          .in("id", ids);
+        (profs ?? []).forEach((p: any) => {
+          profMap.set(p.id, p);
+          profileCache.set(p.id, p);
+        });
+      }
+
+      const hydrated = rows.map((r: any) => ({
+        ...r,
+        profile: profMap.get(r.user_id) ?? null,
+      })) as Vibe[];
+
       setRows(hydrated);
     } catch (e) {
       console.error("Failed to load vibes:", e);
     } finally {
       setLoading(false);
     }
-  }, [hydrateProfile]);
+  }, []);
 
   React.useEffect(() => {
     fetchVibes();
-
-    // ensure single subscription
-    if (vibeChannelRef.current) {
-      try { supabase.removeChannel(vibeChannelRef.current); } catch {}
-      vibeChannelRef.current = null;
-    }
 
     const ch = supabase
       .channel("live-vibes")
@@ -518,29 +498,31 @@ export default function VibesPage() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "vibes" },
         async (payload) => {
-          const hydrated = await hydrateProfile(payload.new);
-          setRows((prev) =>
-            prev.some((p) => p.id === hydrated.id) ? prev : [hydrated, ...prev]
-          );
+          const v = payload.new as any;
+          const prof = await fetchProfileOnce(v.user_id);
+          const hydrated = { ...v, profile: prof } as Vibe;
+
+          setRows((prev) => {
+            if (prev.some((p) => p.id === hydrated.id)) return prev; // de-dupe
+            const next = [hydrated, ...prev];
+            return next.length > 80 ? next.slice(0, 80) : next; // hard cap to stop growth
+          });
         }
       )
       .subscribe();
 
-    vibeChannelRef.current = ch;
-
     return () => {
       try { supabase.removeChannel(ch); } catch {}
-      vibeChannelRef.current = null;
     };
-  }, [fetchVibes, hydrateProfile]);
+  }, [fetchVibes]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-      {/* Ambient blobs (desktop only to avoid GPU stalls) */}
-      <div className="fixed inset-0 pointer-events-none hidden md:block">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl"></div>
+      {/* Background blobs */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl" />
       </div>
 
       <div className="relative z-10">
@@ -567,6 +549,23 @@ export default function VibesPage() {
                   </div>
                 </div>
               </div>
+
+              <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl rounded-2xl border border-slate-700/30 p-6">
+                <h3 className="text-lg font-semibold text-slate-200 mb-4">Trending Moods</h3>
+                <div className="space-y-3">
+                  {[
+                    { mood: "🔥 Hype", count: "1.2k vibes" },
+                    { mood: "😄 Happy", count: "892 vibes" },
+                    { mood: "🧘 Chill", count: "634 vibes" },
+                    { mood: "🙏 Grateful", count: "428 vibes" },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-slate-700/30 hover:bg-slate-700/50 transition-colors cursor-pointer">
+                      <span className="text-slate-200 font-medium">{item.mood}</span>
+                      <span className="text-slate-400 text-sm">{item.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Center Feed */}
@@ -575,11 +574,9 @@ export default function VibesPage() {
                 <VibeComposer
                   onPosted={async (newRow) => {
                     if (newRow) {
-                      const next =
-                        (newRow as Vibe).profile
-                          ? (newRow as Vibe)
-                          : await hydrateProfile(newRow);
-                      setRows((prev) => [next, ...prev]);
+                      const prof = await fetchProfileOnce((newRow as any).user_id);
+                      const next = { ...(newRow as Vibe), profile: prof ?? null };
+                      setRows((prev) => [next, ...prev].slice(0, 80));
                     } else {
                       await fetchVibes();
                     }
@@ -587,16 +584,13 @@ export default function VibesPage() {
                 />
               </div>
 
-              {/* Mobile inline Splikz Photos rail (so it's visible immediately) */}
-              <div className="lg:hidden">
-                <RightPhotoRail title="Splikz Photos" maxListHeight={360} />
-              </div>
-
               <div className="space-y-4">
                 {loading ? (
-                  <div className="py-24 flex flex-col items-center justify-center text-slate-400">
-                    <Loader2 className="h-8 w-8 animate-spin mb-3" />
-                    Loading vibes...
+                  <div className="py-24 flex flex-col items-center justify-center">
+                    <div className="relative">
+                      <div className="h-12 w-12 border-2 border-slate-600 border-t-purple-400 rounded-full animate-spin" />
+                    </div>
+                    <p className="mt-6 text-slate-400 font-light">Loading vibes...</p>
                   </div>
                 ) : rows.length === 0 ? (
                   <div className="py-20 text-center">
@@ -613,16 +607,19 @@ export default function VibesPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between mb-6">
+                  <>
+                    <div className="flex items-center justify-between mb-2">
                       <h2 className="text-xl font-semibold text-slate-200">Latest Vibes</h2>
-                      <div className="flex items-center space-x-2 text-sm text-slate-400">
-                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                      <div className="flex items-center gap-2 text-sm text-slate-400">
+                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                         <span>Live</span>
                       </div>
                     </div>
 
-                    <div className="space-y-4">
+                    <div
+                      className="space-y-4"
+                      style={{ contentVisibility: "auto", containIntrinsicSize: "1px 800px" }}
+                    >
                       {rows.map((v) => (
                         <div key={v.id} className="group">
                           <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/60 backdrop-blur-xl rounded-2xl border border-slate-700/50 hover:border-slate-600/70 transition-all duration-300 shadow-lg hover:shadow-xl hover:shadow-purple-500/10 overflow-hidden">
@@ -633,7 +630,7 @@ export default function VibesPage() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </>
                 )}
               </div>
             </div>
@@ -641,12 +638,11 @@ export default function VibesPage() {
             {/* Right Sidebar – Desktop only */}
             <div className="lg:col-span-3 space-y-6 hidden lg:block">
               <RightPhotoRail title="Splikz Photos" maxListHeight="calc(100vh - 220px)" />
-
               <div className="bg-gradient-to-br from-slate-800/40 to-slate-900/40 backdrop-blur-xl rounded-2xl border border-slate-700/30 p-6">
                 <h3 className="text-lg font-semibold text-slate-200 mb-4">Recent Activity</h3>
                 <div className="space-y-3">
                   {[1, 2, 3, 4].map((i) => (
-                    <div key={i} className="flex items-center space-x-3">
+                    <div key={i} className="flex items-center gap-3">
                       <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center">
                         <span className="text-white text-xs font-medium">U</span>
                       </div>
@@ -665,17 +661,16 @@ export default function VibesPage() {
           </div>
         </div>
 
-        {/* MOBILE: floating button → right sheet with photo rail */}
+        {/* MOBILE: button → right sheet with photo rail */}
         <button
-          aria-label="Open Splikz Photos"
+          aria-label="Open photos"
           onClick={() => setRailOpen(true)}
-          className="lg:hidden fixed z-[100] right-4 md:right-6 bottom-[calc(env(safe-area-inset-bottom)+80px)] md:bottom-8
-                     rounded-full px-4 py-3 shadow-lg
+          className="lg:hidden fixed z-40 right-4 bottom-24 rounded-full px-4 py-3 shadow-lg
                      bg-gradient-to-r from-purple-600 to-blue-600 text-white font-medium
                      hover:from-purple-700 hover:to-blue-700 active:scale-[0.98] transition"
         >
           <span className="inline-flex items-center gap-2">
-            <Camera className="h-5 w-5" /> Splikz Photos
+            <Camera className="h-5 w-5" /> Photos
           </span>
         </button>
 
