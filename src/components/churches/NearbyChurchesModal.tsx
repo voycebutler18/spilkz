@@ -1,31 +1,12 @@
 // src/components/churches/NearbyChurchesModal.tsx
 import * as React from "react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogClose,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
-import {
-  MapPin,
-  LocateFixed,
-  Search as SearchIcon,
-  ExternalLink,
-  Loader2,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { MapPin, LocateFixed, Search as SearchIcon, ExternalLink, Loader2, Sparkles, X } from "lucide-react";
 
 /* ---------------- Types ---------------- */
 type DistanceKey = "1km" | "2km" | "5km" | "1mi" | "3mi" | "5mi";
@@ -55,7 +36,7 @@ type FaithOption = {
   denomRegex?: string;     // OSM "denomination" or in name/brand
 };
 
-/* ---------------- Full catalog (includes Christian — Non-Denominational) ---------------- */
+/* ---------------- Full catalog ---------------- */
 const FAITH_OPTIONS: FaithOption[] = [
   // Christianity
   { key: "christian_any", label: "Christian (Any)", religionRegex: "christian" },
@@ -128,7 +109,7 @@ function shuffle<T>(arr: T[]) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor((Math.random?.() ?? 0.5) * (i + 1));
-    [a[i], a[j]] = [a[j]];
+    [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
 }
@@ -144,7 +125,7 @@ async function overpassFetch(query: string) {
         headers: {
           "Content-Type": "text/plain;charset=UTF-8",
           "User-Agent": "SplikzApp/1.0 (church-finder)",
-          Accept: "application/json",
+          "Accept": "application/json",
         },
         body: query,
         signal: controller.signal,
@@ -442,7 +423,7 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
 
-      // reverse-geocode a few missing addresses
+      // fill a few missing addresses via reverse geocode (polite, throttled)
       const toFill = byDistance.filter(x => !x.address).slice(0, 20);
       for (const p of toFill) {
         const addr = await reverseGeocode(p.lat, p.lon);
@@ -474,7 +455,8 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
         className="
           max-w-3xl
           max-h-[90vh]
-          overflow-y-auto  /* allow outer scroll if needed */
+          overflow-hidden          /* outer does NOT scroll */
+          flex flex-col            /* header + body layout */
           bg-slate-900/95 backdrop-blur-2xl
           border border-white/20 shadow-2xl rounded-3xl
           p-0
@@ -483,18 +465,11 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
         {/* soft gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none" />
 
-        {/* Close (works with Dialog state) */}
+        {/* Top-right close */}
         <DialogClose asChild>
           <button
             aria-label="Close"
-            className="
-              absolute right-3 top-3 z-20
-              inline-flex h-9 w-9 items-center justify-center
-              rounded-xl border border-white/20
-              bg-slate-800/60 hover:bg-slate-800/90
-              text-white/90 hover:text-white
-              transition
-            "
+            className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/20 bg-slate-800/60 hover:bg-slate-800/90 text-white/90 hover:text-white transition"
           >
             <X className="h-5 w-5" />
           </button>
@@ -517,13 +492,13 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        {/* Body (independent scroller sized under header) */}
+        {/* Body is the ONLY scroller */}
         <div
           className="
             relative z-10
+            flex-1
             overflow-y-auto overscroll-contain
-            max-h-[calc(90vh-140px)]
-            px-6 pr-8
+            px-6 pr-8 pb-24   /* bottom space so the button/results aren't clipped */
           "
         >
           <div className="space-y-6 py-6">
@@ -625,7 +600,7 @@ export default function NearbyChurchesModal({ open, onOpenChange }: Props) {
                 disabled={fetchingNearby || (!coords && !locationQuery.trim())}
                 className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold px-8 py-4 rounded-2xl shadow-2xl transform hover:scale-105 transition-all duration-300 text-lg"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                 <div className="relative flex items-center gap-3">
                   <SearchIcon className="h-5 w-5" />
                   <span>{fetchingNearby ? "Searching…" : "Find Churches Near You"}</span>
