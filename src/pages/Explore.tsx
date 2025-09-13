@@ -1,6 +1,6 @@
 // src/pages/Explore.tsx
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
@@ -458,6 +458,7 @@ function PhotoRail({
    MAIN PAGE (no Activity rail)
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
+  const navigate = useNavigate();
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -490,8 +491,7 @@ const Explore = () => {
 
       const limit = isMobile ? 30 : 100; // lighter payload for mobile stability
 
-      // 🔴 IMPORTANT: fetch only *videos* for the main feed
-      // Either video_url is NOT NULL OR mime_type starts with 'video/'
+      // videos only
       const { data: spliksData, error } = await supabase
         .from("spliks")
         .select("*")
@@ -678,6 +678,8 @@ const Explore = () => {
       setUploading(true);
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${user.id}/${Date.now()}-${safeName}`;
+
+      // 1) upload to photos bucket
       const { error: upErr } = await supabase.storage
         .from(PHOTOS_BUCKET)
         .upload(path, file, { cacheControl: "3600", upsert: false });
@@ -687,6 +689,7 @@ const Explore = () => {
       const photo_url = pub?.publicUrl;
       if (!photo_url) throw new Error("Failed to resolve public URL");
 
+      // 2) insert into vibe_photos (Explore rail)
       const payload: Record<string, any> = {
         user_id: user.id,
         photo_url,
@@ -697,6 +700,45 @@ const Explore = () => {
       const { error: insertErr } = await supabase.from("vibe_photos").insert(payload);
       if (insertErr) throw insertErr;
 
+      // 3) also insert as a photo into 'spliks' (for creator profile/dashboard)
+      const title = photoDescription.trim().slice(0, 80) || "Photo";
+      const mime = file.type || "image/jpeg";
+      const splikPayload: any = {
+        user_id: user.id,
+        title,
+        description: photoDescription.trim(),
+        duration: 0,
+        file_size: file.size,
+        mime_type: mime,
+        status: "active",
+        trim_start: null,
+        trim_end: null,
+        is_food: false,
+        video_path: null,
+        video_url: null,
+        thumbnail_url: photo_url, // show the image itself
+        cover_time: 0,
+      };
+      const { data: newSplik, error: splikErr } = await supabase
+        .from("spliks")
+        .insert(splikPayload)
+        .select("id, created_at")
+        .single();
+      if (splikErr) throw splikErr;
+
+      // 4) optional: activity rail entry
+      try {
+        await supabase.from("right_rail_feed").insert({
+          user_id: user.id,
+          type: "photo",
+          media_url: photo_url,
+          created_at: newSplik?.created_at ?? new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn("right_rail_feed insert failed (non-fatal):", e);
+      }
+
+      // let rail update right away
       window.dispatchEvent(
         new CustomEvent("vibe-photo-uploaded", {
           detail: {
@@ -709,11 +751,14 @@ const Explore = () => {
       );
 
       setReloadToken((n) => n + 1);
-      toast({ title: "Photo posted!", description: "Your photo is live in Splikz Photos" });
+      toast({ title: "Photo posted!", description: "Your photo is live in Splikz Photos and on your profile." });
       setFile(null);
       setPhotoDescription("");
       setPhotoLocation("");
       setUploadOpen(false);
+
+      // 5) go to creator dashboard
+      navigate("/creator-dashboard");
     } catch (e: any) {
       console.error(e);
       const msg = e?.message || "";
