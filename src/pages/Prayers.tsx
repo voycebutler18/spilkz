@@ -1,5 +1,5 @@
 // src/pages/Prayers.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchPrayers, Prayer } from "@/lib/prayers";
 import PrayerComposer from "@/components/prayers/PrayerComposer";
 import PrayerCard from "@/components/prayers/PrayerCard";
@@ -28,6 +28,7 @@ import {
   ExternalLink,
   Loader2,
   Sparkles,
+  X,
 } from "lucide-react";
 
 /* ============================= PRAYERS FEED ============================= */
@@ -170,6 +171,10 @@ export default function PrayersPage() {
   const [broadenNote, setBroadenNote] = useState<string | null>(null);
   const [enriching, setEnriching] = useState(false);
 
+  // scroll containers / anchors
+  const scrollBodyRef = useRef<HTMLDivElement | null>(null);
+  const resultsAnchorRef = useRef<HTMLDivElement | null>(null);
+
   const metersForDistanceKey = useMemo(
     () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.meters || 8046.72,
     [distanceKey]
@@ -205,7 +210,6 @@ export default function PrayersPage() {
   const normalizeName = (tags: Record<string, string> | undefined) => {
     if (!tags) return "Place of Worship";
     return tags["name:en"] || tags["name"] || tags["brand"] || "Place of Worship";
-    // fallbacks are intentional to give a nice label even if OSM data is sparse
   };
 
   const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
@@ -565,6 +569,16 @@ export default function PrayersPage() {
     [coords]
   );
 
+  // Auto-scroll to results when they arrive
+  useEffect(() => {
+    if (!finderOpen) return;
+    if (!fetchingNearby && nearby.length > 0) {
+      requestAnimationFrame(() => {
+        resultsAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [finderOpen, fetchingNearby, nearby.length]);
+
   /* ================================== RENDER ================================== */
 
   return (
@@ -640,6 +654,7 @@ export default function PrayersPage() {
       >
         <DialogContent
           className="
+            relative
             fixed inset-0 left-0 top-0 translate-x-0 translate-y-0
             w-screen h-[100svh] max-w-none rounded-none m-0 p-0
             bg-slate-900/95 backdrop-blur-2xl shadow-2xl
@@ -651,6 +666,17 @@ export default function PrayersPage() {
             lg:rounded-3xl lg:border lg:border-white/20
           "
         >
+          {/* Close button */}
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setFinderOpen(false)}
+            className="absolute right-3 top-3 z-50 inline-flex h-10 w-10 items-center justify-center rounded-full
+                       bg-white/10 hover:bg-white/20 text-white border border-white/20"
+          >
+            <X className="h-5 w-5" />
+          </button>
+
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
           <div className="relative z-10 flex flex-col h-full max-w-screen">
@@ -671,7 +697,10 @@ export default function PrayersPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <div className="flex-1 overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
+            <div
+              ref={scrollBodyRef}
+              className="flex-1 overflow-y-auto overscroll-behavior-y-contain overscroll-contain hide-scroll"
+            >
               <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-20">
                 {/* Location */}
                 <div className="space-y-3">
@@ -746,7 +775,7 @@ export default function PrayersPage() {
                         onChange={(e) => setFaithSearch(e.target.value)}
                         className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
                       />
-                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain overscroll-contain pr-1">
+                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain overscroll-contain pr-1 hide-scroll">
                         <div className="grid grid-cols-1 gap-2">
                           {filteredFaithOptions.map((opt) => (
                             <button
@@ -805,11 +834,12 @@ export default function PrayersPage() {
                 )}
 
                 {/* Results */}
+                <div ref={resultsAnchorRef} />
                 {!fetchingNearby && nearby.length > 0 && (
                   <div className="space-y-4">
                     <h3 className="text-white text-lg sm:text-xl font-semibold">Found {nearby.length} nearby</h3>
                     <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                      <div className="max-h-[65svh] overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
+                      <div className="max-h-[65svh] overflow-y-auto overscroll-behavior-y-contain overscroll-contain hide-scroll">
                         {nearby.map((place, index) => (
                           <div
                             key={place.id}
@@ -855,6 +885,12 @@ export default function PrayersPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Invisible (but usable) scrollbars */}
+      <style>{`
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
+      `}</style>
     </div>
   );
 }
