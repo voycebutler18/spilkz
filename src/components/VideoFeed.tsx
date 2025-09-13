@@ -1,20 +1,10 @@
-
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  Share2,
-  Bookmark,
-  BookmarkCheck,
-  MoreVertical,
-  Volume2,
-  VolumeX,
-  Play,
-  Pause,
-} from "lucide-react";
+import { Share2, Bookmark, BookmarkCheck, MoreVertical, Volume2, VolumeX, Play, Pause } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -67,8 +57,7 @@ const normalizeSpliks = (rows: Splik[]): Splik[] =>
     .filter(Boolean)
     .map((r) => ({
       ...r,
-      comments_count:
-        Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
+      comments_count: Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
       profile:
         r.profile ?? {
           id: r.user_id,
@@ -121,7 +110,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [muted, setMuted] = useState<Record<number, boolean>>({});
   const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
   const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
-  const pauseTimeoutRefs = useRef<Record<number, NodeJS.Timeout>>({});
+  const pauseTimeoutRefs = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
   // NEW: fade-in control — true when first frame is painted
   const [frameReady, setFrameReady] = useState<Record<number, boolean>>({});
@@ -143,11 +132,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     // helper to set UI state consistently
     const primeUI = (rows: Splik[]) => {
-      const ordered = rows;
       const mutedState: Record<number, boolean> = {};
       const pauseState: Record<number, boolean> = {};
       const touch = isTouchDevice();
-      ordered.forEach((_, index) => {
+      rows.forEach((_, index) => {
         mutedState[index] = touch ? true : false; // mobile default muted
         pauseState[index] = true;
       });
@@ -156,10 +144,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       setFrameReady({}); // reset ready map
 
       setOrderEpoch((e) => e + 1);
-      containerRef.current?.scrollTo({ top: 0, behavior: "instant" as any });
+      // iOS Safari can throw on unknown behavior; use "auto"
+      try {
+        containerRef.current?.scrollTo({ top: 0, behavior: "auto" });
+      } catch {
+        containerRef.current?.scrollTo(0, 0);
+      }
     };
 
-    const hydrateFromCacheIfPossible = (): Splik[] | null => {
+    const readCache = (): Splik[] | null => {
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
         return normalizeSpliks(storeFeed as Splik[]);
       }
@@ -175,51 +168,81 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       return null;
     };
 
-    const backgroundRefresh = async () => {
+    const writeCache = (rows: Splik[]) => {
+      try {
+        sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 60)));
+      } catch {}
+    };
+
+    const backgroundRefreshFavs = async () => {
       try {
         if (user?.id) {
-          const { data: favs } = await supabase
-            .from("favorites")
-            .select("splik_id")
-            .eq("user_id", user.id);
+          const { data: favs } = await supabase.from("favorites").select("splik_id").eq("user_id", user.id);
           if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
         }
       } catch {}
     };
 
+    const ABORT_TIMEOUT_MS = 15000;
+
     const load = async () => {
-      const cached = hydrateFromCacheIfPossible();
+      const cached = readCache();
       if (cached && !cancelled) {
         setSpliks(cached);
         setLoading(false);
         primeUI(cached);
-        backgroundRefresh();
-        return;
+        backgroundRefreshFavs();
+        // Keep going and refresh in the background
       }
 
       setLoading(true);
       try {
-        const { data, error } = await supabase
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
+
+        // 1) Fetch base spliks (limit smaller on mobile for stability)
+        const limit = isTouchDevice() ? 30 : 100;
+        const { data: base, error: baseErr } = await supabase
           .from("spliks")
-          .select(`
-            id, user_id, title, description, video_url, thumbnail_url,
-            trim_start, trim_end, created_at,
-            profile:profiles(
-              id, username, display_name, first_name, avatar_url
-            )
-          `);
+          .select(
+            "id,user_id,title,description,video_url,thumbnail_url,trim_start,trim_end,created_at"
+          )
+          .order("created_at", { ascending: false })
+          .limit(limit)
+          .abortSignal(controller.signal);
 
-        if (error) throw error;
+        clearTimeout(t);
+        if (baseErr) throw baseErr;
 
-        const all = normalizeSpliks((data as Splik[]) || []);
-        const ordered = shuffle(all);
+        const rows = (base || []) as Splik[];
+
+        // 2) Fetch profiles in a second call (no JOINs = fewer edge issues on mobile)
+        const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
+        let byId: Record<string, any> = {};
+        if (userIds.length) {
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("id,username,display_name,first_name,last_name,avatar_url")
+            .in("id", userIds);
+          (profs || []).forEach((p: any) => (byId[p.id] = p));
+        }
+
+        const stitched = rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
+        const ordered = shuffle(normalizeSpliks(stitched));
 
         if (!cancelled) {
           setSpliks(ordered);
           primeUI(ordered);
+          writeCache(ordered);
         }
-      } catch (e) {
-        console.error("Feed fetch error:", e);
+
+        backgroundRefreshFavs();
+      } catch (e: any) {
+        if (e?.name === "AbortError") {
+          console.warn("Feed request aborted (timeout).");
+        } else {
+          console.error("Feed fetch error:", e);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -301,13 +324,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         preloadVideo.playsInline = true;
         // @ts-expect-error iOS attribute
         preloadVideo.setAttribute("webkit-playsinline", "true");
-        preloadVideo.src = spliks[i]?.video_url;
+        preloadVideo.src = spliks[i]?.video_url || "";
+
+        const startAt = Number(spliks[i]?.trim_start ?? 0);
+        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
 
         preloadVideo.addEventListener(
           "loadeddata",
           () => {
-            const startAt = Number(spliks[i]?.trim_start ?? 0);
-            const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
             try {
               preloadVideo.currentTime = resetAt;
             } catch {}
@@ -402,9 +426,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           setFrameReady((prev) => ({ ...prev, [index]: false }));
 
           const armSeekedOnce = () => {
-            const onSeeked = () => {
-              setFrameReady((prev) => ({ ...prev, [index]: true }));
-            };
+            const onSeeked = () => setFrameReady((prev) => ({ ...prev, [index]: true }));
             video.addEventListener("seeked", onSeeked, { once: true });
           };
 
@@ -521,7 +543,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       video
         .play()
         .then(() => setFrameReady((prev) => ({ ...prev, [index]: true })))
-        .catch(console.error);
+        .catch(() => {});
       setIsPlaying((prev) => ({ ...prev, [index]: true }));
       setShowPauseButton((prev) => ({ ...prev, [index]: true }));
     }
@@ -633,11 +655,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       src={s.thumbnail_url}
                       alt=""
                       className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
-                      style={{
-                        opacity: ready ? 0 : 1,
-                        transition: "opacity 120ms linear",
-                        willChange: "opacity",
-                      }}
+                      style={{ opacity: ready ? 0 : 1, transition: "opacity 120ms linear", willChange: "opacity" }}
                     />
                   )}
 
@@ -709,7 +727,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       width: "100%",
                       height: "100%",
                       objectFit: "cover",
-                      backgroundColor: "transparent", // video itself transparent; container is black
+                      backgroundColor: "transparent",
                       opacity: ready ? 1 : 0,
                       transition: "opacity 120ms linear",
                       willChange: "opacity",
@@ -717,10 +735,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   />
 
                   {/* Center play/pause controls */}
-                  <div
-                    className="absolute inset-0 flex items-center justify-center"
-                    onClick={() => handlePlayPause(i)}
-                  >
+                  <div className="absolute inset-0 flex items-center justify-center" onClick={() => handlePlayPause(i)}>
                     {videoIsPlaying ? (
                       shouldShowPauseButton && (
                         <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4">
@@ -743,11 +758,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
                     title={muted[i] ? "Unmute" : "Mute"}
                   >
-                    {muted[i] ? (
-                      <VolumeX className="h-4 w-4 text-white" />
-                    ) : (
-                      <Volume2 className="h-4 w-4 text-white" />
-                    )}
+                    {muted[i] ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
                   </button>
 
                   {/* title overlay */}
