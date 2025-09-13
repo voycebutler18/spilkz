@@ -18,6 +18,7 @@ type Activity = {
   user_id: string | null;
   kind: ActivityKind;
   created_at: string;
+  media_url?: string | null; // NEW: for mini preview
 };
 
 type Profile = {
@@ -57,16 +58,12 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
   const [groups, setGroups] = React.useState<Group[]>([]);
   const [profiles, setProfiles] = React.useState<Record<string, Profile>>({});
-
-  // modal state
   const [open, setOpen] = React.useState(false);
   const [active, setActive] = React.useState<Group | null>(null);
-
   const sigRef = React.useRef("");
 
   React.useEffect(() => {
     let alive = true;
-
     const sinceISO = new Date(Date.now() - TIME_WINDOW_HOURS * 3600 * 1000).toISOString();
 
     const hydrateProfiles = async (userIds: string[]) => {
@@ -86,7 +83,6 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
       const filtered = rows.filter(
         (r) => new Date(r.created_at).toISOString() >= sinceISO
       );
-
       const byUser = new Map<string, Group>();
       filtered.forEach((r) => {
         const key = r.user_id ?? "__null";
@@ -103,7 +99,6 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
         if (r.created_at > g.latest_at) g.latest_at = r.created_at;
         byUser.set(key, g);
       });
-
       return Array.from(byUser.values())
         .sort((a, b) => b.latest_at.localeCompare(a.latest_at))
         .slice(0, 60);
@@ -112,7 +107,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
     const load = async () => {
       const { data, error } = await supabase
         .from("right_rail_feed")
-        .select("id, user_id, created_at, type")
+        .select("id, user_id, created_at, type, media_url") // media_url pulled here
         .order("created_at", { ascending: false })
         .limit(limit);
 
@@ -123,6 +118,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
         user_id: r.user_id ?? null,
         kind: (r.type as ActivityKind) || "photo",
         created_at: r.created_at as string,
+        media_url: r.media_url ?? null,
       }));
 
       const sig = JSON.stringify(rows.map((r) => [r.user_id, r.kind, r.id]));
@@ -138,10 +134,14 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
     load().catch(() => {});
 
-    // Realtime: refresh when new content arrives
+    // Realtime refresh:
+    // - INSERT for photos/videos/quotes
+    // - DELETE + UPDATE for photos so the rail reflects removals/edits immediately
     const ch = supabase
       .channel("right-rail-activity")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "vibe_photos" }, load)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "vibe_photos" }, load) // NEW
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "vibe_photos" }, load) // NEW
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "spliks" }, load)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "quotes" }, load)
       .subscribe();
@@ -150,8 +150,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
       alive = false;
       supabase.removeChannel(ch);
     };
-  // IMPORTANT: don't depend on `profiles`, to avoid loops
-  }, [limit]);
+  }, [limit]); // don't depend on profiles to avoid loops
 
   const summaryText = (g: Group) => {
     const parts: string[] = [];
@@ -201,13 +200,12 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
                 onClick={() => openModalFor(g)}
                 title={`${name} activity`}
               >
-                {/* avatar (click goes to profile) */}
+                {/* avatar (click -> profile) */}
                 <span
                   className="h-10 w-10 rounded-full overflow-hidden bg-gradient-to-br from-fuchsia-500 to-indigo-500 ring-2 ring-neutral-800 shrink-0"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (g.user_id)
-                      navigate(`/creator/${profileSlug(prof) || g.user_id}`);
+                    if (g.user_id) navigate(`/creator/${profileSlug(prof) || g.user_id}`);
                   }}
                 >
                   {avatar ? (
@@ -225,8 +223,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
                       className="font-semibold hover:underline cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (g.user_id)
-                          navigate(`/creator/${profileSlug(prof) || g.user_id}`);
+                        if (g.user_id) navigate(`/creator/${profileSlug(prof) || g.user_id}`);
                       }}
                       title={name}
                     >
@@ -245,7 +242,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
         </div>
       </div>
 
-      {/* text-only grouped activity modal */}
+      {/* Modal: now shows a MINI PREVIEW next to each photo post */}
       <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : closeModal())}>
         <DialogContent className="sm:max-w-md">
           {active && (
@@ -270,7 +267,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
                   )}
                 </DialogTitle>
                 <DialogDescription>
-                  Last {TIME_WINDOW_HOURS} hours — text only
+                  Last {TIME_WINDOW_HOURS} hours — text + mini previews
                 </DialogDescription>
               </DialogHeader>
 
@@ -287,8 +284,21 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
                         ? "posted a video"
                         : "posted in Daily Prayers";
                     return (
-                      <div key={`${it.kind}_${it.id}`} className="flex items-center gap-2 text-sm">
+                      <div key={`${it.kind}_${it.id}`} className="flex items-center gap-3 text-sm">
                         <span className="text-neutral-500 w-14 shrink-0">{when}</span>
+
+                        {/* mini preview only for photos */}
+                        {it.kind === "photo" && it.media_url ? (
+                          <span className="h-10 w-10 shrink-0 rounded-md overflow-hidden border border-neutral-800">
+                            <img
+                              src={it.media_url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          </span>
+                        ) : null}
+
                         <span className="text-neutral-200">{text}</span>
                       </div>
                     );
