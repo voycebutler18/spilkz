@@ -18,7 +18,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import RightActivityRail from "@/components/RightActivityRail"; // mirror desktop activity rail
+
+// Mirror desktop right-rail on both desktop & mobile
+import RightActivityRail from "@/components/RightActivityRail";
 
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
 
@@ -88,7 +90,7 @@ type PhotoItem = {
   created_at: string;
   description?: string | null;
   location?: string | null;
-  category?: string | null; // NEW
+  category?: string | null;
   profile?: RailProfile | null;
 };
 
@@ -203,7 +205,7 @@ function RightPhotoRail({
           created_at: r.created_at || new Date().toISOString(),
           description: r.description ?? r.caption ?? null,
           location: r.location ?? null,
-          category: r.category ?? null, // NEW
+          category: r.category ?? null,
         })) as PhotoItem[];
 
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
@@ -265,7 +267,7 @@ function RightPhotoRail({
             created_at: new Date().toISOString(),
             description: description || null,
             location: location || null,
-            category: category || null, // NEW
+            category: category || null,
             profile: (p as RailProfile) || null,
           },
           ...prev,
@@ -335,12 +337,14 @@ function RightPhotoRail({
                   loading="lazy"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
+                {/* small category chip (optional) */}
                 {ph.category && (
                   <span className="absolute top-2 left-2 text-[10px] px-2 py-0.5 rounded-full bg-black/60 text-white border border-white/20">
                     {ph.category}
                   </span>
                 )}
 
+                {/* Bottom caption */}
                 <div className="absolute inset-x-0 bottom-0 px-2 pb-2 pt-10 bg-gradient-to-t from-black/60 via-black/10 to-transparent">
                   <div className="flex items-end gap-2">
                     <Link
@@ -379,6 +383,7 @@ function RightPhotoRail({
         </div>
       </div>
 
+      {/* Photo Viewer */}
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
         <DialogContent className="sm:max-w-3xl p-0 overflow-hidden">
           {!!active && (
@@ -486,7 +491,7 @@ const Explore = () => {
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
-  const [photoCategory, setPhotoCategory] = useState("general"); // NEW
+  const [photoCategory, setPhotoCategory] = useState("general");
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -668,6 +673,7 @@ const Explore = () => {
       return () => {
         io.disconnect();
         mo.disconnect();
+        pauseAll();
         videoVisibility.clear();
         currentPlayingVideo = null;
       };
@@ -820,22 +826,11 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* MOBILE rails stacked (mirror desktop right rail) */}
-      <div className="container lg:hidden space-y-6 py-6">
-        <RightActivityRail />
-        <RightPhotoRail
-          title="Splikz Photos"
-          maxListHeight="60vh"
-          reloadToken={reloadToken}
-          currentUserId={user?.id}
-        />
-      </div>
-
-      {/* GRID */}
+      {/* CONSISTENT GRID LAYOUT FOR ALL SCREEN SIZES */}
       <div className="container py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* FEED */}
-          <div className="lg:col-span-9 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-8">
+          {/* FEED - takes up more space on larger screens */}
+          <div className="md:col-span-8 lg:col-span-9 space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
@@ -847,7 +842,7 @@ const Explore = () => {
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    We’ll show the latest as soon as they’re posted.
+                    We'll show the latest as soon as they're posted.
                   </p>
                   <div className="flex gap-2 justify-center">
                     <Button onClick={() => fetchHomeFeed()} variant="outline">
@@ -885,11 +880,11 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): Activity + Photos rail (stacked) */}
-          <div className="lg:col-span-3 hidden lg:flex lg:flex-col lg:gap-8">
-            <RightActivityRail />
+          {/* RIGHT SIDEBAR - Photos only, visible on all screen sizes */}
+          <div className="md:col-span-4 lg:col-span-3">
             <RightPhotoRail
               title="Splikz Photos"
+              maxListHeight="calc(100vh - 200px)"
               currentUserId={user?.id}
               reloadToken={reloadToken}
             />
