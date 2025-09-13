@@ -1,4 +1,5 @@
 // src/pages/Explore.tsx
+// at top with other imports
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,9 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-
-// Mirror desktop right-rail on both desktop & mobile
-import RightActivityRail from "@/components/RightActivityRail";
+import RightActivityRail from "@/components/RightActivityRail"; // ✅ show Activity rail on all viewports
 
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
 
@@ -90,7 +89,7 @@ type PhotoItem = {
   created_at: string;
   description?: string | null;
   location?: string | null;
-  category?: string | null;
+  category?: string | null; // NEW
   profile?: RailProfile | null;
 };
 
@@ -205,7 +204,7 @@ function RightPhotoRail({
           created_at: r.created_at || new Date().toISOString(),
           description: r.description ?? r.caption ?? null,
           location: r.location ?? null,
-          category: r.category ?? null,
+          category: r.category ?? null, // NEW
         })) as PhotoItem[];
 
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
@@ -267,7 +266,7 @@ function RightPhotoRail({
             created_at: new Date().toISOString(),
             description: description || null,
             location: location || null,
-            category: category || null,
+            category: category || null, // NEW
             profile: (p as RailProfile) || null,
           },
           ...prev,
@@ -491,15 +490,27 @@ const Explore = () => {
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
-  const [photoCategory, setPhotoCategory] = useState("general");
+  const [photoCategory, setPhotoCategory] = useState("general"); // NEW
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
   const feedRef = useRef<HTMLDivElement | null>(null);
 
+  // ✅ Mirror scale so the desktop grid fits on mobile (just smaller)
+  const [mirrorScale, setMirrorScale] = useState(1);
+  useEffect(() => {
+    const BASE = 1152; // approximate desktop container width
+    const compute = () => setMirrorScale(Math.min(1, window.innerWidth / BASE));
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) =>
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, session) =>
       setUser(session?.user ?? null)
     );
     return () => subscription.unsubscribe();
@@ -521,10 +532,16 @@ const Explore = () => {
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         const byId: Record<string, Profile> = {};
         if (userIds.length) {
-          const { data: profs } = await supabase.from("profiles").select("*").in("id", userIds);
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("*")
+            .in("id", userIds);
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
-        const withProfiles = rows.map((r) => ({ ...r, profile: byId[r.user_id] }));
+        const withProfiles = rows.map((r) => ({
+          ...r,
+          profile: byId[r.user_id],
+        }));
         setFeedSpliks(withProfiles);
         preconnect(withProfiles[0]?.video_url);
         warmFirstVideoMeta(withProfiles[0]?.video_url);
@@ -537,7 +554,11 @@ const Explore = () => {
       }
     } catch (e) {
       console.error("Home feed load error:", e);
-      toast({ title: "Error", description: "Failed to load your feed", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load your feed",
+        variant: "destructive",
+      });
       setFeedSpliks([]);
     } finally {
       setLoading(false);
@@ -549,7 +570,10 @@ const Explore = () => {
     fetchHomeFeed();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
+  const useAutoplayIn = (
+    hostRef: React.RefObject<HTMLElement>,
+    deps: any[] = []
+  ) => {
     useEffect(() => {
       const host = hostRef.current;
       if (!host) return;
@@ -682,7 +706,7 @@ const Explore = () => {
 
   useAutoplayIn(feedRef, [feedSpliks]);
 
-  const { toast: _toast } = useToast();
+  const { toast: _toast } = useToast(); // keep same hook, ignore here too
   const handleShare = async (splikId: string) => {
     const url = `${window.location.origin}/video/${splikId}`;
     try {
@@ -738,7 +762,9 @@ const Explore = () => {
         });
       if (upErr) throw upErr;
 
-      const { data: pub } = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path);
+      const { data: pub } = supabase.storage
+        .from(PHOTOS_BUCKET)
+        .getPublicUrl(path);
       const photo_url = pub?.publicUrl;
       if (!photo_url) throw new Error("Failed to resolve public URL");
 
@@ -747,7 +773,7 @@ const Explore = () => {
         photo_url,
         description: photoDescription.trim(),
         location: photoLocation.trim() || null,
-        category: (photoCategory || "general").toLowerCase(),
+        category: (photoCategory || "general").toLowerCase(), // NEW
       };
 
       const { error: insertErr } = await supabase
@@ -762,7 +788,7 @@ const Explore = () => {
             photo_url,
             description: photoDescription.trim(),
             location: photoLocation.trim() || null,
-            category: (photoCategory || "general").toLowerCase(),
+            category: (photoCategory || "general").toLowerCase(), // NEW
           },
         })
       );
@@ -775,7 +801,7 @@ const Explore = () => {
       setFile(null);
       setPhotoDescription("");
       setPhotoLocation("");
-      setPhotoCategory("general");
+      setPhotoCategory("general"); // reset
       setUploadOpen(false);
     } catch (e: any) {
       console.error(e);
@@ -826,68 +852,86 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* CONSISTENT GRID LAYOUT FOR ALL SCREEN SIZES */}
-      <div className="container py-8">
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-8">
-          {/* FEED - takes up more space on larger screens */}
-          <div className="md:col-span-8 lg:col-span-9 space-y-6">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
-                <p className="text-sm text-muted-foreground">Loading videos…</p>
-              </div>
-            ) : feedSpliks.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
-                  <p className="text-muted-foreground mb-4">
-                    We'll show the latest as soon as they're posted.
-                  </p>
-                  <div className="flex gap-2 justify-center">
-                    <Button onClick={() => fetchHomeFeed()} variant="outline">
-                      Refresh
-                    </Button>
+      {/* GRID — mirrored on mobile (scaled to fit) */}
+      <div className="w-screen overflow-x-hidden">
+        <div
+          className="mx-auto"
+          style={{
+            width: 1152,
+            transform: `scale(${mirrorScale})`,
+            transformOrigin: "top center",
+          }}
+        >
+          <div className="container py-8 max-w-none">
+            <div className="grid grid-cols-12 gap-8">
+              {/* FEED (always 9 cols like desktop) */}
+              <div className="col-span-12 md:col-span-9 space-y-6">
+                {loading ? (
+                  <div className="flex flex-col items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                    <p className="text-sm text-muted-foreground">
+                      Loading videos…
+                    </p>
                   </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <div ref={feedRef} className="space-y-8">
-                {feedSpliks.map((s) => (
-                  <SplikCard
-                    key={s.id}
-                    splik={s}
-                    onReact={() => {}}
-                    onShare={() => {
-                      const url = `${window.location.origin}/video/${s.id}`;
-                      if (navigator.share)
-                        navigator
-                          .share({ title: "Check out this Splik!", url })
-                          .catch(() => {});
-                      else
-                        navigator.clipboard
-                          .writeText(url)
-                          .then(() =>
-                            toast({
-                              title: "Link copied!",
-                              description: "Copied to clipboard",
-                            })
-                          );
-                    }}
-                  />
-                ))}
+                ) : feedSpliks.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">
+                        No videos yet
+                      </h3>
+                      <p className="text-muted-foreground mb-4">
+                        We’ll show the latest as soon as they’re posted.
+                      </p>
+                      <div className="flex gap-2 justify-center">
+                        <Button
+                          onClick={() => fetchHomeFeed()}
+                          variant="outline"
+                        >
+                          Refresh
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div ref={feedRef} className="space-y-8">
+                    {feedSpliks.map((s) => (
+                      <SplikCard
+                        key={s.id}
+                        splik={s}
+                        onReact={() => {}}
+                        onShare={() => {
+                          const url = `${window.location.origin}/video/${s.id}`;
+                          if (navigator.share)
+                            navigator
+                              .share({ title: "Check out this Splik!", url })
+                              .catch(() => {});
+                          else
+                            navigator.clipboard
+                              .writeText(url)
+                              .then(() =>
+                                toast({
+                                  title: "Link copied!",
+                                  description: "Copied to clipboard",
+                                })
+                              );
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
 
-          {/* RIGHT SIDEBAR - Photos only, visible on all screen sizes */}
-          <div className="md:col-span-4 lg:col-span-3">
-            <RightPhotoRail
-              title="Splikz Photos"
-              maxListHeight="calc(100vh - 200px)"
-              currentUserId={user?.id}
-              reloadToken={reloadToken}
-            />
+              {/* RIGHT RAIL (always visible, like desktop) */}
+              <div className="col-span-12 md:col-span-3 space-y-6">
+                <RightActivityRail />
+                <RightPhotoRail
+                  title="Splikz Photos"
+                  currentUserId={user?.id}
+                  reloadToken={reloadToken}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -938,6 +982,7 @@ const Explore = () => {
               />
             </div>
 
+            {/* NEW: Category */}
             <div className="grid gap-2">
               <Label htmlFor="cat">Category</Label>
               <select
