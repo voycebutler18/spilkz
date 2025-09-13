@@ -248,7 +248,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   // ✅ Route to the Creator Dashboard
   const goToDashboard = useCallback(() => {
     onClose();
-    setTimeout(() => navigate("/creator-dashboard"), 0); // <-- adjust if your path differs
+    setTimeout(() => navigate("/dashboard"), 0);
   }, [navigate, onClose]);
 
   useEffect(() => {
