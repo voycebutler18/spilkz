@@ -59,7 +59,6 @@ export default function PrayersPage() {
   };
 
   useEffect(() => {
-    // initial load
     load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -171,8 +170,8 @@ export default function PrayersPage() {
   const [broadenNote, setBroadenNote] = useState<string | null>(null);
   const [enriching, setEnriching] = useState(false);
 
-  // scroll containers / anchors
-  const scrollBodyRef = useRef<HTMLDivElement | null>(null);
+  // scroll plumbing
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const resultsAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const metersForDistanceKey = useMemo(
@@ -265,7 +264,6 @@ export default function PrayersPage() {
           if (addr) {
             setNearby((prev) => prev.map((p) => (p.id === item.id ? { ...p, address: addr } : p)));
           }
-          // be polite to Nominatim
           await new Promise((r) => setTimeout(r, 400));
         }
       }
@@ -569,15 +567,24 @@ export default function PrayersPage() {
     [coords]
   );
 
-  // Auto-scroll to results when they arrive
+  // === Auto-scroll to results anchor when results appear ===
   useEffect(() => {
     if (!finderOpen) return;
-    if (!fetchingNearby && nearby.length > 0) {
-      requestAnimationFrame(() => {
-        resultsAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+    if (fetchingNearby) return;
+    if (nearby.length === 0 && !nearbyError) return;
+    // Smooth scroll so results aren’t hidden on mobile
+    const el = resultsAnchorRef.current;
+    if (el) {
+      // use a short delay to ensure layout is painted
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    } else if (scrollAreaRef.current) {
+      setTimeout(() => {
+        scrollAreaRef.current!.scrollTo({ top: scrollAreaRef.current!.scrollHeight, behavior: "smooth" });
+      }, 80);
     }
-  }, [finderOpen, fetchingNearby, nearby.length]);
+  }, [finderOpen, fetchingNearby, nearby.length, nearbyError]);
 
   /* ================================== RENDER ================================== */
 
@@ -603,7 +610,7 @@ export default function PrayersPage() {
         </Button>
       </div>
 
-      {/* composer – updates only local list; NO activity writes */}
+      {/* composer */}
       <PrayerComposer onPosted={(p: Prayer) => setItems((cur) => [p, ...cur])} />
 
       {error && (
@@ -644,7 +651,7 @@ export default function PrayersPage() {
         </Button>
       </div>
 
-      {/* ===================== FINDER ===================== */}
+      {/* ===================== FINDER (Restaurant-style layout) ===================== */}
       <Dialog
         open={finderOpen}
         onOpenChange={(open) => {
@@ -652,245 +659,226 @@ export default function PrayersPage() {
           if (!open) resetFinder();
         }}
       >
-        <DialogContent
-          className="
-            relative
-            fixed inset-0 left-0 top-0 translate-x-0 translate-y-0
-            w-screen h-[100svh] max-w-none rounded-none m-0 p-0
-            bg-slate-900/95 backdrop-blur-2xl shadow-2xl
-            overflow-hidden overflow-x-hidden z-50 border-0
-
-            lg:inset-auto lg:left-1/2 lg:top-1/2
-            lg:translate-x-[-50%] lg:translate-y-[-50%]
-            lg:w-full lg:max-w-3xl lg:max-h-[90svh]
-            lg:rounded-3xl lg:border lg:border-white/20
-          "
-        >
-          {/* Close button */}
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl">
+          {/* Single explicit close button (prevents the double-X issue) */}
           <button
-            type="button"
             aria-label="Close"
             onClick={() => setFinderOpen(false)}
-            className="absolute right-3 top-3 z-50 inline-flex h-10 w-10 items-center justify-center rounded-full
-                       bg-white/10 hover:bg-white/20 text-white border border-white/20"
+            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
 
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
-          <div className="relative z-10 flex flex-col h-full max-w-screen">
-            <DialogHeader className="flex-shrink-0 space-y-2 sm:space-y-4 px-4 sm:px-6 pt-6 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10 bg-slate-900/90 backdrop-blur-xl">
-              <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl">
-                <div className="relative">
-                  <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
-                  <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 to-orange-500 p-2 sm:p-3">
-                    <MapPin className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
-                  </div>
+          <DialogHeader className="relative z-10 space-y-4 pb-6 border-b border-white/10">
+            <DialogTitle className="flex items-center gap-3 text-2xl">
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
+                <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 to-orange-500 p-3">
+                  <MapPin className="h-6 w-6 text-white" />
                 </div>
-                <span className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent font-bold">
-                  Find Places of Worship Near You
-                </span>
-              </DialogTitle>
-              <DialogDescription className="text-gray-300 text-sm sm:text-base">
-                Search by location, distance, and denomination.
-              </DialogDescription>
-            </DialogHeader>
+              </div>
+              <span className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent font-bold">
+                Find Places of Worship Near You
+              </span>
+            </DialogTitle>
+            <DialogDescription className="text-gray-300 text-lg">
+              Search by location, distance, and denomination.
+            </DialogDescription>
+          </DialogHeader>
 
-            <div
-              ref={scrollBodyRef}
-              className="flex-1 overflow-y-auto overscroll-behavior-y-contain overscroll-contain hide-scroll"
-            >
-              <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-20">
-                {/* Location */}
-                <div className="space-y-3">
-                  <label className="text-white font-semibold text-base sm:text-lg flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-yellow-400" />
-                    Where are we searching?
-                  </label>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <Input
-                      placeholder="City or ZIP (e.g., Chicago, 60601)"
-                      value={locationQuery}
-                      onChange={(e) => {
-                        setLocationQuery(e.target.value);
-                        if (e.target.value.trim() && coords) {
-                          setCoords(null);
-                          setLocStage("idle");
-                        }
-                      }}
-                      disabled={fetchingNearby}
-                      className="bg-white/10 backdrop-blur-xl border border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3 text-base focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300"
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={requestLocation}
-                      disabled={fetchingNearby || locStage === "asking"}
-                      className="w-full sm:w-auto px-6 py-3 text-base bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 border-0 text-white font-semibold rounded-xl shadow-xl"
-                    >
-                      <LocateFixed className="h-4 w-4 mr-2" />
-                      {locStage === "asking" ? "Locating…" : "Use location"}
-                    </Button>
-                  </div>
-                  {locStage === "asking" && (
-                    <div className="flex items-center gap-3 text-blue-200 text-sm">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Requesting location permission…
-                    </div>
-                  )}
-                  {coords && (
-                    <div className="text-green-300 text-sm">
-                      Location confirmed: <span className="font-mono">{coordsPretty}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Distance + Faith */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-                  <div className="space-y-2">
-                    <label className="text-white font-semibold text-base">Search radius</label>
-                    <Select
-                      value={distanceKey}
-                      onValueChange={(v) => setDistanceKey(v as DistanceKey)}
-                      disabled={fetchingNearby}
-                    >
-                      <SelectTrigger className="bg-white/10 backdrop-blur-xl border border-white/20 text-white rounded-xl py-3 text-base">
-                        <SelectValue placeholder="Distance" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-800 border border-white/20 rounded-xl !max-w-[min(92vw,28rem)]">
-                        {DISTANCE_OPTIONS.map((d) => (
-                          <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
-                            {d.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="lg:col-span-2 space-y-2">
-                    <label className="text-white font-semibold text-base">Faith / Denomination</label>
-                    <div className="rounded-xl border border-white/20 bg-white/10 backdrop-blur-xl p-3">
-                      <Input
-                        placeholder="Search (e.g., Non-Denominational, Baptist, Sunni, Orthodox)…"
-                        value={faithSearch}
-                        onChange={(e) => setFaithSearch(e.target.value)}
-                        className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
-                      />
-                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain overscroll-contain pr-1 hide-scroll">
-                        <div className="grid grid-cols-1 gap-2">
-                          {filteredFaithOptions.map((opt) => (
-                            <button
-                              key={opt.key}
-                              type="button"
-                              onClick={() => setFaithFilter(opt.key)}
-                              className={`text-left px-3 py-3 rounded-lg border text-sm sm:text-base transition-all duration-200 ${
-                                faithFilter === opt.key
-                                  ? "border-purple-400 bg-purple-400/20 text-white"
-                                  : "border-white/10 hover:bg-white/10 text-gray-200"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Search Button */}
-                <div className="flex justify-center pt-2">
+          {/* Scrollable column – visible scrollbar on mobile */}
+          <div ref={scrollAreaRef} className="relative z-10 h-[70vh] flex flex-col overflow-y-auto">
+            <div className="px-4 sm:px-6 py-5 space-y-6 pb-24">
+              {/* Location */}
+              <div className="space-y-3">
+                <label className="text-white font-semibold text-base sm:text-lg flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-yellow-400" />
+                  Where are we searching?
+                </label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    placeholder="City or ZIP (e.g., Chicago, 60601)"
+                    value={locationQuery}
+                    onChange={(e) => {
+                      setLocationQuery(e.target.value);
+                      if (e.target.value.trim() && coords) {
+                        setCoords(null);
+                        setLocStage("idle");
+                      }
+                    }}
+                    disabled={fetchingNearby}
+                    className="bg-white/10 border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3 text-base"
+                  />
                   <Button
-                    onClick={runNearbySearch}
-                    disabled={fetchingNearby || (!coords && !locationQuery.trim())}
-                    className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
-                               w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
+                    variant="outline"
+                    onClick={requestLocation}
+                    disabled={fetchingNearby || locStage === "asking"}
+                    className="w-full sm:w-auto px-6 py-3 text-base bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 border-0 text-white font-semibold rounded-xl"
                   >
-                    <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                    <div className="relative flex items-center gap-3 justify-center">
-                      <SearchIcon className="h-5 w-5" />
-                      <span>{fetchingNearby ? "Searching…" : "Find Churches Near You"}</span>
-                    </div>
+                    <LocateFixed className="h-4 w-4 mr-2" />
+                    {locStage === "asking" ? "Locating…" : "Use location"}
                   </Button>
                 </div>
-
-                {/* Status Messages */}
-                {broadenNote && !nearbyError && (
-                  <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-500/30 text-amber-200 text-sm">
-                    {broadenNote}
+                {locStage === "asking" && (
+                  <div className="flex items-center gap-3 text-blue-200 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Requesting location permission…
                   </div>
                 )}
-
-                {nearbyError && (
-                  <div className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 text-red-200 text-sm sm:text-base">
-                    {nearbyError}
-                  </div>
-                )}
-
-                {(fetchingNearby || enriching) && (
-                  <div className="flex items-center gap-3 text-purple-200 text-sm sm:text-base justify-center">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    {fetchingNearby ? "Searching for places of worship…" : "Adding street addresses…"}
-                  </div>
-                )}
-
-                {/* Results */}
-                <div ref={resultsAnchorRef} />
-                {!fetchingNearby && nearby.length > 0 && (
-                  <div className="space-y-4">
-                    <h3 className="text-white text-lg sm:text-xl font-semibold">Found {nearby.length} nearby</h3>
-                    <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                      <div className="max-h-[65svh] overflow-y-auto overscroll-behavior-y-contain overscroll-contain hide-scroll">
-                        {nearby.map((place, index) => (
-                          <div
-                            key={place.id}
-                            className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
-                              index !== nearby.length - 1 ? "border-b border-white/10" : ""
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
-                                {place.name}
-                              </div>
-                              <div className="text-gray-300 text-sm leading-relaxed mb-2">
-                                {place.address || "Loading address…"}
-                              </div>
-                              <div className="text-yellow-300 text-sm font-medium">
-                                {prettyDistance(place.distanceKm)} away
-                              </div>
-                            </div>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
-                              title={`Open ${place.name} in Google Maps`}
-                            >
-                              <span className="hidden sm:inline">View</span>
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
-                  <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-base">
-                    No results found. Try a larger radius or a different denomination.
+                {coords && (
+                  <div className="text-green-300 text-sm">
+                    Location confirmed: <span className="font-mono">{coordsPretty}</span>
                   </div>
                 )}
               </div>
+
+              {/* Distance + Faith */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+                <div className="space-y-2">
+                  <label className="text-white font-semibold text-base">Search radius</label>
+                  <Select
+                    value={distanceKey}
+                    onValueChange={(v) => setDistanceKey(v as DistanceKey)}
+                    disabled={fetchingNearby}
+                  >
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white rounded-xl py-3 text-base">
+                      <SelectValue placeholder="Distance" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border border-white/20 rounded-xl !max-w-[min(92vw,28rem)]">
+                      {DISTANCE_OPTIONS.map((d) => (
+                        <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
+                          {d.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="lg:col-span-2 space-y-2">
+                  <label className="text-white font-semibold text-base">Faith / Denomination</label>
+                  <div className="rounded-xl border border-white/20 bg-white/10 backdrop-blur-xl p-3">
+                    <Input
+                      placeholder="Search (e.g., Non-Denominational, Baptist, Sunni, Orthodox)…"
+                      value={faithSearch}
+                      onChange={(e) => setFaithSearch(e.target.value)}
+                      className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
+                    />
+                    {/* Visible scroll list – no hidden scrollbars */}
+                    <div className="max-h-48 overflow-y-auto pr-1">
+                      <div className="grid grid-cols-1 gap-2">
+                        {filteredFaithOptions.map((opt) => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setFaithFilter(opt.key)}
+                            className={`text-left px-3 py-3 rounded-lg border text-sm sm:text-base transition-all duration-200 ${
+                              faithFilter === opt.key
+                                ? "border-purple-400 bg-purple-400/20 text-white"
+                                : "border-white/10 hover:bg-white/10 text-gray-200"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search Button */}
+              <div className="flex justify-center pt-2">
+                <Button
+                  onClick={runNearbySearch}
+                  disabled={fetchingNearby || (!coords && !locationQuery.trim())}
+                  className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
+                             w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="relative flex items-center gap-3 justify-center">
+                    <SearchIcon className="h-5 w-5" />
+                    <span>{fetchingNearby ? "Searching…" : "Find Churches Near You"}</span>
+                  </div>
+                </Button>
+              </div>
+
+              {/* Anchor to auto-scroll to status/results */}
+              <div ref={resultsAnchorRef} />
+
+              {/* Status Messages */}
+              {broadenNote && !nearbyError && (
+                <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-500/30 text-amber-200 text-sm">
+                  {broadenNote}
+                </div>
+              )}
+
+              {nearbyError && (
+                <div className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 text-red-200 text-sm sm:text-base">
+                  {nearbyError}
+                </div>
+              )}
+
+              {(fetchingNearby || enriching) && (
+                <div className="flex items-center gap-3 text-purple-200 text-sm sm:text-base justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  {fetchingNearby ? "Searching for places of worship…" : "Adding street addresses…"}
+                </div>
+              )}
+
+              {/* Results */}
+              {!fetchingNearby && nearby.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-white text-lg sm:text-xl font-semibold">
+                    Found {nearby.length} nearby
+                  </h3>
+                  <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
+                    {/* Visible scrollbar; tall enough on mobile */}
+                    <div className="max-h-[50vh] sm:max-h-[65vh] overflow-y-auto">
+                      {nearby.map((place, index) => (
+                        <div
+                          key={place.id}
+                          className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
+                            index !== nearby.length - 1 ? "border-b border-white/10" : ""
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
+                              {place.name}
+                            </div>
+                            <div className="text-gray-300 text-sm leading-relaxed mb-2">
+                              {place.address || "Loading address…"}
+                            </div>
+                            <div className="text-yellow-300 text-sm font-medium">
+                              {prettyDistance(place.distanceKm)} away
+                            </div>
+                          </div>
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
+                            title={`Open ${place.name} in Google Maps`}
+                          >
+                            <span className="hidden sm:inline">View</span>
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
+                <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-base">
+                  No results found. Try a larger radius or a different denomination.
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Invisible (but usable) scrollbars */}
-      <style>{`
-        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
-        .hide-scroll::-webkit-scrollbar { display: none; }
-      `}</style>
     </div>
   );
 }
