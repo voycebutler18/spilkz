@@ -1,6 +1,3 @@
-Here’s your `src/pages/Explore.tsx` with the corrections baked in: stronger fallback names, safe delete (DB first, then storage), realtime refresh on DELETE, and a **Category** field on upload (saved + optimistic update). Drop-in replacement.
-
-```tsx
 // src/pages/Explore.tsx
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
@@ -79,7 +76,7 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Splikz Photos rail + viewer (with delete for owner)
+   Splikz Photos rail + viewer (grouped by creator, 24h, delete for owner)
 ────────────────────────────────────────────────────────────────────────── */
 type RailProfile = {
   id: string;
@@ -96,25 +93,23 @@ type PhotoItem = {
   created_at: string;
   description?: string | null;
   location?: string | null;
-  category?: string | null;
   profile?: RailProfile | null;
 };
+type PhotoGroup = {
+  user_id: string;
+  profile: RailProfile | null;
+  name: string;
+  photos: PhotoItem[];
+  latestAt: number;
+};
 
-// stronger fallback (username → display_name → first+last → short id)
 const displayName = (p?: RailProfile | null) => {
-  if (!p) return "user_anon";
-  const u = (p.username || "").trim();
-  const d = (p.display_name || "").trim();
-  const f = (p.first_name || "").trim();
-  const l = (p.last_name || "").trim();
-  if (u) return u;
-  if (d) return d;
-  const full = [f, l].filter(Boolean).join(" ").trim();
-  if (full) return full;
-  return `user_${(p.id || "").slice(0, 6) || "anon"}`;
+  if (!p) return "User";
+  const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
+  return p.display_name?.trim() || full || p.username?.trim() || `user_${(p.id || "").slice(0, 6) || "anon"}`;
 };
 const slugFor = (p?: RailProfile | null) =>
-  ((p?.username || "").trim()) || (p?.id || "");
+  p?.username ? p.username : p?.id || "";
 
 const pathFromPublicUrl = (url: string) => {
   try {
@@ -156,45 +151,33 @@ function RightPhotoRail({
   const removeLocally = (id: string) =>
     setItems((prev) => prev.filter((p) => p.id !== id));
 
-  // Safe delete: verify ownership in DB, delete row, then remove storage
+  /* delete real row (handles optimistic card too), then remove storage; refresh UI */
   const deleteActive = async () => {
     if (!active || !currentUserId) return;
-
     try {
-      // find the real row for THIS user by url (covers optimistic cards)
       const { data: existing, error: findErr } = await supabase
         .from("vibe_photos")
-        .select("id, user_id")
-        .eq("photo_url", active.photo_url)
+        .select("id")
         .eq("user_id", currentUserId)
+        .eq("photo_url", active.photo_url)
         .limit(1)
         .maybeSingle();
       if (findErr) throw findErr;
 
-      if (!existing) {
-        toast({
-          title: "Not allowed",
-          description: "You can only delete your own photos.",
-          variant: "destructive",
-        });
-        return;
-      }
+      const deleteId = existing?.id || active.id;
 
       const { error: delErr } = await supabase
         .from("vibe_photos")
         .delete()
-        .eq("id", existing.id)
+        .eq("id", deleteId)
         .eq("user_id", currentUserId);
       if (delErr) throw delErr;
 
       const path = pathFromPublicUrl(active.photo_url);
-      if (path) {
-        // best-effort: ignore storage errors so UI doesn't get stuck
-        await supabase.storage.from(PHOTOS_BUCKET).remove([path]).catch(() => {});
-      }
+      if (path) await supabase.storage.from(PHOTOS_BUCKET).remove([path]);
 
       removeLocally(active.id);
-      if (active.id !== existing.id) removeLocally(existing.id);
+      if (existing?.id && existing.id !== active.id) removeLocally(existing.id);
 
       closeViewer();
       toast({ title: "Deleted", description: "Your photo was removed." });
@@ -228,7 +211,6 @@ function RightPhotoRail({
           created_at: r.created_at || new Date().toISOString(),
           description: r.description ?? r.caption ?? null,
           location: r.location ?? null,
-          category: r.category ?? null,
         })) as PhotoItem[];
 
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
@@ -255,7 +237,7 @@ function RightPhotoRail({
 
     load();
 
-    // also refresh on DELETE so UI stays in sync
+    /* also refresh on DELETE so removed photos don't pop back after refresh */
     const ch = supabase
       .channel("rail-vibe-photos")
       .on(
@@ -272,7 +254,7 @@ function RightPhotoRail({
 
     const onOptimistic = async (e: Event) => {
       // @ts-ignore
-      const { user_id, photo_url, description, location, category } = e.detail || {};
+      const { user_id, photo_url, description, location } = e.detail || {};
       if (!user_id || !photo_url) return;
       try {
         const { data: p } = await supabase
@@ -290,7 +272,6 @@ function RightPhotoRail({
             created_at: new Date().toISOString(),
             description: description || null,
             location: location || null,
-            category: category || null,
             profile: (p as RailProfile) || null,
           },
           ...prev,
@@ -315,6 +296,43 @@ function RightPhotoRail({
     };
   }, [limit, reloadToken]);
 
+  /* GROUP: one row per creator with their photos from the last 24h */
+  const groups: PhotoGroup[] = (() => {
+    const now = Date.now();
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+    const map = new Map<string, PhotoGroup>();
+
+    for (const it of items) {
+      const ts = new Date(it.created_at).getTime();
+      if (isNaN(ts) || ts < dayAgo) continue; // 24h window
+
+      const key = it.user_id;
+      const name = displayName(it.profile);
+      if (!map.has(key)) {
+        map.set(key, {
+          user_id: it.user_id,
+          profile: it.profile ?? null,
+          name,
+          photos: [],
+          latestAt: ts,
+        });
+      }
+      const g = map.get(key)!;
+      g.photos.push(it);
+      if (ts > g.latestAt) g.latestAt = ts;
+    }
+
+    const arr = Array.from(map.values()).map((g) => ({
+      ...g,
+      photos: g.photos.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ),
+    }));
+    arr.sort((a, b) => b.latestAt - a.latestAt);
+    return arr;
+  })();
+
   return (
     <aside className="space-y-4">
       <div className="bg-card/60 backdrop-blur-xl rounded-2xl border border-border/50 shadow-2xl p-4">
@@ -337,64 +355,66 @@ function RightPhotoRail({
               Loading photos…
             </div>
           )}
-          {!loading && items.length === 0 && (
+
+          {!loading && groups.length === 0 && (
             <div className="py-10 text-center text-muted-foreground text-sm">
-              No photos yet
+              No recent photos
             </div>
           )}
 
-          {items.map((ph) => {
-            const person = ph.profile;
-            const name = displayName(person);
-            const slug = slugFor(person);
+          {/* grouped: one row per creator (mobile + desktop) */}
+          {groups.map((g) => {
+            const slug = slugFor(g.profile);
+            const avatar = g.profile?.avatar_url || null;
             return (
-              <button
-                key={ph.id}
-                onClick={() => openViewer(ph)}
-                className="relative aspect-square bg-muted/40 rounded-xl border border-border/40 overflow-hidden group text-left"
-                title="Open photo"
+              <div
+                key={`grp_${g.user_id}`}
+                className="rounded-xl border border-border/40 bg-muted/30 p-3"
               >
-                <img
-                  src={ph.photo_url}
-                  alt={name}
-                  loading="lazy"
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                />
-
-                {/* Bottom caption row (avatar + name + desc) */}
-                <div className="absolute inset-x-0 bottom-0 px-2 pb-2 pt-10 bg-gradient-to-t from-black/60 via-black/10 to-transparent">
-                  <div className="flex items-end gap-2">
-                    <Link
-                      to={slug ? `/creator/${slug}` : "#"}
-                      onClick={(e) => e.stopPropagation()}
-                      className="shrink-0 w-8 h-8 rounded-full border border-white/40 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
-                      title={name}
-                    >
-                      {person?.avatar_url ? (
-                        <img
-                          src={person.avatar_url}
-                          alt={name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-white text-xs font-semibold">
-                          {name?.charAt(0).toUpperCase()}
-                        </span>
-                      )}
-                    </Link>
-                    <div className="min-w-0">
-                      <p className="text-xs text-white/95 font-medium truncate">
-                        {name}
-                      </p>
-                      {ph.description && (
-                        <p className="text-[11px] leading-tight text-white/90 line-clamp-2 break-words">
-                          {ph.description}
-                        </p>
-                      )}
-                    </div>
+                {/* header: avatar + name; show count on mobile only */}
+                <div className="flex items-center gap-2 mb-2">
+                  <Link
+                    to={slug ? `/creator/${slug}` : "#"}
+                    className="shrink-0 w-8 h-8 rounded-full border border-white/40 overflow-hidden bg-background/60 backdrop-blur flex items-center justify-center"
+                    title={g.name}
+                  >
+                    {avatar ? (
+                      <img src={avatar} alt={g.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-white text-xs font-semibold">
+                        {g.name.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </Link>
+                  <div className="min-w-0">
+                    <p className="text-xs text-white/95 font-medium truncate">
+                      {g.name}{" "}
+                      <span className="text-white/60 lg:hidden">
+                        • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
+                      </span>
+                    </p>
                   </div>
                 </div>
-              </button>
+
+                {/* horizontal scroller of that creator's last-24h photos */}
+                <div className="flex gap-2 overflow-x-auto hide-scroll snap-x">
+                  {g.photos.map((ph) => (
+                    <button
+                      key={ph.id}
+                      onClick={() => openViewer(ph)}
+                      className="snap-start shrink-0 w-[140px] h-[140px] lg:w-[150px] lg:h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
+                      title="Open photo"
+                    >
+                      <img
+                        src={ph.photo_url}
+                        alt={g.name}
+                        loading="lazy"
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -406,7 +426,7 @@ function RightPhotoRail({
           {!!active && (
             <div className="relative">
               <div className="absolute top-2 right-2 z-10 flex gap-2">
-                {currentUserId && (
+                {currentUserId && active.user_id === currentUserId && (
                   <Button
                     variant="destructive"
                     size="icon"
@@ -503,7 +523,6 @@ const Explore = () => {
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
-  const [photoCategory, setPhotoCategory] = useState("general"); // NEW
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -758,7 +777,6 @@ const Explore = () => {
         user_id: user.id,
         photo_url,
         description: photoDescription.trim(),
-        category: (photoCategory || "general").toLowerCase(), // NEW
       };
       if (photoLocation.trim()) payload.location = photoLocation.trim();
 
@@ -774,7 +792,6 @@ const Explore = () => {
             photo_url,
             description: photoDescription.trim(),
             location: photoLocation.trim() || null,
-            category: (photoCategory || "general").toLowerCase(), // NEW
           },
         })
       );
@@ -787,7 +804,6 @@ const Explore = () => {
       setFile(null);
       setPhotoDescription("");
       setPhotoLocation("");
-      setPhotoCategory("general");
       setUploadOpen(false);
     } catch (e: any) {
       console.error(e);
@@ -892,7 +908,7 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): ONLY the Photos rail */}
+          {/* RIGHT (DESKTOP): grouped Photos rail */}
           <div className="lg:col-span-3 hidden lg:block">
             <RightPhotoRail
               title="Splikz Photos"
@@ -968,21 +984,6 @@ const Explore = () => {
                 placeholder="City, venue, etc."
               />
             </div>
-
-            {/* NEW: Category */}
-            <div className="grid gap-2">
-              <Label htmlFor="cat">Category</Label>
-              <select
-                id="cat"
-                value={photoCategory}
-                onChange={(e) => setPhotoCategory(e.target.value)}
-                className="h-10 rounded-md border bg-background px-3 text-sm"
-              >
-                <option value="general">General</option>
-                <option value="food">Food</option>
-                {/* add more categories any time */}
-              </select>
-            </div>
           </div>
 
           <DialogFooter>
@@ -1009,4 +1010,3 @@ const Explore = () => {
 };
 
 export default Explore;
-```
