@@ -146,25 +146,66 @@ export default function RightActivityRail({
       return arr;
     }
 
-    async function loadFromHighlights(): Promise<Activity[]> {
+    // normalize kinds coming from highlights
+    const normalizeKind = (k?: string | null): ActivityKind | null => {
+      const s = (k || "").toLowerCase();
+      if (s === "video_post" || s === "video" || s === "splik") return "video_post";
+      if (s === "prayer_post" || s === "prayer" || s === "prayer_request" || s === "testimony")
+        return "prayer_post";
+      if (s === "photo_post" || s === "photo" || s === "photo_upload" || s === "image_post")
+        return "photo_post";
+      return null;
+    };
+
+    async function loadFromHighlightsActive(): Promise<Activity[]> {
       const { data, error } = await supabase
         .from("site_highlights_active")
         .select("id, user_id, kind, created_at")
-        .gt("created_at", sinceISO) // keep window small server-side
-        .in("kind", includeKinds as any)
+        .gt("created_at", sinceISO)
         .order("created_at", { ascending: false })
         .limit(limit);
 
       if (error) throw error;
 
-      const rows = ((data ?? []) as any[])
-        .map((r) => ({
-          id: r.id as string,
-          user_id: r.user_id ?? null,
-          kind: (r.kind || "") as ActivityKind,
-          created_at: r.created_at as string,
-        }))
-        .filter((r) => includeKinds.includes(r.kind));
+      const rows: Activity[] = (data ?? [])
+        .map((r: any) => {
+          const kind = normalizeKind(r.kind);
+          if (!kind || !includeKinds.includes(kind)) return null;
+          return {
+            id: String(r.id),
+            user_id: r.user_id ?? null,
+            kind,
+            created_at: String(r.created_at),
+          } as Activity;
+        })
+        .filter(Boolean) as Activity[];
+
+      return rows;
+    }
+
+    // Try legacy "site_highlights" if *_active isn't available
+    async function loadFromHighlightsLegacy(): Promise<Activity[]> {
+      const { data, error } = await supabase
+        .from("site_highlights")
+        .select("id, user_id, kind, created_at")
+        .gt("created_at", sinceISO)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
+
+      const rows: Activity[] = (data ?? [])
+        .map((r: any) => {
+          const kind = normalizeKind(r.kind);
+          if (!kind || !includeKinds.includes(kind)) return null;
+          return {
+            id: String(r.id),
+            user_id: r.user_id ?? null,
+            kind,
+            created_at: String(r.created_at),
+          };
+        })
+        .filter(Boolean) as Activity[];
 
       return rows;
     }
@@ -254,7 +295,23 @@ export default function RightActivityRail({
 
     async function load() {
       try {
-        const rows = await loadFromHighlights().catch(fallbackQuery);
+        // try highlights (active), then legacy, then base tables
+        let rows: Activity[] = [];
+        try {
+          rows = await loadFromHighlightsActive();
+        } catch {
+          // ignore
+        }
+        if (!rows.length) {
+          try {
+            rows = await loadFromHighlightsLegacy();
+          } catch {
+            // ignore
+          }
+        }
+        if (!rows.length) {
+          rows = await fallbackQuery();
+        }
 
         // Build stable signature from raw rows; if unchanged, skip rerender
         const sig = JSON.stringify(rows.map((r) => [r.user_id, r.kind, r.id]));
@@ -279,12 +336,32 @@ export default function RightActivityRail({
 
     load();
 
-    // realtime: any changes to highlights should refresh
+    // realtime: refresh when any source table changes
     const channel = supabase
       .channel("right_activity_rail_grouped")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "site_highlights" },
+        () => load()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "site_highlights_active" },
+        () => load()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "vibe_photos" },
+        () => load()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "spliks" },
+        () => load()
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "prayers" },
         () => load()
       )
       .subscribe();
@@ -293,7 +370,8 @@ export default function RightActivityRail({
       alive = false;
       supabase.removeChannel(channel);
     };
-  }, [includeKinds, limit, profiles]);
+  // IMPORTANT: do NOT depend on `profiles` here (avoids infinite re-runs)
+  }, [includeKinds, limit]);
 
   const openModalFor = (g: Grouped) => {
     setActiveGroup(g);
