@@ -362,7 +362,7 @@ function RightPhotoRail({
             </div>
           )}
 
-          {/* grouped: one row per creator (mobile + desktop) */}
+          {/* grouped: one row per creator */}
           {groups.map((g) => {
             const slug = slugFor(g.profile);
             const avatar = g.profile?.avatar_url || null;
@@ -371,7 +371,7 @@ function RightPhotoRail({
                 key={`grp_${g.user_id}`}
                 className="rounded-xl border border-border/40 bg-muted/30 p-3"
               >
-                {/* header: avatar + name; show count on mobile only */}
+                {/* header: avatar + name */}
                 <div className="flex items-center gap-2 mb-2">
                   <Link
                     to={slug ? `/creator/${slug}` : "#"}
@@ -389,7 +389,7 @@ function RightPhotoRail({
                   <div className="min-w-0">
                     <p className="text-xs text-white/95 font-medium truncate">
                       {g.name}{" "}
-                      <span className="text-white/60 lg:hidden">
+                      <span className="text-white/60">
                         • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
                       </span>
                     </p>
@@ -402,7 +402,7 @@ function RightPhotoRail({
                     <button
                       key={ph.id}
                       onClick={() => openViewer(ph)}
-                      className="snap-start shrink-0 w-[140px] h-[140px] lg:w-[150px] lg:h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
+                      className="snap-start shrink-0 w-[140px] h-[140px] sm:w-[150px] sm:h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
                       title="Open photo"
                     >
                       <img
@@ -509,7 +509,7 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed (no Nearby) + Splikz Photos ONLY
+   PAGE: Home feed + Splikz Photos - Mobile mirrors Desktop
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -830,7 +830,7 @@ const Explore = () => {
             <div>
               <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
               <p className="text-muted-foreground">
-                Your video feed • Splikz Photos on the side (invisible scroll)
+                Your video feed • Splikz Photos on the side
               </p>
             </div>
             <div className="flex gap-2">
@@ -854,10 +854,10 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* GRID: Desktop side-by-side; Mobile stacked */}
+      {/* GRID: Desktop and Mobile both use side-by-side layout */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* LEFT / TOP: HOME FEED */}
+          {/* LEFT: HOME FEED */}
           <div className="lg:col-span-9 space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -870,7 +870,7 @@ const Explore = () => {
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    We’ll show the latest as soon as they’re posted.
+                    We'll show the latest as soon as they're posted.
                   </p>
                   <div className="flex gap-2 justify-center">
                     <Button onClick={() => fetchHomeFeed()} variant="outline">
@@ -908,34 +908,14 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): grouped Photos rail */}
-          <div className="lg:col-span-3 hidden lg:block">
+          {/* RIGHT: Photos rail (visible on both desktop and mobile) */}
+          <div className="lg:col-span-3">
             <RightPhotoRail
               title="Splikz Photos"
               currentUserId={user?.id}
               reloadToken={reloadToken}
             />
           </div>
-        </div>
-
-        {/* MOBILE: Photos rail full-width below feed */}
-        <div className="mt-10 lg:hidden">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl font-semibold">Splikz Photos</h2>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setUploadOpen(true)}
-            >
-              <Camera className="h-4 w-4 mr-1" /> Upload
-            </Button>
-          </div>
-          <RightPhotoRail
-            title="Latest photos"
-            maxListHeight="60vh"
-            reloadToken={reloadToken}
-            currentUserId={user?.id}
-          />
         </div>
       </div>
 
