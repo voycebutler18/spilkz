@@ -1,3 +1,4 @@
+
 // src/pages/Explore.tsx
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import RightActivityRail from "@/components/RightActivityRail";
+import RightActivityRail from "@/components/RightActivityRail"; // NEW
 
 /* ──────────────────────────────────────────────────────────────────────────
    Config
@@ -387,8 +388,6 @@ function RightPhotoRail({
                     {avatar ? (
                       <img
                         src={avatar}
-                        srcSet={`${avatar} 1x, ${avatar} 2x, ${avatar} 3x`}
-                        sizes="32px"
                         alt={g.name}
                         className="w-full h-full object-cover"
                       />
@@ -420,8 +419,6 @@ function RightPhotoRail({
                     >
                       <img
                         src={ph.photo_url}
-                        srcSet={`${ph.photo_url} 1x, ${ph.photo_url} 2x, ${ph.photo_url} 3x`}
-                        sizes="(max-width: 640px) 140px, 150px"
                         alt={g.name}
                         loading="lazy"
                         className="w-full h-full object-cover"
@@ -465,8 +462,6 @@ function RightPhotoRail({
 
               <img
                 src={active.photo_url}
-                srcSet={`${active.photo_url} 1x, ${active.photo_url} 2x, ${active.photo_url} 3x`}
-                sizes="(max-width: 1200px) 100vw, 1200px"
                 alt={displayName(active.profile)}
                 className="w-full max-h-[75vh] object-contain bg-black"
               />
@@ -485,8 +480,6 @@ function RightPhotoRail({
                     {active.profile?.avatar_url ? (
                       <img
                         src={active.profile.avatar_url}
-                        srcSet={`${active.profile.avatar_url} 1x, ${active.profile.avatar_url} 2x, ${active.profile.avatar_url} 3x`}
-                        sizes="40px"
                         alt={displayName(active.profile)}
                         className="w-full h-full object-cover"
                       />
@@ -528,14 +521,9 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed + Splikz Photos — Mirror mode for mobile
+   PAGE: Home feed + Splikz Photos — Mobile mirrors Desktop right rail
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
-  // Mirror desktop on mobile by scaling the whole grid
-  const DESKTOP_BASE_WIDTH = 1200; // match the width of your desktop "content area"
-  const [mirrorScale, setMirrorScale] = useState(1);
-  const [isMobile, setIsMobile] = useState(false);
-
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -551,24 +539,6 @@ const Explore = () => {
 
   const { toast } = useToast();
   const feedRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const update = () => {
-      const w = window.innerWidth;
-      const mobile = w < 1024;
-      setIsMobile(mobile);
-      if (mobile) {
-        // clamp the scale so it doesn't get too tiny
-        const s = Math.min(1, Math.max(0.70, w / DESKTOP_BASE_WIDTH));
-        setMirrorScale(s);
-      } else {
-        setMirrorScale(1);
-      }
-    };
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
@@ -765,6 +735,24 @@ const Explore = () => {
 
   useAutoplayIn(feedRef, [feedSpliks]);
 
+  const handleShare = async (splikId: string) => {
+    const url = `${window.location.origin}/video/${splikId}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Check out this Splik!", url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast({ title: "Link copied!", description: "Copied to clipboard" });
+      }
+    } catch {
+      toast({
+        title: "Failed to share",
+        description: "Please try again",
+        variant: "destructive",
+      });
+    }
+  };
+
   const uploadPhoto = async () => {
     if (!user) {
       toast({
@@ -829,3 +817,221 @@ const Explore = () => {
         })
       );
       setReloadToken((n) => n + 1);
+
+      toast({
+        title: "Photo posted!",
+        description: "Your photo is live in Splikz Photos",
+      });
+      setFile(null);
+      setPhotoDescription("");
+      setPhotoLocation("");
+      setUploadOpen(false);
+    } catch (e: any) {
+      console.error(e);
+      const msg = e?.message || "";
+      toast({
+        title: "Upload failed",
+        description:
+          msg.includes("not found") || msg.includes("No such bucket")
+            ? `Storage bucket "${PHOTOS_BUCKET}" not found.`
+            : msg || "Please try again",
+        variant: "destructive",
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* HEADER */}
+      <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
+        <div className="container">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
+              <p className="text-muted-foreground">
+                Your video feed • Splikz Photos on the side
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchHomeFeed(true)}
+                disabled={refreshing || loading}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                />
+                Update
+              </Button>
+              <Button size="sm" onClick={() => setUploadOpen(true)}>
+                <Camera className="h-4 w-4" />
+                Upload Photo
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* GRID */}
+      <div className="container py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* LEFT: HOME FEED */}
+          <div className="lg:col-span-9 space-y-6">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
+                <p className="text-sm text-muted-foreground">Loading videos…</p>
+              </div>
+            ) : feedSpliks.length === 0 ? (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
+                  <p className="text-muted-foreground mb-4">
+                    We'll show the latest as soon as they're posted.
+                  </p>
+                  <div className="flex gap-2 justify-center">
+                    <Button onClick={() => fetchHomeFeed()} variant="outline">
+                      Refresh
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div ref={feedRef} className="space-y-8">
+                {feedSpliks.map((s) => (
+                  <SplikCard
+                    key={s.id}
+                    splik={s}
+                    onReact={() => {}}
+                    onShare={() => {
+                      const url = `${window.location.origin}/video/${s.id}`;
+                      if (navigator.share)
+                        navigator
+                          .share({ title: "Check out this Splik!", url })
+                          .catch(() => {});
+                      else
+                        navigator.clipboard
+                          .writeText(url)
+                          .then(() =>
+                            toast({
+                              title: "Link copied!",
+                              description: "Copied to clipboard",
+                            })
+                          );
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT (DESKTOP): Activity + Photos */}
+          <div className="lg:col-span-3 hidden lg:block space-y-6">
+            <RightActivityRail />
+            <RightPhotoRail
+              title="Splikz Photos"
+              currentUserId={user?.id}
+              reloadToken={reloadToken}
+            />
+          </div>
+        </div>
+
+        {/* MOBILE MIRROR of the right rail (stacked) */}
+        <div className="mt-10 lg:hidden space-y-6">
+          <RightActivityRail />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xl font-semibold">Splikz Photos</h2>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setUploadOpen(true)}
+              >
+                <Camera className="h-4 w-4 mr-1" /> Upload
+              </Button>
+            </div>
+            <RightPhotoRail
+              title="Latest photos"
+              maxListHeight="60vh"
+              reloadToken={reloadToken}
+              currentUserId={user?.id}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Upload Photo dialog */}
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Upload a photo</DialogTitle>
+            <DialogDescription>
+              Write a short description (required). Add a location if you want.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="file">Choose image</Label>
+              <Input
+                id="file"
+                type="file"
+                accept="image/*"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="desc">Description</Label>
+              <Textarea
+                id="desc"
+                value={photoDescription}
+                onChange={(e) =>
+                  setPhotoDescription(e.target.value.slice(0, 200))
+                }
+                placeholder="Say something about this photo (max 200 chars)"
+              />
+              <div className="text-xs text-muted-foreground text-right">
+                {photoDescription.length}/200
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="loc">Location (optional)</Label>
+              <Input
+                id="loc"
+                value={photoLocation}
+                onChange={(e) => setPhotoLocation(e.target.value.slice(0, 80))}
+                placeholder="City, venue, etc."
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setUploadOpen(false)}
+              disabled={uploading}
+            >
+              Cancel
+            </Button>
+            <Button onClick={uploadPhoto} disabled={uploading}>
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Camera className="h-4 w-4 mr-2" />
+              )}
+              Post Photo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default Explore;
