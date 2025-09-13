@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+  import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -39,7 +39,7 @@ import {
   Shield,
   Trash2,
   Plus,
-  Eye,
+  // Eye removed
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -68,9 +68,9 @@ interface SplikRow {
   video_url: string | null;
   thumbnail_url: string | null;
   created_at: string;
-  likes_count?: number | null;      // now represents hype (🔥) count
+  likes_count?: number | null; // now represents hype (🔥) count
   comments_count?: number | null;
-  views_count?: number | null;
+  // views_count removed
   trim_start?: number | null;
   trim_end?: number | null;
   profile?: {
@@ -419,14 +419,10 @@ function CreatorFeedItem({
                 {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
               </button>
 
-              {/* Stats bar */}
+              {/* Stats bar (likes/hype + comments only) */}
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
                 <div className="flex items-center justify-between text-white text-sm">
                   <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1">
-                      <Eye className="h-4 w-4" />
-                      <span>{splik.views_count || 0}</span>
-                    </div>
                     <div className="flex items-center gap-1">
                       <Heart className="h-4 w-4" />
                       <span>{splik.likes_count || 0}</span>
