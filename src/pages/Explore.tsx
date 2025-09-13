@@ -76,7 +76,7 @@ type Splik = {
   user_id: string;
   title?: string | null;
   description?: string | null;
-  video_url: string;
+  video_url: string | null;        // ← nullable: photos will be NULL here
   thumbnail_url?: string | null;
   created_at?: string;
   trim_start?: number | null;
@@ -84,6 +84,7 @@ type Splik = {
   likes_count?: number;
   tag?: string | null;
   boost_score?: number | null;
+  mime_type?: string | null;       // ← helps distinguish video vs photo
   profile?: Profile;
 };
 
@@ -176,9 +177,11 @@ function PhotoRail({
       if (existing?.id && existing.id !== active.id) removeLocally(existing.id);
 
       closeViewer();
+      // @ts-ignore
       toast({ title: "Deleted", description: "Your photo was removed." });
     } catch (e: any) {
       console.error(e);
+      // @ts-ignore
       toast({ title: "Delete failed", description: e?.message || "Please try again", variant: "destructive" });
     }
   };
@@ -465,7 +468,7 @@ const Explore = () => {
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
-  const [photoLocation, setPhotoLocation] = useState("");
+  the const [photoLocation, setPhotoLocation] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -486,15 +489,23 @@ const Explore = () => {
       showRefreshToast ? setRefreshing(true) : setLoading(true);
 
       const limit = isMobile ? 30 : 100; // lighter payload for mobile stability
+
+      // 🔴 IMPORTANT: fetch only *videos* for the main feed
+      // Either video_url is NOT NULL OR mime_type starts with 'video/'
       const { data: spliksData, error } = await supabase
         .from("spliks")
         .select("*")
+        .or("video_url.not.is.null,mime_type.ilike.video/%")
         .order("created_at", { ascending: false })
         .limit(limit);
+
       if (error) throw error;
 
       if (spliksData && spliksData.length) {
-        const rows = spliksData as Splik[];
+        const rows = (spliksData as Splik[]).filter(
+          (r) => !!r.video_url || (r.mime_type?.startsWith("video/") ?? false)
+        );
+
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         const byId: Record<string, Profile> = {};
         if (userIds.length) {
@@ -502,9 +513,10 @@ const Explore = () => {
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
         const withProfiles = rows.map((r) => ({ ...r, profile: byId[r.user_id] }));
+
         setFeedSpliks(withProfiles);
-        preconnect(withProfiles[0]?.video_url);
-        warmFirstVideoMeta(withProfiles[0]?.video_url);
+        preconnect(withProfiles[0]?.video_url || null);
+        warmFirstVideoMeta(withProfiles[0]?.video_url || null);
       } else {
         setFeedSpliks([]);
       }
@@ -605,7 +617,7 @@ const Explore = () => {
           });
           queueMicrotask(drive);
         },
-        { root: null, threshold: [0, 0.25, 0.45, 0.6, 0.75, 1] }
+        { root: null, threshold: [0, 0, 0.25, 0.45, 0.6, 0.75, 1] }
       );
 
       const init = () => {
@@ -753,7 +765,7 @@ const Explore = () => {
       {/* LAYOUT */}
       <div className="max-w-7xl mx-auto py-4 md:py-8 px-4">
         <div className="flex flex-col lg:flex-row lg:gap-8">
-          {/* MAIN FEED */}
+          {/* MAIN FEED (videos only) */}
           <div className="flex-1 lg:max-w-3xl space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
