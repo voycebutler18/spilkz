@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import RightActivityRail from "@/components/RightActivityRail"; // NEW
 
 /* ──────────────────────────────────────────────────────────────────────────
    Config
@@ -106,7 +107,12 @@ type PhotoGroup = {
 const displayName = (p?: RailProfile | null) => {
   if (!p) return "User";
   const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-  return p.display_name?.trim() || full || p.username?.trim() || `user_${(p.id || "").slice(0, 6) || "anon"}`;
+  return (
+    p.display_name?.trim() ||
+    full ||
+    p.username?.trim() ||
+    `user_${(p.id || "").slice(0, 6) || "anon"}`
+  );
 };
 const slugFor = (p?: RailProfile | null) =>
   p?.username ? p.username : p?.id || "";
@@ -379,7 +385,11 @@ function RightPhotoRail({
                     title={g.name}
                   >
                     {avatar ? (
-                      <img src={avatar} alt={g.name} className="w-full h-full object-cover" />
+                      <img
+                        src={avatar}
+                        alt={g.name}
+                        className="w-full h-full object-cover"
+                      />
                     ) : (
                       <span className="text-white text-xs font-semibold">
                         {g.name.charAt(0).toUpperCase()}
@@ -390,7 +400,8 @@ function RightPhotoRail({
                     <p className="text-xs text-white/95 font-medium truncate">
                       {g.name}{" "}
                       <span className="text-white/60">
-                        • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
+                        • {g.photos.length} photo
+                        {g.photos.length > 1 ? "s" : ""}
                       </span>
                     </p>
                   </div>
@@ -509,7 +520,7 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed + Splikz Photos - Mobile mirrors Desktop
+   PAGE: Home feed + Splikz Photos — Mobile mirrors Desktop right rail
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -530,7 +541,9 @@ const Explore = () => {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) =>
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, session) =>
       setUser(session?.user ?? null)
     );
     return () => subscription.unsubscribe();
@@ -552,7 +565,10 @@ const Explore = () => {
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         const byId: Record<string, Profile> = {};
         if (userIds.length) {
-          const { data: profs } = await supabase.from("profiles").select("*").in("id", userIds);
+          const { data: profs } = await supabase
+            .from("profiles")
+            .select("*")
+            .in("id", userIds);
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
         const withProfiles = rows.map((r) => ({ ...r, profile: byId[r.user_id] }));
@@ -568,7 +584,11 @@ const Explore = () => {
       }
     } catch (e) {
       console.error("Home feed load error:", e);
-      toast({ title: "Error", description: "Failed to load your feed", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to load your feed",
+        variant: "destructive",
+      });
       setFeedSpliks([]);
     } finally {
       setLoading(false);
@@ -676,7 +696,7 @@ const Explore = () => {
         (entries) => {
           entries.forEach((e) => {
             videoVisibility.set(
-              e.target as HTMLVideoElement,
+              (e.target as HTMLVideoElement),
               e.intersectionRatio
             );
           });
@@ -686,7 +706,7 @@ const Explore = () => {
       );
 
       const init = () => {
-        allVideos().forEach((v) => {
+        Array.from(host.querySelectorAll("video")).forEach((v: HTMLVideoElement) => {
           if (!v.hasAttribute("data-mobile-init")) {
             setup(v);
             v.setAttribute("data-mobile-init", "1");
@@ -705,7 +725,7 @@ const Explore = () => {
       return () => {
         io.disconnect();
         mo.disconnect();
-        pauseAll();
+        Array.from(host.querySelectorAll("video")).forEach((v) => v.pause());
         videoVisibility.clear();
         currentPlayingVideo = null;
       };
@@ -854,7 +874,7 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* GRID: Desktop and Mobile both use side-by-side layout */}
+      {/* GRID */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* LEFT: HOME FEED */}
@@ -908,12 +928,36 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT: Photos rail (visible on both desktop and mobile) */}
-          <div className="lg:col-span-3">
+          {/* RIGHT (DESKTOP): Activity + Photos */}
+          <div className="lg:col-span-3 hidden lg:block space-y-6">
+            <RightActivityRail />
             <RightPhotoRail
               title="Splikz Photos"
               currentUserId={user?.id}
               reloadToken={reloadToken}
+            />
+          </div>
+        </div>
+
+        {/* MOBILE MIRROR of the right rail (stacked) */}
+        <div className="mt-10 lg:hidden space-y-6">
+          <RightActivityRail />
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xl font-semibold">Splikz Photos</h2>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setUploadOpen(true)}
+              >
+                <Camera className="h-4 w-4 mr-1" /> Upload
+              </Button>
+            </div>
+            <RightPhotoRail
+              title="Latest photos"
+              maxListHeight="60vh"
+              reloadToken={reloadToken}
+              currentUserId={user?.id}
             />
           </div>
         </div>
