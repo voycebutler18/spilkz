@@ -9,8 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  Upload, X, Loader2, Scissors, Play, Pause, Volume2, VolumeX,
-  AlertCircle, Film, Zap, Smartphone, Info, Utensils, Image as ImageIcon,
+  Upload, X, Loader2, Scissors, Volume2, VolumeX,
+  AlertCircle, Film, Zap, Smartphone, Info, Utensils, Image as ImageIcon, Video as VideoIcon,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -148,58 +148,61 @@ async function uploadBlob(bucket: string, path: string, blob: Blob): Promise<{ p
   return { publicUrl: pub.publicUrl };
 }
 
+type MediaType = "video" | "photo";
+
 export default function VideoUploadModal({ open, onClose, onUploadComplete }: VideoUploadModalProps) {
   const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const [file, setFile] = useState<File | null>(null);
+  // === new: media type (video or photo) ===
+  const [mediaType, setMediaType] = useState<MediaType>("video");
 
-  // The thing we actually upload (mp4 if transcoded from mov)
-  const [uploadSource, setUploadSource] = useState<Blob | File | null>(null);
-  const [uploadExt, setUploadExt] = useState<string>("mp4");
-  const [uploadMime, setUploadMime] = useState<string>("video/mp4");
-  // For extracting frames
-  const [frameSource, setFrameSource] = useState<Blob | File | null>(null);
-
+  // Shared
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-
   const [isFood, setIsFood] = useState(false);
   const [mood, setMood] = useState<string>("");
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadSpeedMBps, setUploadSpeedMBps] = useState(0);
-  const [uploadETA, setUploadETA] = useState<string | null>(null);
-
+  // Video state
+  const [file, setFile] = useState<File | null>(null);
+  const [uploadSource, setUploadSource] = useState<Blob | File | null>(null);
+  const [uploadExt, setUploadExt] = useState<string>("mp4");
+  const [uploadMime, setUploadMime] = useState<string>("video/mp4");
+  const [frameSource, setFrameSource] = useState<Blob | File | null>(null);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [originalDuration, setOriginalDuration] = useState<number>(0);
   const [processingVideo, setProcessingVideo] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-
-  // 3s window (we clamp to 3.0s automatically)
   const [trimRange, setTrimRange] = useState<[number, number]>([0, 3]);
-
   const [showTrimmer, setShowTrimmer] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
-
-  // Cover time (selected inside the video)
   const [coverTime, setCoverTime] = useState(1.5);
-
   const [transcoding, setTranscoding] = useState(false);
   const [transcodeProgress, setTranscodeProgress] = useState(0);
-  const ffmpegRef = useRef<FFmpeg | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
+  // Photo state
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+
+  // Upload progress
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeedMBps, setUploadSpeedMBps] = useState(0);
+  const [uploadETA, setUploadETA] = useState<string | null>(null);
+
+  const ffmpegRef = useRef<FFmpeg | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const seekBarRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const animationRef = useRef<number>();
-  const { toast } = useToast();
 
-  const acceptedFormats = ".mp4,.mov,.flv,.webm,.avi,.mkv";
+  const acceptedVideoFormats = ".mp4,.mov,.flv,.webm,.avi,.mkv";
+  const acceptedImageFormats = ".jpg,.jpeg,.png,.webp,.gif";
   const maxFileSize = isMobile ? MOBILE_MAX_SIZE : DESKTOP_MAX_SIZE;
 
   const isMOV = (f: File | null) =>
@@ -214,7 +217,12 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       case "flv": return "video/x-flv";
       case "avi": return "video/x-msvideo";
       case "mkv": return "video/x-matroska";
-      default: return "video/mp4";
+      case "jpg":
+      case "jpeg": return "image/jpeg";
+      case "png": return "image/png";
+      case "webp": return "image/webp";
+      case "gif": return "image/gif";
+      default: return "application/octet-stream";
     }
   };
 
@@ -234,28 +242,26 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     };
   }, []);
 
-  // === NEW: a single place to close + redirect to Profile ==================
+  // === navigate to profile (unchanged behavior) ===
   const goToProfile = useCallback(async () => {
-    // make sure we have a uid even if state hasn't caught up
     let uid = currentUser?.id as string | undefined;
     if (!uid) {
       const { data } = await supabase.auth.getUser();
       uid = data.user?.id;
     }
     onClose();
-    // let the dialog unmount before navigating
     setTimeout(() => {
       navigate(uid ? `/profile/${uid}` : "/profile");
     }, 0);
   }, [currentUser?.id, navigate, onClose]);
-  // ========================================================================
 
   useEffect(() => {
     return () => {
       if (videoPreview) URL.revokeObjectURL(videoPreview);
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [videoPreview]);
+  }, [videoPreview, imagePreview]);
 
   const getFFmpeg = useCallback(async () => {
     if (ffmpegRef.current) return ffmpegRef.current;
@@ -299,25 +305,20 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     }
   }, [getFFmpeg]);
 
-  // NEW: Trim video to exactly 3 seconds
+  // Trim video to exactly 3 seconds
   const trimVideoToThreeSeconds = useCallback(async (sourceFile: Blob | File, startTime: number): Promise<Blob> => {
     setTranscodeProgress(1);
-    
     try {
       const ffmpeg = await getFFmpeg();
       const inputName = "input.mp4";
       const outputName = "trimmed.mp4";
-      
-      // Write the source file
       await ffmpeg.writeFile(inputName, await fetchFile(sourceFile));
-      
-      // Trim to exactly 3 seconds starting from startTime
       await ffmpeg.exec([
         "-i", inputName,
-        "-ss", startTime.toString(), // Start time
-        "-t", "3.0", // Duration (exactly 3 seconds)
-        "-vf", "scale='min(1280,iw)':-2", // Scale if needed
-        "-r", "30", // Frame rate
+        "-ss", startTime.toString(),
+        "-t", "3.0",
+        "-vf", "scale='min(1280,iw)':-2",
+        "-r", "30",
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-crf", "28",
@@ -325,10 +326,9 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         "-ac", "1",
         "-b:a", "96k",
         "-movflags", "+faststart",
-        "-avoid_negative_ts", "make_zero", // Handle timing issues
+        "-avoid_negative_ts", "make_zero",
         outputName
       ]);
-      
       const data = (await ffmpeg.readFile(outputName)) as Uint8Array;
       return new Blob([data], { type: "video/mp4" });
     } finally {
@@ -336,10 +336,8 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     }
   }, [getFFmpeg]);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
+  // === VIDEO: select handler (more resilient) ===
+  const handleVideoSelect = useCallback(async (selectedFile: File) => {
     setVideoError(null);
     setVideoReady(false);
     setProcessingVideo(true);
@@ -367,33 +365,58 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
       setTitle(fileName);
 
-      const prepareFromUrl = async (url: string) => {
+      const safePrepareFromUrl = async (url: string) => {
         setVideoPreview(url);
+        // try to probe metadata but DON'T reject on failure
         const probe = document.createElement("video");
         probe.preload = "metadata";
         probe.src = url;
-        await new Promise<void>((resolve, reject) => {
+
+        await new Promise<void>((resolve) => {
           let settled = false;
-          const finish = (ok: boolean, err?: any) => {
+          const finish = () => {
             if (settled) return;
             settled = true;
             probe.src = "";
             probe.removeAttribute("src");
             probe.load();
-            ok ? resolve() : reject(err);
+            resolve();
           };
+          const timeout = setTimeout(() => {
+            console.warn("Video metadata timeout; proceeding with defaults.");
+            setOriginalDuration(3);
+            setShowTrimmer(false);
+            setTrimRange([0, 3]);
+            setCoverTime(1.5);
+            finish();
+          }, 20000);
+
           probe.onloadedmetadata = () => {
+            clearTimeout(timeout);
             const duration = probe.duration;
-            if (!isFinite(duration) || duration <= 0) return finish(false, new Error("Invalid video duration"));
-            setOriginalDuration(duration);
-            setShowTrimmer(duration > MAX_VIDEO_DURATION);
-            const end = Math.min(MAX_VIDEO_DURATION, duration);
-            setTrimRange([0, end]);
-            setCoverTime(Math.min(duration, end / 2));
-            finish(true);
+            if (isFinite(duration) && duration > 0) {
+              setOriginalDuration(duration);
+              const end = Math.min(MAX_VIDEO_DURATION, duration);
+              setShowTrimmer(duration > MAX_VIDEO_DURATION);
+              setTrimRange([0, end]);
+              setCoverTime(Math.min(duration, end / 2));
+            } else {
+              setOriginalDuration(3);
+              setShowTrimmer(false);
+              setTrimRange([0, 3]);
+              setCoverTime(1.5);
+            }
+            finish();
           };
-          probe.onerror = () => finish(false, new Error("Failed to read preview metadata."));
-          setTimeout(() => finish(false, new Error("Video metadata timeout")), 8000);
+          probe.onerror = () => {
+            clearTimeout(timeout);
+            console.warn("Failed to read preview metadata; proceeding with defaults.");
+            setOriginalDuration(3);
+            setShowTrimmer(false);
+            setTrimRange([0, 3]);
+            setCoverTime(1.5);
+            finish();
+          };
         });
       };
 
@@ -404,29 +427,46 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         setUploadExt("mp4");
         setUploadMime("video/mp4");
         setFrameSource(mp4Blob);
-        await prepareFromUrl(URL.createObjectURL(mp4Blob));
+        await safePrepareFromUrl(URL.createObjectURL(mp4Blob));
       } else {
         setUploadSource(selectedFile);
         const ext = (selectedFile.name.split(".").pop() || "mp4").toLowerCase();
         setUploadExt(ext);
         setUploadMime(selectedFile.type || inferMimeFromName(selectedFile.name));
         setFrameSource(selectedFile);
-        await prepareFromUrl(URL.createObjectURL(selectedFile));
+        await safePrepareFromUrl(URL.createObjectURL(selectedFile));
       }
     } catch (err: any) {
       console.error("Error processing video:", err);
       setVideoError(err?.message || "Failed to process your video.");
-      setFile(null);
-      setUploadSource(null);
-      setFrameSource(null);
-      if (videoPreview) {
-        URL.revokeObjectURL(videoPreview);
-        setVideoPreview(null);
-      }
+      // IMPORTANT: do not reset file here — keep UI out of drop zone
     } finally {
       setProcessingVideo(false);
+      setVideoReady(true);
     }
-  }, [toast, maxFileSize, videoPreview, transcodeMovToMp4]);
+  }, [toast, maxFileSize, transcodeMovToMp4]);
+
+  // === PHOTO: select handler ===
+  const handlePhotoSelect = useCallback(async (selectedFile: File) => {
+    const type = selectedFile.type || inferMimeFromName(selectedFile.name);
+    if (!/^image\//.test(type)) {
+      toast({ title: "Invalid file type", description: "Please upload JPG, PNG, WEBP or GIF", variant: "destructive" });
+      return;
+    }
+    if (selectedFile.size > maxFileSize) {
+      toast({
+        title: "File too large",
+        description: `Max file size is ${formatBytes(maxFileSize)} on ${isMobile ? "mobile" : "desktop"}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setImageFile(selectedFile);
+    const fileName = selectedFile.name.replace(/\.[^/.]+$/, "");
+    if (!title) setTitle(fileName);
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(URL.createObjectURL(selectedFile));
+  }, [imagePreview, maxFileSize, title, toast]);
 
   useEffect(() => {
     if (!videoRef.current || !videoPreview) return;
@@ -541,7 +581,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
 
     const savedEnd = Math.min(start + MAX_VIDEO_DURATION, end, originalDuration);
     const mid = start + Math.min(savedEnd - start, MAX_VIDEO_DURATION) / 2;
-    // keep cover inside the saved window
     setCoverTime(Math.min(savedEnd - 0.05, Math.max(start + 0.05, mid)));
 
     if (videoRef.current) {
@@ -602,9 +641,8 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     return { publicUrl: pub.publicUrl };
   };
 
-  // === Cover selection in-video ===========================================
+  // Cover selection in-video
   const setCoverAtCurrent = () => {
-    // Clamp inside the saved 3s window
     const start = trimRange[0];
     const end = Math.min(start + MAX_VIDEO_DURATION, trimRange[1], originalDuration);
     const t = Math.min(end - 0.05, Math.max(start + 0.05, currentTime));
@@ -614,9 +652,10 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
 
   const onVideoDoubleClick = () => setCoverAtCurrent();
 
-  // ========================================================================
+  // === Upload handlers ===
 
-  const handleUpload = async () => {
+  // VIDEO upload
+  const uploadVideo = async () => {
     if (!uploadSource || !title) {
       toast({ title: "Missing information", description: "Please provide a video file and title", variant: "destructive" });
       return;
@@ -632,18 +671,16 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     setUploadProgress(1);
 
     try {
-      // Calculate the exact 3-second window
       const selectedStart = Math.min(
         Math.max(0, trimRange[0]),
         Math.max(0, originalDuration - 0.05)
       );
       const enforcedEnd = Math.min(selectedStart + MAX_VIDEO_DURATION, originalDuration);
 
-      // TRIM THE VIDEO TO EXACTLY 3 SECONDS
       toast({ title: "Processing video", description: "Trimming to exactly 3 seconds..." });
       const trimmedVideo = await trimVideoToThreeSeconds(uploadSource, selectedStart);
-      
-      const ext = "mp4"; // Always MP4 after trimming
+
+      const ext = "mp4";
       const videoPath = `${user.id}/${Date.now()}.${ext}`;
 
       const { publicUrl } = await uploadWithProgress("spliks", videoPath, trimmedVideo);
@@ -654,11 +691,10 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (baseDesc ? baseDesc + " " : "") + moodTag;
 
-      // Generate poster from the trimmed video (now the frame will be at the relative position)
+      // Poster from trimmed video (cover relative to trimmed start)
       let thumbnail_url: string | null = null;
-      let savedCoverTime = coverTime - selectedStart; // Adjust for trimmed start
+      let savedCoverTime = coverTime - selectedStart;
       try {
-        // Since the video is now trimmed, the cover time should be relative to the new start (0)
         const relativeCoverTime = Math.min(2.95, Math.max(0.05, coverTime - selectedStart));
         const posterBlob = await makePosterFromVideoSource(trimmedVideo, relativeCoverTime);
         const thumbPath = `${user.id}/${Date.now()}_poster.jpg`;
@@ -667,30 +703,26 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         savedCoverTime = relativeCoverTime;
       } catch (e) {
         console.warn("Poster generation failed:", e);
-        savedCoverTime = 1.5; // Default to middle
+        savedCoverTime = 1.5;
       }
 
       const payload: any = {
         user_id: user.id,
         title,
         description: finalDescription.trim(),
-        duration: MAX_VIDEO_DURATION, // Always 3 seconds now
-        file_size: trimmedVideo.size, // Use trimmed video size
-        mime_type: "video/mp4", // Always MP4 after processing
+        duration: MAX_VIDEO_DURATION,
+        file_size: trimmedVideo.size,
+        mime_type: "video/mp4",
         status: "active",
-        trim_start: 0, // Trimmed video starts at 0
-        trim_end: MAX_VIDEO_DURATION, // Trimmed video ends at 3
+        trim_start: 0,
+        trim_end: MAX_VIDEO_DURATION,
         is_food: isFood,
         video_path: videoPath,
         video_url: publicUrl,
         thumbnail_url,
         cover_time: savedCoverTime,
-        // Store original timing info for reference (optional - add to DB schema if needed)
-        // original_trim_start: selectedStart,
-        // original_trim_end: enforcedEnd,
       };
 
-      // ⬇️ INSERT THE VIDEO AND MIRROR IT TO ACTIVITY
       const { data: newSplik, error: dbError } = await supabase
         .from("spliks")
         .insert(payload)
@@ -698,7 +730,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         .single();
       if (dbError) throw dbError;
 
-      // also write to right_rail_feed so Activity updates (best-effort)
       try {
         await supabase.from("right_rail_feed").insert({
           user_id: user.id,
@@ -706,8 +737,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
           target_id: newSplik?.id ?? null,
           created_at: newSplik?.created_at ?? new Date().toISOString(),
         });
-
-        // optimistic ping so the rail updates instantly
         window.dispatchEvent(
           new CustomEvent("activity:append", {
             detail: {
@@ -724,31 +753,8 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
 
       setUploadProgress(100);
       toast({ title: "Upload successful!", description: "Your 3-second Splik has been saved." });
-
-      // Reset UI
-      setFile(null);
-      setUploadSource(null);
-      setUploadExt("mp4");
-      setUploadMime("video/mp4");
-      setFrameSource(null);
-      if (videoPreview) URL.revokeObjectURL(videoPreview);
-      setVideoPreview(null);
-      setTitle("");
-      setDescription("");
-      setIsFood(false);
-      setMood("");
-      setCurrentTime(0);
-      setIsPlaying(false);
-      setVideoReady(false);
-      setVideoError(null);
-      setShowTrimmer(false);
-      setTrimRange([0, 3]);
-      setCoverTime(1.5);
-      setUploadSpeedMBps(0);
-      setUploadETA(null);
-
+      resetAll();
       onUploadComplete();
-      // Use goToProfile instead of just onClose to redirect to profile
       goToProfile();
     } catch (error: any) {
       console.error("Upload error:", error);
@@ -758,14 +764,103 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     }
   };
 
+  // PHOTO upload
+  const uploadPhoto = async () => {
+    if (!imageFile || !title) {
+      toast({ title: "Missing information", description: "Please provide a photo and title", variant: "destructive" });
+      return;
+    }
+
+    const { data: { user }, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !user) {
+      toast({ title: "Session required", description: "Please log in to upload photos.", variant: "destructive" });
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setUploadProgress(1);
+
+      const ext = (imageFile.name.split(".").pop() || "jpg").toLowerCase();
+      const imagePath = `${user.id}/${Date.now()}_image.${ext}`;
+      const { publicUrl } = await uploadWithProgress("spliks", imagePath, imageFile);
+
+      const moodTag = mood ? ` #mood=${mood}` : "";
+      const finalDescription = ((description || "").trim() + " " + moodTag).trim();
+
+      const payload: any = {
+        user_id: user.id,
+        title,
+        description: finalDescription,
+        duration: 0,
+        file_size: imageFile.size,
+        mime_type: imageFile.type || inferMimeFromName(imageFile.name),
+        status: "active",
+        trim_start: null,
+        trim_end: null,
+        is_food: isFood,
+        video_path: null,
+        video_url: null,                // no video
+        thumbnail_url: publicUrl,       // use the image itself as thumbnail
+        cover_time: 0,
+      };
+
+      const { data: newSplik, error: dbError } = await supabase
+        .from("spliks")
+        .insert(payload)
+        .select("id, created_at")
+        .single();
+      if (dbError) throw dbError;
+
+      try {
+        await supabase.from("right_rail_feed").insert({
+          user_id: user.id,
+          type: "photo",
+          target_id: newSplik?.id ?? null,
+          created_at: newSplik?.created_at ?? new Date().toISOString(),
+        });
+        window.dispatchEvent(
+          new CustomEvent("activity:append", {
+            detail: {
+              id: newSplik?.id ?? `splik_${Date.now()}`,
+              user_id: user.id,
+              type: "photo",
+              created_at: newSplik?.created_at ?? new Date().toISOString(),
+            },
+          })
+        );
+      } catch (e) {
+        console.warn("right_rail_feed insert failed (non-fatal):", e);
+      }
+
+      setUploadProgress(100);
+      toast({ title: "Upload successful!", description: "Your photo has been saved." });
+      resetAll();
+      onUploadComplete();
+      goToProfile();
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      toast({ title: "Upload failed", description: error.message || "Failed to upload photo", variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (mediaType === "photo") return uploadPhoto();
+    return uploadVideo();
+  };
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      const fakeEvent = { target: { files: [droppedFile] } } as unknown as React.ChangeEvent<HTMLInputElement>;
-      handleFileSelect(fakeEvent);
+    if (!droppedFile) return;
+    if (mediaType === "photo") {
+      handlePhotoSelect(droppedFile);
+    } else {
+      handleVideoSelect(droppedFile);
     }
-  }, [handleFileSelect]);
+  }, [handlePhotoSelect, handleVideoSelect, mediaType]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -774,22 +869,79 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     return `${mins}:${secs.toString().padStart(2, "0")}.${ms}`;
   };
 
-  // Helper for cover marker position on seek bar
   const coverPct = (() => {
-       const span = Math.max(0.001, trimRange[1] - trimRange[0]);
-       return ((coverTime - trimRange[0]) / span) * 100;
+    const span = Math.max(0.001, trimRange[1] - trimRange[0]);
+    return ((coverTime - trimRange[0]) / span) * 100;
   })();
+
+  const resetAll = () => {
+    // shared
+    setTitle("");
+    setDescription("");
+    setIsFood(false);
+    setMood("");
+
+    // video
+    setFile(null);
+    setUploadSource(null);
+    setUploadExt("mp4");
+    setUploadMime("video/mp4");
+    setFrameSource(null);
+    if (videoPreview) URL.revokeObjectURL(videoPreview);
+    setVideoPreview(null);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setVideoReady(false);
+    setVideoError(null);
+    setShowTrimmer(false);
+    setTrimRange([0, 3]);
+    setCoverTime(1.5);
+    setUploadSpeedMBps(0);
+    setUploadETA(null);
+
+    // photo
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImagePreview(null);
+    setImageFile(null);
+  };
+
+  const mediaChoice = (
+    <div className="flex items-center gap-2">
+      <span className="text-sm font-medium">Upload:</span>
+      <div className="flex rounded-md overflow-hidden border">
+        <button
+          type="button"
+          onClick={() => setMediaType("video")}
+          className={`px-3 py-1.5 text-sm flex items-center gap-1 ${
+            mediaType === "video" ? "bg-primary text-primary-foreground" : "bg-background"
+          }`}
+        >
+          <VideoIcon className="h-4 w-4" />
+          Video
+        </button>
+        <button
+          type="button"
+          onClick={() => setMediaType("photo")}
+          className={`px-3 py-1.5 text-sm flex items-center gap-1 ${
+            mediaType === "photo" ? "bg-primary text-primary-foreground" : "bg-background"
+          }`}
+        >
+          <ImageIcon className="h-4 w-4" />
+          Photo
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <Dialog
       open={open}
-      // if the dialog is closed (X, overlay click, ESC), go to Profile
       onOpenChange={(v) => {
         if (!v) goToProfile();
       }}
     >
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        {/* Manual close button in the corner (routes to Profile) */}
+        {/* Close */}
         <button
           type="button"
           onClick={goToProfile}
@@ -800,8 +952,17 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         </button>
 
         <DialogHeader className="sticky top-0 bg-background z-10 pb-2">
-          <DialogTitle>Upload Your 3-Second Splik</DialogTitle>
-          <DialogDescription>Pick any moment; we always save a 3.0s clip.</DialogDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <DialogTitle>Upload Your {mediaType === "photo" ? "Photo" : "3-Second Splik"}</DialogTitle>
+              <DialogDescription>
+                {mediaType === "photo"
+                  ? "JPEG/PNG/WEBP/GIF supported."
+                  : "Pick any moment; we always save a 3.0s clip."}
+              </DialogDescription>
+            </div>
+            {mediaChoice}
+          </div>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -809,12 +970,12 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-primary" />
               <AlertDescription className="text-sm">
-                <strong>Tip:</strong> MP4 uploads & plays everywhere. MOVs convert automatically.
+                <strong>Tip:</strong> MP4 plays everywhere. MOVs convert automatically.
               </AlertDescription>
             </div>
           </Alert>
 
-          {isMobile && (
+          {isMobile && mediaType === "video" && (
             <Alert className="border-muted-foreground/20 bg-muted/10">
               <div className="flex items-center gap-2">
                 <Smartphone className="h-4 w-4" />
@@ -825,302 +986,334 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
             </Alert>
           )}
 
-          {processingVideo || transcoding ? (
-            <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
-              <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">
-                {transcoding ? "Converting video to MP4..." : "Processing your video…"}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {transcoding 
-                  ? `Converting for compatibility... ${transcodeProgress}%`
-                  : "Preparing the 3-second clip"
-                }
-              </p>
-            </div>
-          ) : !file ? (
-            <div
-              className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer"
-              onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
-              <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
-              <p className="text-xs text-muted-foreground mb-2">
-                Supported: MP4 (preferred), MOV, FLV, WebM, AVI, MKV (max {formatBytes(maxFileSize)})
-              </p>
-              <p className="text-xs text-primary font-medium">Saved length is always 3.0s</p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={acceptedFormats}
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {videoError && (
-                <Alert className="border-yellow-500/20 bg-yellow-500/5">
-                  <AlertCircle className="h-4 w-4 text-yellow-600" />
-                  <AlertDescription className="text-sm">
-                    <strong>Note:</strong> {videoError}
-                  </AlertDescription>
-                </Alert>
-              )}
+          {/* Drop / Pick area */}
+          {mediaType === "video" ? (
+            processingVideo || transcoding ? (
+              <div className="border-2 border-dashed border-border rounded-lg p-12 text-center">
+                <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">
+                  {transcoding ? "Converting video to MP4..." : "Processing your video…"}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {transcoding
+                    ? `Converting for compatibility... ${transcodeProgress}%`
+                    : "Preparing the 3-second clip"}
+                </p>
+              </div>
+            ) : !file ? (
+              <div
+                className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer"
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                <h3 className="text-lg font-semibold mb-2">Drop your video here</h3>
+                <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Supported: MP4 (preferred), MOV, FLV, WebM, AVI, MKV (max {formatBytes(maxFileSize)})
+                </p>
+                <p className="text-xs text-primary font-medium">Saved length is always 3.0s</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={acceptedVideoFormats}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleVideoSelect(f);
+                  }}
+                  className="hidden"
+                />
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {videoError && (
+                  <Alert className="border-yellow-500/20 bg-yellow-500/5">
+                    <AlertCircle className="h-4 w-4 text-yellow-600" />
+                    <AlertDescription className="text-sm">
+                      <strong>Note:</strong> {videoError}
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-              {/* Video + overlay controls */}
-              <div className="flex justify-center">
-                <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
-                  <div className="relative" style={{ paddingBottom: "177.78%" }}>
-                    {!videoPreview ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
-                        <Film className="h-10 w-10 opacity-70 mb-2" />
-                        <p className="text-sm font-medium">Preparing preview…</p>
-                      </div>
-                    ) : null}
+                {/* Video + overlay controls */}
+                <div className="flex justify-center">
+                  <div className="relative bg-black rounded-xl overflow-hidden" style={{ width: "360px", maxWidth: "100%" }}>
+                    <div className="relative" style={{ paddingBottom: "177.78%" }}>
+                      {!videoPreview ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-white p-4">
+                          <Film className="h-10 w-10 opacity-70 mb-2" />
+                          <p className="text-sm font-medium">Preparing preview…</p>
+                        </div>
+                      ) : null}
 
-                    {videoPreview ? (
-                      <>
-                        <video
-                          ref={videoRef}
-                          src={videoPreview}
-                          className="absolute inset-0 w-full h-full object-cover"
-                          loop={false}
-                          muted={isMuted}
-                          playsInline
-                          preload="metadata"
-                          controls={false}
-                          onDoubleClick={onVideoDoubleClick}
-                        />
+                      {videoPreview ? (
+                        <>
+                          <video
+                            ref={videoRef}
+                            src={videoPreview}
+                            className="absolute inset-0 w-full h-full object-cover"
+                            loop={false}
+                            muted={isMuted}
+                            playsInline
+                            preload="metadata"
+                            controls={false}
+                            onDoubleClick={onVideoDoubleClick}
+                          />
 
-                        {!videoReady && !videoError && (
-                          <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
-                            <Loader2 className="h-8 w-8 animate-spin text-white" />
-                          </div>
-                        )}
+                          {!videoReady && !videoError && (
+                            <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
+                              <Loader2 className="h-8 w-8 animate-spin text-white" />
+                            </div>
+                          )}
 
-                        {videoReady && !videoError && (
-                          <div className="absolute inset-0 flex flex-col justify-end p-4 gap-2 bg-gradient-to-b from-black/20 via-transparent to-black/40">
-                            {/* Play/Pause big target */}
-                            <button
-                              onClick={togglePlayPause}
-                              className="absolute inset-0 w-full h-full"
-                              aria-label="Toggle playback"
-                            />
+                          {(!videoError) && (
+                            <div className="absolute inset-0 flex flex-col justify-end p-4 gap-2 bg-gradient-to-b from-black/20 via-transparent to-black/40">
+                              {/* Play/Pause big target */}
+                              <button
+                                onClick={togglePlayPause}
+                                className="absolute inset-0 w-full h-full"
+                                aria-label="Toggle playback"
+                              />
 
-                            {/* Bottom controls */}
-                            <div className="relative z-10 space-y-2 pointer-events-none">
-                              <div className="flex justify-between items-center text-white text-xs font-medium pointer-events-auto">
-                                <span>{formatTime(currentTime - trimRange[0])}</span>
-                                <span className="opacity-90">Saved length: <strong>3.0s</strong></span>
-                              </div>
+                              {/* Bottom controls */}
+                              <div className="relative z-10 space-y-2 pointer-events-none">
+                                <div className="flex justify-between items-center text-white text-xs font-medium pointer-events-auto">
+                                  <span>{formatTime(Math.max(0, currentTime - trimRange[0]))}</span>
+                                  <span className="opacity-90">Saved length: <strong>3.0s</strong></span>
+                                </div>
 
-                              {/* Seek + cover marker */}
-                              <div className="relative" ref={seekBarRef}>
-                                <Slider
-                                  value={[currentTime]}
-                                  min={trimRange[0]}
-                                  max={trimRange[1]}
-                                  step={0.01}
-                                  onValueChange={handleSeek}
-                                  className="w-full pointer-events-auto"
-                                />
-                                {/* cover marker */}
-                                <div
-                                  className="absolute -top-1 h-4 w-0.5 bg-white/90 rounded-sm pointer-events-none"
-                                  style={{ left: `calc(${coverPct}% - 1px)` }}
-                                  title="Cover frame"
-                                />
-                              </div>
+                                {/* Seek + cover marker */}
+                                <div className="relative" ref={seekBarRef}>
+                                  <Slider
+                                    value={[Math.min(Math.max(currentTime, trimRange[0]), trimRange[1])]}
+                                    min={trimRange[0]}
+                                    max={trimRange[1]}
+                                    step={0.01}
+                                    onValueChange={handleSeek}
+                                    className="w-full pointer-events-auto"
+                                  />
+                                  {/* cover marker */}
+                                  <div
+                                    className="absolute -top-1 h-4 w-0.5 bg-white/90 rounded-sm pointer-events-none"
+                                    style={{ left: `calc(${coverPct}% - 1px)` }}
+                                    title="Cover frame"
+                                  />
+                                </div>
 
-                              <div className="flex items-center justify-between pointer-events-auto">
-                                <button
-                                  onClick={toggleMute}
-                                  className="bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow"
-                                  aria-label={isMuted ? "Unmute" : "Mute"}
-                                >
-                                  {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
-                                </button>
+                                <div className="flex items-center justify-between pointer-events-auto">
+                                  <button
+                                    onClick={toggleMute}
+                                    className="bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow"
+                                    aria-label={isMuted ? "Unmute" : "Mute"}
+                                  >
+                                    {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+                                  </button>
 
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={(e) => { e.stopPropagation(); setCoverAtCurrent(); }}
-                                  className="ml-auto flex items-center gap-2"
-                                >
-                                  <ImageIcon className="h-4 w-4" />
-                                  Set cover (C / double-tap)
-                                </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={(e) => { e.stopPropagation(); setCoverAtCurrent(); }}
+                                    className="ml-auto flex items-center gap-2"
+                                  >
+                                    <ImageIcon className="h-4 w-4" />
+                                    Set cover (C / double-tap)
+                                  </Button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        )}
-                      </>
-                    ) : null}
+                          )}
+                        </>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Trim picker (3s window auto-enforced) */}
-              {videoPreview && showTrimmer && (
-                <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Scissors className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-medium">Pick any spot (we'll save 3s)</span>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Start: {trimRange[0].toFixed(2)}s</span>
-                      <span className="font-bold text-primary">Saved: 3.00s</span>
-                      <span>End: {Math.min(trimRange[0] + 3, originalDuration).toFixed(2)}s</span>
+                {/* Trim picker (3s window auto-enforced) */}
+                {videoPreview && showTrimmer && (
+                  <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <Scissors className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium">Pick any spot (we'll save 3s)</span>
                     </div>
 
-                    <Slider
-                      value={trimRange}
-                      min={0}
-                      max={Math.max(originalDuration, 3)}
-                      step={0.01}
-                      onValueChange={handleTrimChange}
-                      className="my-4 touch-none select-none"
-                    />
+                    <div className="space-y-3">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Start: {trimRange[0].toFixed(2)}s</span>
+                        <span className="font-bold text-primary">Saved: 3.00s</span>
+                        <span>End: {Math.min(trimRange[0] + 3, originalDuration || 3).toFixed(2)}s</span>
+                      </div>
+
+                      <Slider
+                        value={trimRange}
+                        min={0}
+                        max={Math.max(originalDuration || 3, 3)}
+                        step={0.01}
+                        onValueChange={handleTrimChange}
+                        className="my-4 touch-none select-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          ) : (
+            // PHOTO AREA
+            <>
+              {!imageFile ? (
+                <div
+                  className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer"
+                  onDrop={handleDrop}
+                  onDragOver={(e) => e.preventDefault()}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                  <h3 className="text-lg font-semibold mb-2">Drop your photo here</h3>
+                  <p className="text-sm text-muted-foreground mb-4">or click to browse files</p>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Supported: JPG, PNG, WEBP, GIF (max {formatBytes(maxFileSize)})
+                  </p>
+                  <input
+                    ref={imageInputRef}
+                    type="file"
+                    accept={acceptedImageFormats}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handlePhotoSelect(f);
+                    }}
+                    className="hidden"
+                  />
+                </div>
+              ) : (
+                <div className="flex justify-center">
+                  <div className="relative rounded-xl overflow-hidden border bg-muted/30">
+                    {imagePreview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={imagePreview} alt="Preview" className="max-h-[480px] object-contain" />
+                    ) : (
+                      <div className="p-8 text-center text-sm text-muted-foreground">Preparing preview…</div>
+                    )}
                   </div>
                 </div>
               )}
+            </>
+          )}
 
-              {/* Details */}
-              <div className="space-y-3">
-                <div>
-                  <Label htmlFor="title">Title</Label>
-                  <Input
-                    id="title"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Enter a title for your Splik"
-                    disabled={uploading}
-                  />
-                </div>
+          {/* Details (shared) */}
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="title">Title</Label>
+              <Input
+                id="title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={`Enter a title for your ${mediaType === "photo" ? "photo" : "Splik"}`}
+                disabled={uploading}
+              />
+            </div>
 
-                <div>
-                  <Label htmlFor="description">Description (optional)</Label>
-                  <Input
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Add a description"
-                    disabled={uploading}
-                  />
-                </div>
+            <div>
+              <Label htmlFor="description">Description (optional)</Label>
+              <Input
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Add a description"
+                disabled={uploading}
+              />
+            </div>
 
+            <div>
+              <Label htmlFor="mood">Mood (optional)</Label>
+              <Select value={mood} onValueChange={setMood} disabled={uploading}>
+                <SelectTrigger id="mood" className="w-full">
+                  <SelectValue placeholder="Choose the mood for this post (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MOOD_OPTIONS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                If chosen, we'll tag the description with <code>#mood=&lt;value&gt;</code>.
+              </p>
+            </div>
+
+            <div className="mt-2 flex items-center justify-between rounded-md border p-3">
+              <div className="flex items-start gap-2">
+                <Utensils className="h-4 w-4 text-primary mt-0.5" />
                 <div>
-                  <Label htmlFor="mood">Mood (optional)</Label>
-                  <Select value={mood} onValueChange={setMood} disabled={uploading}>
-                    <SelectTrigger id="mood" className="w-full">
-                      <SelectValue placeholder="Choose the mood for this video (optional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {MOOD_OPTIONS.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    If chosen, we'll tag the description with <code>#mood=&lt;value&gt;</code>.
+                  <p className="text-sm font-medium">Food {mediaType === "photo" ? "post" : "video"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    If enabled, this will also appear on the Food page.
                   </p>
                 </div>
-
-                <div className="mt-2 flex items-center justify-between rounded-md border p-3">
-                  <div className="flex items-start gap-2">
-                    <Utensils className="h-4 w-4 text-primary mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Food video</p>
-                      <p className="text-xs text-muted-foreground">
-                        If enabled, this video will also appear on the Food page.
-                      </p>
-                    </div>
-                  </div>
-
-                  <Button
-                    type="button"
-                    onClick={() => setIsFood((v) => !v)}
-                    variant={isFood ? "default" : "outline"}
-                    className={isFood ? "bg-gradient-to-r from-purple-600 to-cyan-500 text-white" : ""}
-                    disabled={uploading}
-                  >
-                    <Utensils className="h-4 w-4 mr-2" />
-                    {isFood ? "Food Enabled" : "Mark as Food"}
-                  </Button>
-                </div>
               </div>
 
-              {uploading && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1">
-                      <Info className="h-3.5 w-3.5" />
-                      <span>
-                        {transcodeProgress > 0 
-                          ? `Processing video... ${transcodeProgress}%`
-                          : `Uploading... ${uploadProgress}%${uploadETA ? ` • ETA ${uploadETA}` : ""}`
-                        }
-                      </span>
-                    </div>
-                    <div className="font-mono">
-                      {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
-                    </div>
-                  </div>
-                  <Progress value={transcodeProgress > 0 ? transcodeProgress : uploadProgress} className="w-full" />
-                </div>
-              )}
+              <Button
+                type="button"
+                onClick={() => setIsFood((v) => !v)}
+                variant={isFood ? "default" : "outline"}
+                className={isFood ? "bg-gradient-to-r from-purple-600 to-cyan-500 text-white" : ""}
+                disabled={uploading}
+              >
+                <Utensils className="h-4 w-4 mr-2" />
+                {isFood ? "Food Enabled" : "Mark as Food"}
+              </Button>
+            </div>
+          </div>
 
-              <div className="flex gap-3 justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setFile(null);
-                    setUploadSource(null);
-                    setUploadExt("mp4");
-                    setUploadMime("video/mp4");
-                    setFrameSource(null);
-                    if (videoPreview) URL.revokeObjectURL(videoPreview);
-                    setVideoPreview(null);
-                    setTitle("");
-                    setDescription("");
-                    setIsFood(false);
-                    setMood("");
-                    setIsPlaying(false);
-                    setVideoReady(false);
-                    setVideoError(null);
-                    setShowTrimmer(false);
-                    setTrimRange([0, 3]);
-                    setCoverTime(1.5);
-                    setUploadSpeedMBps(0);
-                    setUploadETA(null);
-                  }}
-                  disabled={uploading}
-                >
-                  <X className="h-4 w-4 mr-2" />
-                  Remove
-                </Button>
-                <Button onClick={handleUpload} disabled={uploading || !title}>
-                  {uploading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      {transcodeProgress > 0 ? "Processing..." : "Uploading..."}
-                    </>
-                  ) : (
-                    "Upload Splik"
-                  )}
-                </Button>
+          {uploading && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1">
+                  <Info className="h-3.5 w-3.5" />
+                  <span>
+                    {transcodeProgress > 0
+                      ? `Processing... ${transcodeProgress}%`
+                      : `Uploading... ${uploadProgress}%${uploadETA ? ` • ETA ${uploadETA}` : ""}`
+                    }
+                  </span>
+                </div>
+                <div className="font-mono">
+                  {uploadSpeedMBps > 0 ? `${uploadSpeedMBps.toFixed(2)} MB/s` : "— MB/s"}
+                </div>
               </div>
+              <Progress value={transcodeProgress > 0 ? transcodeProgress : uploadProgress} className="w-full" />
             </div>
           )}
+
+          <div className="flex gap-3 justify-end">
+            <Button
+              variant="outline"
+              onClick={() => resetAll()}
+              disabled={uploading}
+            >
+              <X className="h-4 w-4 mr-2" />
+              Remove
+            </Button>
+            <Button
+              onClick={handleUpload}
+              disabled={
+                uploading ||
+                !title ||
+                (mediaType === "video" ? !file || !uploadSource : !imageFile)
+              }
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  {transcodeProgress > 0 ? "Processing..." : "Uploading..."}
+                </>
+              ) : (
+                mediaType === "photo" ? "Upload Photo" : "Upload Splik"
+              )}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
