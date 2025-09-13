@@ -758,7 +758,7 @@ const Explore = () => {
       setUploadOpen(false);
 
       // 5) go to creator dashboard
-      navigate("/creator-dashboard");
+      navigate("/dashboard");
     } catch (e: any) {
       console.error(e);
       const msg = e?.message || "";
