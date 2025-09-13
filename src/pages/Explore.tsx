@@ -127,12 +127,14 @@ function RightPhotoRail({
   limit = 60,
   reloadToken = 0,
   currentUserId,
+  isMobile = false,
 }: {
   title?: string;
   maxListHeight?: string | number;
   limit?: number;
   reloadToken?: number;
   currentUserId?: string | null;
+  isMobile?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PhotoItem[]>([]);
@@ -362,7 +364,7 @@ function RightPhotoRail({
             </div>
           )}
 
-          {/* grouped: one row per creator (mobile + desktop) */}
+          {/* grouped: one row per creator */}
           {groups.map((g) => {
             const slug = slugFor(g.profile);
             const avatar = g.profile?.avatar_url || null;
@@ -371,7 +373,7 @@ function RightPhotoRail({
                 key={`grp_${g.user_id}`}
                 className="rounded-xl border border-border/40 bg-muted/30 p-3"
               >
-                {/* header: avatar + name; show count on mobile only */}
+                {/* header: avatar + name; show count on mobile */}
                 <div className="flex items-center gap-2 mb-2">
                   <Link
                     to={slug ? `/creator/${slug}` : "#"}
@@ -389,9 +391,11 @@ function RightPhotoRail({
                   <div className="min-w-0">
                     <p className="text-xs text-white/95 font-medium truncate">
                       {g.name}{" "}
-                      <span className="text-white/60 lg:hidden">
-                        • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
-                      </span>
+                      {isMobile && (
+                        <span className="text-white/60">
+                          • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -402,7 +406,11 @@ function RightPhotoRail({
                     <button
                       key={ph.id}
                       onClick={() => openViewer(ph)}
-                      className="snap-start shrink-0 w-[140px] h-[140px] lg:w-[150px] lg:h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
+                      className={`snap-start shrink-0 ${
+                        isMobile 
+                          ? "w-[120px] h-[120px] sm:w-[140px] sm:h-[140px]" 
+                          : "w-[140px] h-[140px] lg:w-[150px] lg:h-[150px]"
+                      } rounded-lg border border-border/40 overflow-hidden bg-muted/40`}
                       title="Open photo"
                     >
                       <img
@@ -509,7 +517,7 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed (no Nearby) + Splikz Photos ONLY
+   PAGE: Home feed + Splikz Photos side-by-side on mobile (like desktop)
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -824,16 +832,16 @@ const Explore = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* HEADER */}
-      <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
+      <div className="bg-gradient-to-b from-secondary/10 to-background py-6 sm:py-8 px-4">
         <div className="container">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
-              <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
-              <p className="text-muted-foreground">
-                Your video feed • Splikz Photos on the side (invisible scroll)
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2">Home</h1>
+              <p className="text-muted-foreground text-sm sm:text-base">
+                Your video feed • Splikz Photos on the side
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Button
                 variant="outline"
                 size="sm"
@@ -843,22 +851,23 @@ const Explore = () => {
                 <RefreshCw
                   className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
                 />
-                Update
+                <span className="hidden sm:inline ml-2">Update</span>
               </Button>
               <Button size="sm" onClick={() => setUploadOpen(true)}>
                 <Camera className="h-4 w-4" />
-                Upload Photo
+                <span className="hidden sm:inline ml-2">Upload Photo</span>
               </Button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* GRID: Desktop side-by-side; Mobile stacked */}
-      <div className="container py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* LEFT / TOP: HOME FEED */}
-          <div className="lg:col-span-9 space-y-6">
+      {/* MAIN CONTENT: Better responsive grid */}
+      <div className="container py-4 sm:py-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
+          
+          {/* LEFT/MAIN: HOME FEED - Takes more space on mobile landscape and tablets */}
+          <div className="md:col-span-2 lg:col-span-9 space-y-4 sm:space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
@@ -866,11 +875,11 @@ const Explore = () => {
               </div>
             ) : feedSpliks.length === 0 ? (
               <Card>
-                <CardContent className="p-8 text-center">
+                <CardContent className="p-6 sm:p-8 text-center">
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    We’ll show the latest as soon as they’re posted.
+                    We'll show the latest as soon as they're posted.
                   </p>
                   <div className="flex gap-2 justify-center">
                     <Button onClick={() => fetchHomeFeed()} variant="outline">
@@ -880,7 +889,7 @@ const Explore = () => {
                 </CardContent>
               </Card>
             ) : (
-              <div ref={feedRef} className="space-y-8">
+              <div ref={feedRef} className="space-y-6 sm:space-y-8">
                 {feedSpliks.map((s) => (
                   <SplikCard
                     key={s.id}
@@ -908,40 +917,36 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): grouped Photos rail */}
-          <div className="lg:col-span-3 hidden lg:block">
-            <RightPhotoRail
-              title="Splikz Photos"
-              currentUserId={user?.id}
-              reloadToken={reloadToken}
-            />
+          {/* RIGHT: Photos rail - Now visible on tablets and up, better mobile optimization */}
+          <div className="md:col-span-1 lg:col-span-3">
+            <div className="sticky top-4">
+              <RightPhotoRail
+                title="Splikz Photos"
+                maxListHeight="calc(100vh - 160px)"
+                currentUserId={user?.id}
+                reloadToken={reloadToken}
+                isMobile={false}
+              />
+            </div>
           </div>
+
         </div>
 
-        {/* MOBILE: Photos rail full-width below feed */}
-        <div className="mt-10 lg:hidden">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl font-semibold">Splikz Photos</h2>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setUploadOpen(true)}
-            >
-              <Camera className="h-4 w-4 mr-1" /> Upload
-            </Button>
-          </div>
-          <RightPhotoRail
-            title="Latest photos"
-            maxListHeight="60vh"
-            reloadToken={reloadToken}
-            currentUserId={user?.id}
-          />
+        {/* MOBILE ONLY: Compact floating photo button for very small screens */}
+        <div className="fixed bottom-6 right-6 md:hidden z-50">
+          <Button 
+            size="icon"
+            onClick={() => setUploadOpen(true)}
+            className="h-12 w-12 rounded-full shadow-lg"
+          >
+            <Camera className="h-5 w-5" />
+          </Button>
         </div>
       </div>
 
       {/* Upload Photo dialog */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md mx-4">
           <DialogHeader>
             <DialogTitle>Upload a photo</DialogTitle>
             <DialogDescription>
@@ -969,6 +974,7 @@ const Explore = () => {
                   setPhotoDescription(e.target.value.slice(0, 200))
                 }
                 placeholder="Say something about this photo (max 200 chars)"
+                className="min-h-[80px]"
               />
               <div className="text-xs text-muted-foreground text-right">
                 {photoDescription.length}/200
@@ -986,15 +992,16 @@ const Explore = () => {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="gap-2">
             <Button
               variant="outline"
               onClick={() => setUploadOpen(false)}
               disabled={uploading}
+              className="w-full sm:w-auto"
             >
               Cancel
             </Button>
-            <Button onClick={uploadPhoto} disabled={uploading}>
+            <Button onClick={uploadPhoto} disabled={uploading} className="w-full sm:w-auto">
               {uploading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : (
@@ -1005,6 +1012,40 @@ const Explore = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Additional mobile-friendly styles */}
+      <style>{`
+        .hide-scroll { 
+          -ms-overflow-style: none; 
+          scrollbar-width: none; 
+        }
+        .hide-scroll::-webkit-scrollbar { 
+          display: none; 
+        }
+        
+        /* Enhanced mobile responsiveness */
+        @media (max-width: 768px) {
+          .container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+          }
+        }
+        
+        /* Improved tablet layout */
+        @media (min-width: 768px) and (max-width: 1024px) {
+          .grid.md\\:grid-cols-3 {
+            grid-template-columns: 2fr 1fr;
+          }
+        }
+        
+        /* Better mobile photo grid sizing */
+        @media (max-width: 640px) {
+          .snap-start.shrink-0 {
+            width: 110px !important;
+            height: 110px !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };
