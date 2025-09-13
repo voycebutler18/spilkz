@@ -1,12 +1,10 @@
 // src/pages/Explore.tsx
-// at top with other imports
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Loader2, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
-import RightActivityRail from "@/components/RightActivityRail";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -21,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-// NEW: use the same Activity component everywhere
+// NEW: mirror desktop right-rail on both desktop & mobile
 import RightActivityRail from "@/components/RightActivityRail";
 
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
@@ -826,14 +824,20 @@ const Explore = () => {
             </div>
           </div>
         </div>
-      </div> {/* ← FIX: close header wrapper */}
-
-      {/* Mobile: show the same Activity rail, full width */}
-      <div className="container mt-4 lg:hidden">
-        <RightActivityRail limit={60} />
       </div>
 
-      {/* GRID */}
+      {/* MOBILE MIRROR of the right rail (stacked) */}
+      <div className="container mt-6 space-y-6 lg:hidden">
+        <RightActivityRail />
+        <RightPhotoRail
+          title="Splikz Photos"
+          maxListHeight="60vh"
+          reloadToken={reloadToken}
+          currentUserId={user?.id}
+        />
+      </div>
+
+      {/* GRID (Desktop keeps right rail on the side) */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* FEED */}
@@ -887,34 +891,15 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): Photos rail */}
-          <div className="lg:col-span-3 hidden lg:block">
+          {/* RIGHT (DESKTOP): Activity + Photos stacked */}
+          <div className="lg:col-span-3 hidden lg:flex lg:flex-col lg:gap-6">
+            <RightActivityRail />
             <RightPhotoRail
               title="Splikz Photos"
               currentUserId={user?.id}
               reloadToken={reloadToken}
             />
           </div>
-        </div>
-
-        {/* MOBILE: Photos rail full-width (mirrors desktop content, stacked) */}
-        <div className="mt-10 lg:hidden">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl font-semibold">Splikz Photos</h2>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setUploadOpen(true)}
-            >
-              <Camera className="h-4 w-4 mr-1" /> Upload
-            </Button>
-          </div>
-          <RightPhotoRail
-            title="Latest photos"
-            maxListHeight="60vh"
-            reloadToken={reloadToken}
-            currentUserId={user?.id}
-          />
         </div>
       </div>
 
