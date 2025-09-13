@@ -60,7 +60,6 @@ type SplikRow = {
   profile?: Profile;
 };
 
-/** NEW: food photos pulled from vibe_photos with category='food' */
 type FoodPhoto = {
   id: string;
   user_id: string;
@@ -147,7 +146,7 @@ export default function Food() {
   const [spliks, setSpliks] = useState<SplikRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  /** NEW: food photos state */
+  /** Food photos state */
   const [photos, setPhotos] = useState<FoodPhoto[]>([]);
   const [photosLoading, setPhotosLoading] = useState(true);
   const [photoViewerOpen, setPhotoViewerOpen] = useState(false);
@@ -181,8 +180,9 @@ export default function Food() {
 
   /* --------- initial load + realtime counters --------- */
   useEffect(() => {
-    fetchFood();        // videos (existing)
-    fetchFoodPhotos();  // NEW: photos feed
+    fetchFood();        // videos
+    fetchFoodPhotos();  // photos
+
     const channel = supabase
       .channel("food-feed")
       .on(
@@ -204,30 +204,32 @@ export default function Food() {
       )
       .subscribe();
 
-    // listen for new photos coming in live (only keep category=food)
+    // Realtime: new *photo* posts in spliks (is_food = true)
     const photoChannel = supabase
       .channel("food-photos")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "vibe_photos" },
+        { event: "INSERT", schema: "public", table: "spliks", filter: "is_food=eq.true" },
         async (payload) => {
           const row = payload.new as any;
-          const cat = (row.category || "").toString().toLowerCase();
-          if (cat !== "food") return;
+          const isPhoto = !row.video_url || (row.mime_type || "").startsWith("image/");
+          if (!isPhoto) return;
+
           const { data: profile } = await supabase
             .from("profiles")
             .select("*")
             .eq("id", row.user_id)
             .maybeSingle();
+
           setPhotos((prev) => [
             {
               id: String(row.id),
               user_id: row.user_id,
-              photo_url: row.photo_url,
+              photo_url: row.thumbnail_url,
               created_at: row.created_at || new Date().toISOString(),
-              description: row.description ?? row.caption ?? null,
-              location: row.location ?? null,
-              category: row.category ?? null,
+              description: row.description ?? row.title ?? null,
+              location: null,
+              category: "food",
               profile: (profile as any) || null,
             },
             ...prev,
@@ -292,27 +294,29 @@ export default function Food() {
     }
   };
 
-  /** NEW: fetch food photos (category ilike 'food') */
+  /** Fetch photo posts from spliks where it's food and is a photo */
   const fetchFoodPhotos = async () => {
     try {
       setPhotosLoading(true);
       const { data, error } = await supabase
-        .from("vibe_photos")
-        .select("*")
-        .ilike("category", "food")
+        .from("spliks")
+        .select("id,user_id,thumbnail_url,description,title,created_at,mime_type,video_url,is_food")
+        .eq("is_food", true)
+        .or("video_url.is.null,mime_type.ilike.image/%")
         .order("created_at", { ascending: false })
         .limit(200);
+
       if (error) throw error;
 
       const rows: FoodPhoto[] =
         (data || []).map((r: any) => ({
           id: String(r.id),
           user_id: String(r.user_id),
-          photo_url: String(r.photo_url),
+          photo_url: String(r.thumbnail_url),
           created_at: r.created_at || new Date().toISOString(),
-          description: r.description ?? r.caption ?? null,
-          location: r.location ?? null,
-          category: r.category ?? null,
+          description: r.description ?? r.title ?? null,
+          location: null,
+          category: "food",
           profile: null,
         })) || [];
 
@@ -426,7 +430,7 @@ export default function Food() {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=UTF-8" },
         body: query,
-               signal: controller.signal,
+        signal: controller.signal,
       });
       clearTimeout(timeoutId);
       if (!res.ok) throw new Error(`Overpass API error ${res.status}: ${res.statusText}`);
@@ -685,7 +689,7 @@ export default function Food() {
 
       {/* Main Content */}
       <main className="relative z-10 mx-auto max-w-4xl px-4 sm:px-6 py-8">
-        {/* NEW: Food Photos grid */}
+        {/* Food Photos grid */}
         <section className="mb-10">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-semibold text-white flex items-center gap-2">
@@ -837,7 +841,7 @@ export default function Food() {
         )}
       </main>
 
-      {/* Luxury Restaurant Discovery Modal (unchanged except close handling) */}
+      {/* Luxury Restaurant Discovery Modal */}
       <Dialog
         open={nearbyOpen}
         onOpenChange={(open) => {
@@ -874,8 +878,177 @@ export default function Food() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="relative z-10 overflow-y-auto max-h-[70vh] pr-2">
-            {/* ... existing modal content unchanged ... */}
+          {/* Scrollable content */}
+          <div className="relative z-10 h-[70vh] flex flex-col">
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 space-y-6 pb-24">
+
+              {/* Location */}
+              <div className="space-y-3">
+                <label className="text-white font-semibold text-base flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-yellow-400" />
+                  Where are we searching?
+                </label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    placeholder="City or ZIP (e.g., Chicago, 60601)"
+                    value={locationQuery}
+                    onChange={(e) => {
+                      setLocationQuery(e.target.value);
+                      if (e.target.value.trim() && coords) {
+                        setCoords(null);
+                        setLocStage("idle");
+                      }
+                    }}
+                    disabled={fetchingNearby}
+                    className="bg-white/10 border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3"
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={requestLocation}
+                    disabled={fetchingNearby || locStage === "asking"}
+                    className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 border-0 text-white font-semibold rounded-xl"
+                  >
+                    <LocateFixed className="h-4 w-4 mr-2" />
+                    {locStage === "asking" ? "Locating…" : "Use location"}
+                  </Button>
+                </div>
+
+                {locStage === "asking" && (
+                  <div className="flex items-center gap-3 text-blue-200 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Requesting location permission…
+                  </div>
+                )}
+                {coords && (
+                  <div className="text-green-300 text-sm">
+                    Location confirmed: <span className="font-mono">{coordsPretty}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Distance + Category */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-white font-semibold text-base">Search radius</label>
+                  <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white rounded-xl py-3">
+                      <SelectValue placeholder="Distance" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border border-white/20 rounded-xl">
+                      {DISTANCE_OPTIONS.map((d) => (
+                        <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
+                          {d.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="lg:col-span-2 space-y-2">
+                  <label className="text-white font-semibold text-base">Cuisine / Category</label>
+                  <Select value={categoryKey} onValueChange={setCategoryKey} disabled={fetchingNearby}>
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white rounded-xl py-3">
+                      <SelectValue placeholder="Any" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border border-white/20 rounded-xl">
+                      {CATEGORY_PRESETS.map((c) => (
+                        <SelectItem key={c.key} value={c.key} className="text-white hover:bg-white/10">
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {categoryKey === "custom" && (
+                    <Input
+                      value={customCategory}
+                      onChange={(e) => setCustomCategory(e.target.value)}
+                      placeholder="Type a custom keyword, e.g. 'ramen' or 'vegan bakery'"
+                      className="mt-2 bg-white/10 border-white/20 text-white placeholder-gray-400"
+                      disabled={fetchingNearby}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Search button */}
+              <div className="flex justify-center pt-2">
+                <Button
+                  onClick={runNearbySearch}
+                  disabled={fetchingNearby || (!coords && !locationQuery.trim())}
+                  className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
+                             w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="relative flex items-center gap-3 justify-center">
+                    <SearchIcon className="h-5 w-5" />
+                    <span>{fetchingNearby ? "Searching…" : "Find Restaurants Near You"}</span>
+                  </div>
+                </Button>
+              </div>
+
+              {/* Messages */}
+              {nearbyError && (
+                <div className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 text-red-200 text-sm">
+                  {nearbyError}
+                </div>
+              )}
+              {fetchingNearby && !nearbyError && (
+                <div className="flex items-center gap-3 text-purple-200 text-sm justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Searching for restaurants…
+                </div>
+              )}
+
+              {/* Results */}
+              {!fetchingNearby && nearby.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-white text-lg font-semibold">Found {nearby.length} nearby</h3>
+                  <div className="rounded-2xl border border-white/20 bg-white/5 overflow-hidden">
+                    <div className="max-h-[50vh] overflow-y-auto">
+                      {nearby.map((place, i) => (
+                        <div
+                          key={place.id}
+                          className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition ${
+                            i !== nearby.length - 1 ? "border-b border-white/10" : ""
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
+                              {place.name}
+                            </div>
+                            <div className="text-gray-300 text-sm leading-relaxed line-clamp-2 mb-1">
+                              {place.address}
+                            </div>
+                            {place.cuisine && (
+                              <div className="text-xs text-white/70 mb-1">Cuisine: {place.cuisine}</div>
+                            )}
+                            <div className="text-yellow-300 text-sm font-medium">
+                              {prettyDistance(place.distanceKm)} away
+                            </div>
+                          </div>
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}&query=${encodeURIComponent(place.name)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
+                            title="Open in Google Maps"
+                          >
+                            <span className="hidden sm:inline">View</span>
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
+                <div className="text-center p-6 bg-white/5 border border-white/10 rounded-2xl text-gray-300">
+                  No restaurants found. Try a larger radius or a different category.
+                </div>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>
