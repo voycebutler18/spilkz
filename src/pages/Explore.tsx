@@ -462,7 +462,6 @@ const Explore = () => {
 
   // upload dialog
   const [uploadOpen, setUploadOpen] = useState(false);
-  the:
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
