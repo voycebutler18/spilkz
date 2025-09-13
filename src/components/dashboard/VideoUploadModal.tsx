@@ -734,7 +734,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         await supabase.from("right_rail_feed").insert({
           user_id: user.id,
           type: "video",
-          target_id: newSplik?.id ?? null,
+          media_url: thumbnail_url ?? null, // optional preview for videos
           created_at: newSplik?.created_at ?? new Date().toISOString(),
         });
         window.dispatchEvent(
@@ -816,7 +816,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         await supabase.from("right_rail_feed").insert({
           user_id: user.id,
           type: "photo",
-          target_id: newSplik?.id ?? null,
+          media_url: publicUrl, // use the uploaded image URL
           created_at: newSplik?.created_at ?? new Date().toISOString(),
         });
         window.dispatchEvent(
