@@ -1,4 +1,4 @@
-// RightActivityRail.tsx
+// src/components/RightActivityRail.tsx
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -146,16 +146,9 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "quotes" }, load)
       .subscribe();
 
-    // Optimistic: listen for custom event from uploads (e.g., videos)
-    const onActivityAppend = () => load();
-    window.addEventListener("activity:append", onActivityAppend as EventListener);
-
     return () => {
       alive = false;
-      try {
-        supabase.removeChannel(ch);
-      } catch {}
-      window.removeEventListener("activity:append", onActivityAppend as EventListener);
+      supabase.removeChannel(ch);
     };
   }, [limit]); // don't depend on profiles to avoid loops
 
@@ -203,7 +196,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
             return (
               <button
                 key={`${g.user_id ?? "null"}_${g.latest_at}`}
-                className="w-full flex items-center gap-3 rounded-xl px-2 py-2 hover:bg.white/5 hover:bg-white/5 transition text-left"
+                className="w-full flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-white/5 transition text-left"
                 onClick={() => openModalFor(g)}
                 title={`${name} activity`}
               >
