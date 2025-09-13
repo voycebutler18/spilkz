@@ -1,3 +1,6 @@
+Here’s your `src/pages/Explore.tsx` with the corrections baked in: stronger fallback names, safe delete (DB first, then storage), realtime refresh on DELETE, and a **Category** field on upload (saved + optimistic update). Drop-in replacement.
+
+```tsx
 // src/pages/Explore.tsx
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
@@ -93,16 +96,25 @@ type PhotoItem = {
   created_at: string;
   description?: string | null;
   location?: string | null;
+  category?: string | null;
   profile?: RailProfile | null;
 };
 
+// stronger fallback (username → display_name → first+last → short id)
 const displayName = (p?: RailProfile | null) => {
-  if (!p) return "User";
-  const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-  return p.display_name?.trim() || full || p.username?.trim() || "User";
+  if (!p) return "user_anon";
+  const u = (p.username || "").trim();
+  const d = (p.display_name || "").trim();
+  const f = (p.first_name || "").trim();
+  const l = (p.last_name || "").trim();
+  if (u) return u;
+  if (d) return d;
+  const full = [f, l].filter(Boolean).join(" ").trim();
+  if (full) return full;
+  return `user_${(p.id || "").slice(0, 6) || "anon"}`;
 };
 const slugFor = (p?: RailProfile | null) =>
-  p?.username ? p.username : p?.id || "";
+  ((p?.username || "").trim()) || (p?.id || "");
 
 const pathFromPublicUrl = (url: string) => {
   try {
@@ -144,34 +156,45 @@ function RightPhotoRail({
   const removeLocally = (id: string) =>
     setItems((prev) => prev.filter((p) => p.id !== id));
 
-  /* CORRECTION #1: delete the REAL row even if this is the optimistic card,
-     then remove from storage; also remove both possible ids locally. */
+  // Safe delete: verify ownership in DB, delete row, then remove storage
   const deleteActive = async () => {
     if (!active || !currentUserId) return;
+
     try {
+      // find the real row for THIS user by url (covers optimistic cards)
       const { data: existing, error: findErr } = await supabase
         .from("vibe_photos")
-        .select("id")
-        .eq("user_id", currentUserId)
+        .select("id, user_id")
         .eq("photo_url", active.photo_url)
+        .eq("user_id", currentUserId)
         .limit(1)
         .maybeSingle();
       if (findErr) throw findErr;
 
-      const deleteId = existing?.id || active.id;
+      if (!existing) {
+        toast({
+          title: "Not allowed",
+          description: "You can only delete your own photos.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       const { error: delErr } = await supabase
         .from("vibe_photos")
         .delete()
-        .eq("id", deleteId)
+        .eq("id", existing.id)
         .eq("user_id", currentUserId);
       if (delErr) throw delErr;
 
       const path = pathFromPublicUrl(active.photo_url);
-      if (path) await supabase.storage.from(PHOTOS_BUCKET).remove([path]);
+      if (path) {
+        // best-effort: ignore storage errors so UI doesn't get stuck
+        await supabase.storage.from(PHOTOS_BUCKET).remove([path]).catch(() => {});
+      }
 
       removeLocally(active.id);
-      if (existing?.id && existing.id !== active.id) removeLocally(existing.id);
+      if (active.id !== existing.id) removeLocally(existing.id);
 
       closeViewer();
       toast({ title: "Deleted", description: "Your photo was removed." });
@@ -205,6 +228,7 @@ function RightPhotoRail({
           created_at: r.created_at || new Date().toISOString(),
           description: r.description ?? r.caption ?? null,
           location: r.location ?? null,
+          category: r.category ?? null,
         })) as PhotoItem[];
 
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
@@ -231,7 +255,7 @@ function RightPhotoRail({
 
     load();
 
-    /* CORRECTION #2: listen for DELETE in addition to INSERT so the rail refreshes. */
+    // also refresh on DELETE so UI stays in sync
     const ch = supabase
       .channel("rail-vibe-photos")
       .on(
@@ -248,7 +272,7 @@ function RightPhotoRail({
 
     const onOptimistic = async (e: Event) => {
       // @ts-ignore
-      const { user_id, photo_url, description, location } = e.detail || {};
+      const { user_id, photo_url, description, location, category } = e.detail || {};
       if (!user_id || !photo_url) return;
       try {
         const { data: p } = await supabase
@@ -266,6 +290,7 @@ function RightPhotoRail({
             created_at: new Date().toISOString(),
             description: description || null,
             location: location || null,
+            category: category || null,
             profile: (p as RailProfile) || null,
           },
           ...prev,
@@ -381,7 +406,7 @@ function RightPhotoRail({
           {!!active && (
             <div className="relative">
               <div className="absolute top-2 right-2 z-10 flex gap-2">
-                {currentUserId && active.user_id === currentUserId && (
+                {currentUserId && (
                   <Button
                     variant="destructive"
                     size="icon"
@@ -478,6 +503,7 @@ const Explore = () => {
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
+  const [photoCategory, setPhotoCategory] = useState("general"); // NEW
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -533,7 +559,8 @@ const Explore = () => {
 
   useEffect(() => {
     fetchHomeFeed();
-  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const useAutoplayIn = (hostRef: React.RefObject<HTMLElement>, deps: any[] = []) => {
     useEffect(() => {
@@ -731,6 +758,7 @@ const Explore = () => {
         user_id: user.id,
         photo_url,
         description: photoDescription.trim(),
+        category: (photoCategory || "general").toLowerCase(), // NEW
       };
       if (photoLocation.trim()) payload.location = photoLocation.trim();
 
@@ -746,6 +774,7 @@ const Explore = () => {
             photo_url,
             description: photoDescription.trim(),
             location: photoLocation.trim() || null,
+            category: (photoCategory || "general").toLowerCase(), // NEW
           },
         })
       );
@@ -758,6 +787,7 @@ const Explore = () => {
       setFile(null);
       setPhotoDescription("");
       setPhotoLocation("");
+      setPhotoCategory("general");
       setUploadOpen(false);
     } catch (e: any) {
       console.error(e);
@@ -938,6 +968,21 @@ const Explore = () => {
                 placeholder="City, venue, etc."
               />
             </div>
+
+            {/* NEW: Category */}
+            <div className="grid gap-2">
+              <Label htmlFor="cat">Category</Label>
+              <select
+                id="cat"
+                value={photoCategory}
+                onChange={(e) => setPhotoCategory(e.target.value)}
+                className="h-10 rounded-md border bg-background px-3 text-sm"
+              >
+                <option value="general">General</option>
+                <option value="food">Food</option>
+                {/* add more categories any time */}
+              </select>
+            </div>
           </div>
 
           <DialogFooter>
@@ -964,3 +1009,4 @@ const Explore = () => {
 };
 
 export default Explore;
+```
