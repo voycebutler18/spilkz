@@ -12,8 +12,8 @@ type Profile = {
   id: string;
   username?: string | null;
   display_name?: string | null;
-  first_name?: string | null;   // ✅ added
-  last_name?: string | null;    // ✅ added
+  first_name?: string | null;
+  last_name?: string | null;
   avatar_url?: string | null;
 };
 
@@ -22,10 +22,11 @@ type Splik = {
   user_id: string;
   title?: string | null;
   description?: string | null;
-  video_url: string;
-  thumbnail_url?: string | null;
+  video_url: string | null;          // ← nullable now
+  thumbnail_url?: string | null;     // used as poster OR photo url
   created_at?: string;
   hype_count?: number | null;
+  mime_type?: string | null;         // optional hint
   profile?: Profile | null;
 };
 
@@ -66,6 +67,9 @@ export default function SplikCard({
   // Local profile fallback (fetch if feed didn’t attach one)
   const [loadedProfile, setLoadedProfile] = React.useState<Profile | null>(null);
 
+  // Is this a video?
+  const hasVideo = Boolean(splik.video_url) || (splik.mime_type?.startsWith("video/") ?? false);
+
   React.useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
@@ -74,14 +78,14 @@ export default function SplikCard({
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // If profile info wasn't provided, fetch it (now including first/last name)
+  // If profile info wasn't provided, fetch it (including first/last name)
   React.useEffect(() => {
     if (splik.profile?.username || splik.profile?.display_name) return;
     let cancelled = false;
     (async () => {
       const { data } = await supabase
         .from("profiles")
-        .select("id, username, display_name, first_name, last_name, avatar_url") // ✅ include names
+        .select("id, username, display_name, first_name, last_name, avatar_url")
         .eq("id", splik.user_id)
         .maybeSingle<Profile>();
       if (!cancelled && data) setLoadedProfile(data);
@@ -89,8 +93,9 @@ export default function SplikCard({
     return () => { cancelled = true; };
   }, [splik.user_id, splik.profile?.username, splik.profile?.display_name]);
 
-  // Autoplay/visibility
+  // Autoplay/visibility (VIDEO ONLY)
   React.useEffect(() => {
+    if (!hasVideo) return; // ← no video, skip everything
     const el = cardRef.current;
     const vid = videoRef.current;
     if (!el || !vid) return;
@@ -146,7 +151,7 @@ export default function SplikCard({
       vid.removeEventListener("canplay", handleCanPlay);
       pause();
     };
-  }, [index, onPrimaryVisible, shouldLoad]);
+  }, [index, onPrimaryVisible, shouldLoad, hasVideo]);
 
   // Counts & user interactions
   React.useEffect(() => {
@@ -228,49 +233,65 @@ export default function SplikCard({
 
   const onToggleMute = (e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
+    if (!hasVideo) return;
     const v = videoRef.current; if (!v) return;
     const next = !v.muted; v.muted = next; setIsMuted(next);
     if (!next && !isPlaying) v.play().catch(() => { v.muted = true; setIsMuted(true); });
   };
 
-  // ✅ Reliable creator name + link to /creator/{username || id}
+  // Reliable creator name + link
   const profile = splik.profile || loadedProfile || null;
-  const fullName =
-    [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
-  const name =
-    profile?.display_name || fullName || profile?.username || "User";
+  const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
+  const name = profile?.display_name || fullName || profile?.username || "User";
   const avatarUrl =
     profile?.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${splik.user_id}`;
   const creatorHref = `/creator/${profile?.username || splik.user_id}`;
 
   return (
     <div ref={cardRef} className="rounded-xl bg-card/60 ring-1 ring-border/60 overflow-hidden">
-      {/* Video */}
+      {/* Media */}
       <div className="relative bg-black">
-        <video
-          ref={videoRef}
-          poster={splik.thumbnail_url || undefined}
-          className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
-          src={shouldLoad ? splik.video_url : ""}
-          playsInline muted loop preload="auto" controls={false}
-          webkit-playsinline="true"
-          onClick={(e) => {
-            e.preventDefault(); e.stopPropagation();
-            const v = videoRef.current; if (!v) return;
-            if (isPlaying) { v.pause(); setIsPlaying(false); }
-            else { v.play().then(() => setIsPlaying(true)).catch(() => (v.controls = true)); }
-          }}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onVolumeChange={() => setIsMuted(videoRef.current?.muted ?? true)}
-        />
-        <button
-          onClick={onToggleMute}
-          className="absolute right-3 bottom-3 rounded-full bg-black/70 hover:bg-black/80 p-2 ring-1 ring-white/30"
-          aria-label={isMuted ? "Unmute" : "Mute"}
-        >
-          {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
-        </button>
+        {hasVideo ? (
+          <>
+            <video
+              ref={videoRef}
+              poster={splik.thumbnail_url || undefined}
+              className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
+              src={shouldLoad && splik.video_url ? splik.video_url : ""}
+              playsInline
+              muted
+              loop
+              preload="auto"
+              controls={false}
+              // @ts-ignore
+              webkit-playsinline="true"
+              onClick={(e) => {
+                e.preventDefault(); e.stopPropagation();
+                const v = videoRef.current; if (!v) return;
+                if (isPlaying) { v.pause(); setIsPlaying(false); }
+                else { v.play().then(() => setIsPlaying(true)).catch(() => (v.controls = true)); }
+              }}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              onVolumeChange={() => setIsMuted(videoRef.current?.muted ?? true)}
+            />
+            <button
+              onClick={onToggleMute}
+              className="absolute right-3 bottom-3 rounded-full bg-black/70 hover:bg-black/80 p-2 ring-1 ring-white/30"
+              aria-label={isMuted ? "Unmute" : "Mute"}
+            >
+              {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+            </button>
+          </>
+        ) : (
+          // Photo-only fallback (never tries to play)
+          <img
+            src={splik.thumbnail_url || ""}
+            alt={splik.title || "Photo"}
+            className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
+            loading="lazy"
+          />
+        )}
       </div>
 
       {/* Creator info */}
@@ -296,9 +317,11 @@ export default function SplikCard({
             variant="outline"
           />
           <Button
-            variant={hasHyped ? "default" : "outline"} size="sm"
+            variant={hasHyped ? "default" : "outline"}
+            size="sm"
             className={cn("gap-2", hasHyped && "bg-orange-500 hover:bg-orange-600 text-white")}
-            onClick={toggleHype} disabled={loadingCounts}
+            onClick={toggleHype}
+            disabled={loadingCounts}
           >
             <Flame className={cn("h-4 w-4", hasHyped && "text-white")} />
             {hypeCount}
