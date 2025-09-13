@@ -80,12 +80,11 @@ export default function PrayersPage() {
   type FaithOption = {
     key: string;
     label: string;
-    religionRegex: string; // OSM "religion"
-    denomRegex?: string;   // OSM "denomination" or appears in name/brand
+    religionRegex: string;
+    denomRegex?: string;
   };
 
   const FAITH_OPTIONS: FaithOption[] = [
-    // Christianity
     { key: "christian_any", label: "Christian (Any)", religionRegex: "christian" },
     { key: "christian_nondenom", label: "Christian – Non-Denominational", religionRegex: "christian", denomRegex: "non[-_ ]?denominational|nondenominational" },
     { key: "christian_catholic", label: "Christian – Catholic", religionRegex: "christian", denomRegex: "catholic|roman(_|-)?catholic" },
@@ -243,7 +242,7 @@ export default function PrayersPage() {
               prev.map(p => (p.id === item.id ? { ...p, address: addr } : p))
             );
           }
-          await new Promise(r => setTimeout(r, 500)); // be polite to Nominatim
+          await new Promise(r => setTimeout(r, 500));
         }
       }
     } finally {
@@ -515,7 +514,6 @@ export default function PrayersPage() {
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
 
-      // Fill missing addresses (first few) via reverse geocode
       if (byDistance.some(p => !p.address || p.address === "Address not available")) {
         enrichMissingAddresses(byDistance);
       }
@@ -537,7 +535,6 @@ export default function PrayersPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-3 sm:px-4 py-4 space-y-4">
-      {/* Mobile-first header: stacks on phones */}
       <div className="flex flex-col sm:flex-row sm:items-center items-start gap-3">
         <h1 className="text-[22px] sm:text-2xl leading-snug font-semibold">
           Daily Prayers{" "}
@@ -552,7 +549,6 @@ export default function PrayersPage() {
           <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
           <div className="relative flex items-center justify-center gap-2">
             <MapPin className="h-[18px] w-[18px]" />
-            {/* Short label on phones, full on desktop */}
             <span className="sm:hidden">Find churches</span>
             <span className="hidden sm:inline">Find local churches near you</span>
           </div>
@@ -594,7 +590,7 @@ export default function PrayersPage() {
         </Button>
       </div>
 
-      {/* ===================== MOBILE-FRIENDLY FINDER ===================== */}
+      {/* ===================== FINDER DIALOG ===================== */}
       <Dialog
         open={finderOpen}
         onOpenChange={(open) => {
@@ -602,24 +598,22 @@ export default function PrayersPage() {
           if (!open) resetFinder();
         }}
       >
-        {/* Full-screen on mobile/tablet; centered modal on desktop */}
         <DialogContent
           className="
-            fixed inset-0 left-0 top-0 translate-x-0 translate-y-0
-            w-screen h-[100svh] max-w-none rounded-none m-0 p-0
+            fixed inset-0 left-0 top-0 w-screen h-[100dvh] max-w-none rounded-none m-0 p-0
             bg-slate-900/95 backdrop-blur-2xl shadow-2xl
-            overflow-hidden overflow-x-hidden z-50 border-0
+            overflow-hidden z-50 border-0
 
             lg:inset-auto lg:left-1/2 lg:top-1/2
             lg:translate-x-[-50%] lg:translate-y-[-50%]
-            lg:w-full lg:max-w-3xl lg:max-h-[90svh]
+            lg:w-full lg:max-w-3xl lg:max-h-[90dvh]
             lg:rounded-3xl lg:border lg:border-white/20
           "
         >
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
-          <div className="relative z-10 flex flex-col h-full max-w-screen">
-            {/* Fixed Header */}
+          {/* IMPORTANT: min-h-0 enables scrolling of the flex child below */}
+          <div className="relative z-10 flex flex-col h-full min-h-0 max-w-screen">
             <DialogHeader className="flex-shrink-0 space-y-2 sm:space-y-4 px-4 sm:px-6 pt-6 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10 bg-slate-900/90 backdrop-blur-xl">
               <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl">
                 <div className="relative">
@@ -638,8 +632,11 @@ export default function PrayersPage() {
             </DialogHeader>
 
             {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
-              <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-20">
+            <div
+              className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
+              <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-[calc(env(safe-area-inset-bottom)+88px)]">
                 {/* Location */}
                 <div className="space-y-3">
                   <label className="text-white font-semibold text-base sm:text-lg flex items-center gap-2">
@@ -709,7 +706,10 @@ export default function PrayersPage() {
                         onChange={(e) => setFaithSearch(e.target.value)}
                         className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
                       />
-                      <div className="max-h-48 overflow-y-auto overscroll-behavior-y-contain overscroll-contain pr-1">
+                      <div
+                        className="max-h-48 overflow-y-auto overscroll-y-contain pr-1"
+                        style={{ WebkitOverflowScrolling: "touch" }}
+                      >
                         <div className="grid grid-cols-1 gap-2">
                           {filteredFaithOptions.map((opt) => (
                             <button
@@ -772,7 +772,10 @@ export default function PrayersPage() {
                   <div className="space-y-4">
                     <h3 className="text-white text-lg sm:text-xl font-semibold">Found {nearby.length} nearby</h3>
                     <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                      <div className="max-h-[65svh] overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
+                      <div
+                        className="max-h-[60dvh] md:max-h-[65dvh] overflow-y-auto overscroll-y-contain"
+                        style={{ WebkitOverflowScrolling: "touch" }}
+                      >
                         {nearby.map((place, index) => (
                           <div
                             key={place.id}
