@@ -42,6 +42,9 @@ const MAX_VIDEO_DURATION = 3;
 const DESKTOP_MAX_SIZE = 1024 * 1024 * 1024;
 const MOBILE_MAX_SIZE = 1024 * 1024 * 1024;
 
+// ✅ Photos rail bucket (same name used on Explore)
+const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
+
 const MOOD_OPTIONS = [
   { value: "happy", label: "Happy" },
   { value: "chill", label: "Chill" },
@@ -242,18 +245,11 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     };
   }, []);
 
-  // === navigate to profile (unchanged behavior) ===
-  const goToProfile = useCallback(async () => {
-    let uid = currentUser?.id as string | undefined;
-    if (!uid) {
-      const { data } = await supabase.auth.getUser();
-      uid = data.user?.id;
-    }
+  // ✅ Route to the Creator Dashboard
+  const goToDashboard = useCallback(() => {
     onClose();
-    setTimeout(() => {
-      navigate(uid ? `/profile/${uid}` : "/profile");
-    }, 0);
-  }, [currentUser?.id, navigate, onClose]);
+    setTimeout(() => navigate("/creator-dashboard"), 0); // <-- adjust if your path differs
+  }, [navigate, onClose]);
 
   useEffect(() => {
     return () => {
@@ -734,7 +730,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         await supabase.from("right_rail_feed").insert({
           user_id: user.id,
           type: "video",
-          media_url: thumbnail_url ?? null, // optional preview for videos
+          media_url: thumbnail_url ?? null,
           created_at: newSplik?.created_at ?? new Date().toISOString(),
         });
         window.dispatchEvent(
@@ -755,7 +751,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       toast({ title: "Upload successful!", description: "Your 3-second Splik has been saved." });
       resetAll();
       onUploadComplete();
-      goToProfile();
+      goToDashboard();
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload video", variant: "destructive" });
@@ -783,11 +779,14 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
 
       const ext = (imageFile.name.split(".").pop() || "jpg").toLowerCase();
       const imagePath = `${user.id}/${Date.now()}_image.${ext}`;
-      const { publicUrl } = await uploadWithProgress("spliks", imagePath, imageFile);
+
+      // ✅ store photo in the photos bucket
+      const { publicUrl } = await uploadWithProgress(PHOTOS_BUCKET, imagePath, imageFile);
 
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = ((description || "").trim() + " " + moodTag).trim();
 
+      // ✅ create a lightweight "photo" entry in spliks so it shows on profile/dashboard
       const payload: any = {
         user_id: user.id,
         title,
@@ -800,8 +799,8 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         trim_end: null,
         is_food: isFood,
         video_path: null,
-        video_url: null,                // no video
-        thumbnail_url: publicUrl,       // use the image itself as thumbnail
+        video_url: null,           // no video
+        thumbnail_url: publicUrl,  // show the image on dashboard
         cover_time: 0,
       };
 
@@ -812,11 +811,30 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         .single();
       if (dbError) throw dbError;
 
+      // ✅ also add to the Splikz Photos rail table
+      try {
+        await supabase.from("vibe_photos").insert({
+          user_id: user.id,
+          photo_url: publicUrl,
+          description: finalDescription || null,
+          location: null,
+        });
+        // Let Explore rail update immediately
+        window.dispatchEvent(
+          new CustomEvent("vibe-photo-uploaded", {
+            detail: { user_id: user.id, photo_url: publicUrl, description: finalDescription || null, location: null }
+          })
+        );
+      } catch (e) {
+        console.warn("vibe_photos insert failed (non-fatal):", e);
+      }
+
+      // Activity rail
       try {
         await supabase.from("right_rail_feed").insert({
           user_id: user.id,
           type: "photo",
-          media_url: publicUrl, // use the uploaded image URL
+          media_url: publicUrl,
           created_at: newSplik?.created_at ?? new Date().toISOString(),
         });
         window.dispatchEvent(
@@ -837,7 +855,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       toast({ title: "Upload successful!", description: "Your photo has been saved." });
       resetAll();
       onUploadComplete();
-      goToProfile();
+      goToDashboard();
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload photo", variant: "destructive" });
@@ -937,16 +955,16 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) goToProfile();
+        if (!v) goToDashboard();
       }}
     >
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         {/* Close */}
         <button
           type="button"
-          onClick={goToProfile}
+          onClick={goToDashboard}
           className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20"
-          aria-label="Close and go to profile"
+          aria-label="Close and go to dashboard"
         >
           <X className="h-4 w-4" />
         </button>
