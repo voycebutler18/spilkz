@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Share2, Bookmark, BookmarkCheck, MoreVertical, Volume2, VolumeX, Play, Pause } from "lucide-react";
+import { Share2, Bookmark, BookmarkCheck, MoreVertical, Volume2, VolumeX } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -109,10 +109,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
   const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
-  const [showPauseButton, setShowPauseButton] = useState<Record<number, boolean>>({});
-  const pauseTimeoutRefs = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 
-  // NEW: fade-in control — true when first frame is painted
+  // Fade-in control — true when first frame is painted
   const [frameReady, setFrameReady] = useState<Record<number, boolean>>({});
 
   // force-remount key to ensure DOM order changes on each shuffle
@@ -121,10 +119,63 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // prewarmed feed
   const { feed: storeFeed } = useFeedStore();
 
-  // 🔸 Batch preloading state
+  // Batch preloading state
   const BATCH_SIZE = 20;
-  const [loadedBatches, setLoadedBatches] = useState<Set<number>>(new Set([0])); // load first batch
+  const [loadedBatches, setLoadedBatches] = useState<Set<number>>(new Set([0]));
   const [preloadingVideos, setPreloadingVideos] = useState<Set<number>>(new Set());
+
+  // Preload first 10 videos immediately
+  useEffect(() => {
+    if (spliks.length === 0) return;
+
+    // Add preconnect and preload hints
+    const head = document.head;
+    
+    // Add preconnect for video domains
+    const preconnectLinks = spliks.slice(0, 10).map(splik => {
+      const url = new URL(splik.video_url);
+      return url.origin;
+    });
+    
+    const uniqueDomains = Array.from(new Set(preconnectLinks));
+    uniqueDomains.forEach(domain => {
+      if (!document.querySelector(`link[href="${domain}"]`)) {
+        const link = document.createElement('link');
+        link.rel = 'preconnect';
+        link.href = domain;
+        head.appendChild(link);
+      }
+    });
+
+    // Preload first 10 videos
+    spliks.slice(0, 10).forEach((splik, index) => {
+      const preloadLink = document.createElement('link');
+      preloadLink.rel = 'preload';
+      preloadLink.as = 'video';
+      preloadLink.href = splik.video_url;
+      head.appendChild(preloadLink);
+
+      // Create hidden video elements for prewarming
+      const hiddenVideo = document.createElement('video');
+      hiddenVideo.preload = 'auto';
+      hiddenVideo.muted = true;
+      hiddenVideo.playsInline = true;
+      hiddenVideo.setAttribute('webkit-playsinline', 'true');
+      hiddenVideo.style.display = 'none';
+      hiddenVideo.src = splik.video_url;
+      
+      const startAt = Number(splik.trim_start ?? 0);
+      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+
+      hiddenVideo.addEventListener('loadeddata', () => {
+        try {
+          hiddenVideo.currentTime = resetAt;
+        } catch {}
+      }, { once: true });
+
+      document.body.appendChild(hiddenVideo);
+    });
+  }, [spliks]);
 
   // Try store → sessionStorage → network (only if needed)
   useEffect(() => {
@@ -133,14 +184,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     // helper to set UI state consistently
     const primeUI = (rows: Splik[]) => {
       const mutedState: Record<number, boolean> = {};
-      const pauseState: Record<number, boolean> = {};
-      const touch = isTouchDevice();
       rows.forEach((_, index) => {
-        mutedState[index] = touch ? true : false; // mobile default muted
-        pauseState[index] = true;
+        mutedState[index] = true; // All videos start muted for autoplay
       });
       setMuted(mutedState);
-      setShowPauseButton(pauseState);
       setFrameReady({}); // reset ready map
 
       setOrderEpoch((e) => e + 1);
@@ -357,7 +404,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     }
   };
 
-  // Scroll-based batch loading & initial batch
+  // Scroll-based batch loading
   useEffect(() => {
     const container = containerRef.current;
     if (!container || spliks.length === 0) return;
@@ -384,7 +431,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
   }, [spliks.length, loadedBatches, preloadingVideos]);
 
-  /* ========== Autoplay with flicker fixes + fade-in ========== */
+  /* ========== Autoplay with 3-second loop ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -405,8 +452,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         const startAt = Number(spliks[index]?.trim_start ?? 0);
         const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+        const loopDuration = 3; // 3 second loop
 
-        if (entry.intersectionRatio > 0.5) {
+        if (entry.intersectionRatio > 0.35) { // Changed threshold to 35%
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
@@ -418,9 +466,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           // @ts-expect-error - iOS attr
           video.setAttribute("webkit-playsinline", "true");
           video.disablePictureInPicture = true;
-          video.preload = isTouchDevice() ? "auto" : "metadata";
+          video.preload = "auto";
           video.crossOrigin = "anonymous";
-          video.muted = isTouchDevice() ? true : (muted[index] ?? false);
+          video.muted = muted[index] ?? true; // Always start muted
+          video.controls = false; // Explicitly disable controls
 
           // Only show video after a frame is painted
           setFrameReady((prev) => ({ ...prev, [index]: false }));
@@ -437,8 +486,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             }
           } catch {}
 
+          // 3-second loop behavior
           const onTimeUpdate = () => {
-            if (video.currentTime - startAt >= 3) {
+            const currentTime = video.currentTime;
+            if (currentTime - startAt >= loopDuration) {
               try {
                 armSeekedOnce();
                 video.currentTime = resetAt;
@@ -453,32 +504,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             currentPlayingVideo = video;
             currentPlayingIndex = index;
             setIsPlaying((prev) => ({ ...prev, [index]: true }));
-            setShowPauseButton((prev) => ({ ...prev, [index]: true }));
           } catch {
-            if (!video.muted) {
-              video.muted = true;
-              try {
-                await video.play();
-                currentPlayingVideo = video;
-                currentPlayingIndex = index;
-                setIsPlaying((prev) => ({ ...prev, [index]: true }));
-                setShowPauseButton((prev) => ({ ...prev, [index]: true }));
-              } catch {
-                try {
-                  armSeekedOnce();
-                  video.currentTime = resetAt;
-                } catch {}
-              }
-            } else {
-              try {
-                armSeekedOnce();
-                video.currentTime = resetAt;
-              } catch {}
-            }
+            // Fallback for autoplay restrictions
+            try {
+              armSeekedOnce();
+              video.currentTime = resetAt;
+            } catch {}
           }
-        } else if (entry.intersectionRatio < 0.5 && video === currentPlayingVideo) {
+        } else if (entry.intersectionRatio < 0.35 && video === currentPlayingVideo) {
           video.pause();
-          video.muted = true;
           setIsPlaying((prev) => ({ ...prev, [index]: false }));
           if (currentPlayingVideo === video) {
             currentPlayingVideo = null;
@@ -490,7 +524,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const observer = new IntersectionObserver(handleVideoPlayback, {
       root: container,
-      threshold: [0, 0.25, 0.5, 0.75, 1.0],
+      threshold: [0, 0.25, 0.35, 0.5, 0.75, 1.0], // Added 0.35 threshold
       rootMargin: "0px",
     });
 
@@ -502,51 +536,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       videoRefs.current.forEach((video) => {
         if (video && !video.paused) video.pause();
       });
-      Object.values(pauseTimeoutRefs.current).forEach((t) => t && clearTimeout(t));
     };
   }, [spliks, muted, orderEpoch]);
 
-  const toggleMute = (i: number) => {
+  const toggleMute = (i: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     const v = videoRefs.current[i];
     if (!v) return;
-    const newMutedState = !(muted[i] ?? isTouchDevice());
+    const newMutedState = !muted[i];
     if (!newMutedState) muteOtherVideos(i);
     v.muted = newMutedState;
     setMuted((m) => ({ ...m, [i]: newMutedState }));
-  };
-
-  const handlePlayPause = (index: number) => {
-    const video = videoRefs.current[index];
-    if (!video) return;
-    const currentlyPlaying = isPlaying[index] ?? false;
-
-    const startAt = Number(spliks[index]?.trim_start ?? 0);
-    const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-
-    if (currentlyPlaying) {
-      video.pause();
-      setIsPlaying((prev) => ({ ...prev, [index]: false }));
-      setShowPauseButton((prev) => ({ ...prev, [index]: false }));
-      if (pauseTimeoutRefs.current[index]) clearTimeout(pauseTimeoutRefs.current[index]);
-      pauseTimeoutRefs.current[index] = setTimeout(() => {
-        setShowPauseButton((prev) => ({ ...prev, [index]: true }));
-      }, 2000);
-    } else {
-      muteOtherVideos(index);
-      try {
-        if (video.readyState >= 2 && video.currentTime === 0) {
-          setFrameReady((prev) => ({ ...prev, [index]: false }));
-          video.currentTime = resetAt;
-        }
-      } catch {}
-      video.muted = muted[index] ?? isTouchDevice();
-      video
-        .play()
-        .then(() => setFrameReady((prev) => ({ ...prev, [index]: true })))
-        .catch(() => {});
-      setIsPlaying((prev) => ({ ...prev, [index]: true }));
-      setShowPauseButton((prev) => ({ ...prev, [index]: true }));
-    }
   };
 
   // favorites: optimistic + realtime-backed
@@ -611,8 +611,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
       >
         {spliks.map((s, i) => {
-          const videoIsPlaying = isPlaying[i] ?? false;
-          const shouldShowPauseButton = showPauseButton[i] ?? true;
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
           const ready = frameReady[i] ?? false;
@@ -646,7 +644,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 </div>
 
                 {/* video */}
-                <div className="relative bg-black aspect-[9/16] max-h-[600px] group">
+                <div className="relative bg-black aspect-[9/16] max-h-[600px]">
                   <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
                   {/* Poster overlay stays until the first real frame is painted */}
@@ -667,17 +665,18 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         // @ts-expect-error iOS attribute
                         el.setAttribute("webkit-playsinline", "true");
                         el.disablePictureInPicture = true;
-                        el.preload = isTouchDevice() ? "auto" : "metadata";
+                        el.preload = "auto";
                         el.crossOrigin = "anonymous";
-                        el.muted = muted[i] ?? isTouchDevice();
+                        el.muted = true;
+                        el.controls = false; // Explicitly disable controls
                       }
                     }}
                     src={s.video_url}
-                    poster={s.thumbnail_url ?? undefined}
                     className="w-full h-full object-cover"
                     playsInline
-                    preload={isTouchDevice() ? "auto" : "metadata"}
-                    muted={muted[i] ?? isTouchDevice()}
+                    preload="auto"
+                    muted
+                    controls={false}
                     onLoadedData={() => {
                       const v = videoRefs.current[i];
                       const startAt = Number(spliks[i]?.trim_start ?? 0);
@@ -691,34 +690,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         } catch {}
                       }
                     }}
-                    onLoadedMetadata={() => {
-                      if (!isTouchDevice()) {
-                        const v = videoRefs.current[i];
-                        const startAt = Number(spliks[i]?.trim_start ?? 0);
-                        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-                        if (v && v.currentTime === 0) {
-                          setFrameReady((p) => ({ ...p, [i]: false }));
-                          const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
-                          v.addEventListener("seeked", onSeeked, { once: true });
-                          try {
-                            v.currentTime = resetAt;
-                          } catch {}
-                        }
-                      }
-                    }}
                     onCanPlayThrough={() => {
-                      if (isTouchDevice()) {
-                        const v = videoRefs.current[i];
-                        const startAt = Number(spliks[i]?.trim_start ?? 0);
-                        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-                        if (v && v.currentTime === 0) {
-                          setFrameReady((p) => ({ ...p, [i]: false }));
-                          const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
-                          v.addEventListener("seeked", onSeeked, { once: true });
-                          try {
-                            v.currentTime = resetAt;
-                          } catch {}
-                        }
+                      const v = videoRefs.current[i];
+                      const startAt = Number(spliks[i]?.trim_start ?? 0);
+                      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+                      if (v && v.currentTime === 0) {
+                        setFrameReady((p) => ({ ...p, [i]: false }));
+                        const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
+                        v.addEventListener("seeked", onSeeked, { once: true });
+                        try {
+                          v.currentTime = resetAt;
+                        } catch {}
                       }
                     }}
                     onPlay={() => setFrameReady((p) => ({ ...p, [i]: true }))}
@@ -734,36 +716,23 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     }}
                   />
 
-                  {/* Center play/pause controls */}
-                  <div className="absolute inset-0 flex items-center justify-center" onClick={() => handlePlayPause(i)}>
-                    {videoIsPlaying ? (
-                      shouldShowPauseButton && (
-                        <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-full p-4">
-                          <Pause className="h-10 w-10 text-white drop-shadow-lg" />
-                        </span>
-                      )
-                    ) : (
-                      <span className="bg-black/35 rounded-full p-4 hover:bg-black/45 transition-colors">
-                        <Play className="h-8 w-8 text-white ml-1" />
-                      </span>
-                    )}
-                  </div>
-
-                  {/* mute toggle */}
+                  {/* Full-frame transparent tap area for mute toggle */}
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMute(i);
-                    }}
-                    className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 hover:bg-black/70 transition-colors"
-                    title={muted[i] ? "Unmute" : "Mute"}
+                    className="absolute inset-0 w-full h-full bg-transparent z-10"
+                    onClick={(e) => toggleMute(i, e)}
+                    aria-label={muted[i] ? "Unmute video" : "Mute video"}
+                  />
+
+                  {/* Mute indicator in corner */}
+                  <div
+                    className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 pointer-events-none"
                   >
                     {muted[i] ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
-                  </button>
+                  </div>
 
                   {/* title overlay */}
                   {s.title && (
-                    <div className="absolute bottom-3 left-3 z-20">
+                    <div className="absolute bottom-3 left-3 z-20 pointer-events-none">
                       <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
                         <p className="text-white text-sm font-medium truncate">{s.title}</p>
                       </div>
@@ -802,30 +771,4 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       aria-label={isSaved ? "Saved" : "Save"}
                       title={isSaved ? "Saved" : "Save"}
                     >
-                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
-                    </Button>
-                  </div>
-
-                  {/* caption */}
-                  {s.description && (
-                    <p className="text-sm">
-                      <span className="font-semibold mr-2">{nameFor(s)}</span>
-                      {s.description}
-                    </p>
-                  )}
-                </div>
-              </Card>
-            </section>
-          );
-        })}
-      </div>
-
-      {/* Optional: small indicator while background preloads */}
-      {preloadingVideos.size > 0 && (
-        <div className="fixed bottom-4 right-4 bg-black/80 text-white px-3 py-2 rounded-lg text-sm z-50">
-          Loading videos… ({preloadingVideos.size})
-        </div>
-      )}
-    </>
-  );
-}
+                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className
