@@ -1,6 +1,5 @@
 // src/pages/Explore.tsx
 // at top with other imports
-import MobileActivityBar from "@/components/MobileActivityBar";
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -818,11 +817,6 @@ const Explore = () => {
               </Button>
             </div>
           </div>
-          {/* Mobile activity summary (hidden on desktop) */}
-          <div className="mt-4 lg:hidden">
-            <MobileActivityBar />
-          </div>
-        </div>
       </div>
 
       {/* GRID */}
