@@ -1,4 +1,3 @@
-
 // src/components/dashboard/VideoUploadModal.tsx
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -691,8 +690,37 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         // original_trim_end: enforcedEnd,
       };
 
-      const { error: dbError } = await supabase.from("spliks").insert(payload);
+      // ⬇️ INSERT THE VIDEO AND MIRROR IT TO ACTIVITY
+      const { data: newSplik, error: dbError } = await supabase
+        .from("spliks")
+        .insert(payload)
+        .select("id, created_at")
+        .single();
       if (dbError) throw dbError;
+
+      // also write to right_rail_feed so Activity updates (best-effort)
+      try {
+        await supabase.from("right_rail_feed").insert({
+          user_id: user.id,
+          type: "video",
+          target_id: newSplik?.id ?? null,
+          created_at: newSplik?.created_at ?? new Date().toISOString(),
+        });
+
+        // optimistic ping so the rail updates instantly
+        window.dispatchEvent(
+          new CustomEvent("activity:append", {
+            detail: {
+              id: newSplik?.id ?? `splik_${Date.now()}`,
+              user_id: user.id,
+              type: "video",
+              created_at: newSplik?.created_at ?? new Date().toISOString(),
+            },
+          })
+        );
+      } catch (e) {
+        console.warn("right_rail_feed insert failed (non-fatal):", e);
+      }
 
       setUploadProgress(100);
       toast({ title: "Upload successful!", description: "Your 3-second Splik has been saved." });
@@ -748,8 +776,8 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
 
   // Helper for cover marker position on seek bar
   const coverPct = (() => {
-    const span = Math.max(0.001, trimRange[1] - trimRange[0]);
-    return ((coverTime - trimRange[0]) / span) * 100;
+       const span = Math.max(0.001, trimRange[1] - trimRange[0]);
+       return ((coverTime - trimRange[0]) / span) * 100;
   })();
 
   return (
