@@ -1,4 +1,4 @@
-// src/pages/Explore.tsx
+// src/pages/Explore.tsx - Desktop-Identical Mobile Version
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -76,7 +76,7 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Splikz Photos rail + viewer (grouped by creator, 24h, delete for owner)
+   Splikz Photos rail + viewer - DESKTOP IDENTICAL
 ────────────────────────────────────────────────────────────────────────── */
 type RailProfile = {
   id: string;
@@ -127,14 +127,12 @@ function RightPhotoRail({
   limit = 60,
   reloadToken = 0,
   currentUserId,
-  isMobile = false,
 }: {
   title?: string;
   maxListHeight?: string | number;
   limit?: number;
   reloadToken?: number;
   currentUserId?: string | null;
-  isMobile?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<PhotoItem[]>([]);
@@ -364,7 +362,7 @@ function RightPhotoRail({
             </div>
           )}
 
-          {/* grouped: one row per creator */}
+          {/* DESKTOP-IDENTICAL: Always use desktop sizing and spacing */}
           {groups.map((g) => {
             const slug = slugFor(g.profile);
             const avatar = g.profile?.avatar_url || null;
@@ -373,7 +371,7 @@ function RightPhotoRail({
                 key={`grp_${g.user_id}`}
                 className="rounded-xl border border-border/40 bg-muted/30 p-3"
               >
-                {/* header: avatar + name; show count on mobile */}
+                {/* header: avatar + name - DESKTOP VERSION (no mobile count) */}
                 <div className="flex items-center gap-2 mb-2">
                   <Link
                     to={slug ? `/creator/${slug}` : "#"}
@@ -390,27 +388,18 @@ function RightPhotoRail({
                   </Link>
                   <div className="min-w-0">
                     <p className="text-xs text-white/95 font-medium truncate">
-                      {g.name}{" "}
-                      {isMobile && (
-                        <span className="text-white/60">
-                          • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
-                        </span>
-                      )}
+                      {g.name}
                     </p>
                   </div>
                 </div>
 
-                {/* horizontal scroller of that creator's last-24h photos */}
+                {/* DESKTOP-IDENTICAL: Always use desktop photo dimensions */}
                 <div className="flex gap-2 overflow-x-auto hide-scroll snap-x">
                   {g.photos.map((ph) => (
                     <button
                       key={ph.id}
                       onClick={() => openViewer(ph)}
-                      className={`snap-start shrink-0 ${
-                        isMobile 
-                          ? "w-[120px] h-[120px] sm:w-[140px] sm:h-[140px]" 
-                          : "w-[140px] h-[140px] lg:w-[150px] lg:h-[150px]"
-                      } rounded-lg border border-border/40 overflow-hidden bg-muted/40`}
+                      className="snap-start shrink-0 w-[150px] h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
                       title="Open photo"
                     >
                       <img
@@ -428,7 +417,7 @@ function RightPhotoRail({
         </div>
       </div>
 
-      {/* Photo Viewer */}
+      {/* Photo Viewer - DESKTOP IDENTICAL */}
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
         <DialogContent className="sm:max-w-3xl p-0 overflow-hidden">
           {!!active && (
@@ -517,7 +506,7 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed + Splikz Photos side-by-side on mobile (like desktop)
+   PAGE: DESKTOP-IDENTICAL LAYOUT - Same grid on all devices
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -722,24 +711,6 @@ const Explore = () => {
 
   useAutoplayIn(feedRef, [feedSpliks]);
 
-  const handleShare = async (splikId: string) => {
-    const url = `${window.location.origin}/video/${splikId}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "Check out this Splik!", url });
-      } else {
-        await navigator.clipboard.writeText(url);
-        toast({ title: "Link copied!", description: "Copied to clipboard" });
-      }
-    } catch {
-      toast({
-        title: "Failed to share",
-        description: "Please try again",
-        variant: "destructive",
-      });
-    }
-  };
-
   const uploadPhoto = async () => {
     if (!user) {
       toast({
@@ -831,17 +802,17 @@ const Explore = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* HEADER */}
-      <div className="bg-gradient-to-b from-secondary/10 to-background py-6 sm:py-8 px-4">
+      {/* HEADER - DESKTOP IDENTICAL */}
+      <div className="bg-gradient-to-b from-secondary/10 to-background py-8 px-4">
         <div className="container">
-          <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-2">Home</h1>
-              <p className="text-muted-foreground text-sm sm:text-base">
-                Your video feed • Splikz Photos on the side
+              <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
+              <p className="text-muted-foreground">
+                Your video feed • Splikz Photos on the side (invisible scroll)
               </p>
             </div>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -851,23 +822,23 @@ const Explore = () => {
                 <RefreshCw
                   className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
                 />
-                <span className="hidden sm:inline ml-2">Update</span>
+                Update
               </Button>
               <Button size="sm" onClick={() => setUploadOpen(true)}>
                 <Camera className="h-4 w-4" />
-                <span className="hidden sm:inline ml-2">Upload Photo</span>
+                Upload Photo
               </Button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* MAIN CONTENT: Better responsive grid */}
-      <div className="container py-4 sm:py-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-12 gap-4 sm:gap-6 lg:gap-8">
+      {/* DESKTOP-IDENTICAL GRID: Always 12-column grid, even on mobile */}
+      <div className="container py-8">
+        <div className="grid grid-cols-12 gap-8">
           
-          {/* LEFT/MAIN: HOME FEED - Takes more space on mobile landscape and tablets */}
-          <div className="md:col-span-2 lg:col-span-9 space-y-4 sm:space-y-6">
+          {/* LEFT: HOME FEED - Always col-span-9 */}
+          <div className="col-span-9 space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
@@ -875,7 +846,7 @@ const Explore = () => {
               </div>
             ) : feedSpliks.length === 0 ? (
               <Card>
-                <CardContent className="p-6 sm:p-8 text-center">
+                <CardContent className="p-8 text-center">
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
                   <p className="text-muted-foreground mb-4">
@@ -889,7 +860,7 @@ const Explore = () => {
                 </CardContent>
               </Card>
             ) : (
-              <div ref={feedRef} className="space-y-6 sm:space-y-8">
+              <div ref={feedRef} className="space-y-8">
                 {feedSpliks.map((s) => (
                   <SplikCard
                     key={s.id}
@@ -917,36 +888,20 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT: Photos rail - Now visible on tablets and up, better mobile optimization */}
-          <div className="md:col-span-1 lg:col-span-3">
-            <div className="sticky top-4">
-              <RightPhotoRail
-                title="Splikz Photos"
-                maxListHeight="calc(100vh - 160px)"
-                currentUserId={user?.id}
-                reloadToken={reloadToken}
-                isMobile={false}
-              />
-            </div>
+          {/* RIGHT: Photos rail - Always col-span-3, always visible */}
+          <div className="col-span-3">
+            <RightPhotoRail
+              title="Splikz Photos"
+              currentUserId={user?.id}
+              reloadToken={reloadToken}
+            />
           </div>
-
-        </div>
-
-        {/* MOBILE ONLY: Compact floating photo button for very small screens */}
-        <div className="fixed bottom-6 right-6 md:hidden z-50">
-          <Button 
-            size="icon"
-            onClick={() => setUploadOpen(true)}
-            className="h-12 w-12 rounded-full shadow-lg"
-          >
-            <Camera className="h-5 w-5" />
-          </Button>
         </div>
       </div>
 
       {/* Upload Photo dialog */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent className="sm:max-w-md mx-4">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Upload a photo</DialogTitle>
             <DialogDescription>
@@ -974,7 +929,6 @@ const Explore = () => {
                   setPhotoDescription(e.target.value.slice(0, 200))
                 }
                 placeholder="Say something about this photo (max 200 chars)"
-                className="min-h-[80px]"
               />
               <div className="text-xs text-muted-foreground text-right">
                 {photoDescription.length}/200
@@ -992,16 +946,15 @@ const Explore = () => {
             </div>
           </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter>
             <Button
               variant="outline"
               onClick={() => setUploadOpen(false)}
               disabled={uploading}
-              className="w-full sm:w-auto"
             >
               Cancel
             </Button>
-            <Button onClick={uploadPhoto} disabled={uploading} className="w-full sm:w-auto">
+            <Button onClick={uploadPhoto} disabled={uploading}>
               {uploading ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : (
@@ -1013,7 +966,7 @@ const Explore = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Additional mobile-friendly styles */}
+      {/* FORCED DESKTOP LAYOUT: Override mobile responsive behavior */}
       <style>{`
         .hide-scroll { 
           -ms-overflow-style: none; 
@@ -1023,26 +976,81 @@ const Explore = () => {
           display: none; 
         }
         
-        /* Enhanced mobile responsiveness */
+        /* FORCE DESKTOP LAYOUT ON ALL DEVICES */
+        .container {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 0 16px;
+        }
+        
+        /* Force 12-column grid behavior on mobile */
+        .grid.grid-cols-12 {
+          display: grid;
+          grid-template-columns: repeat(12, minmax(0, 1fr));
+          gap: 2rem;
+        }
+        
+        .col-span-9 {
+          grid-column: span 9 / span 9;
+        }
+        
+        .col-span-3 {
+          grid-column: span 3 / span 3;
+        }
+        
+        /* Mobile viewport fixes for desktop layout */
         @media (max-width: 768px) {
           .container {
-            padding-left: 1rem;
-            padding-right: 1rem;
+            padding: 0 8px;
+            min-width: 900px; /* Force minimum width to maintain desktop layout */
+          }
+          
+          .grid.grid-cols-12 {
+            gap: 1rem;
+          }
+          
+          /* Enable horizontal scrolling on mobile to accommodate desktop layout */
+          body {
+            overflow-x: auto;
+          }
+          
+          /* Adjust header for mobile */
+          .bg-gradient-to-b {
+            padding: 1rem;
+          }
+          
+          h1 {
+            font-size: 1.5rem !important;
+          }
+          
+          p {
+            font-size: 0.875rem;
+          }
+          
+          /* Make buttons smaller on mobile */
+          .flex.gap-2 button {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+          }
+          
+          /* Adjust photo rail for mobile */
+          .bg-card\\/60 {
+            padding: 0.75rem;
+          }
+          
+          .text-base.font-semibold {
+            font-size: 0.875rem;
           }
         }
         
-        /* Improved tablet layout */
-        @media (min-width: 768px) and (max-width: 1024px) {
-          .grid.md\\:grid-cols-3 {
-            grid-template-columns: 2fr 1fr;
+        /* Very small mobile adjustments */
+        @media (max-width: 480px) {
+          .container {
+            min-width: 800px; /* Even smaller minimum to prevent extreme zooming */
           }
-        }
-        
-        /* Better mobile photo grid sizing */
-        @media (max-width: 640px) {
-          .snap-start.shrink-0 {
-            width: 110px !important;
-            height: 110px !important;
+          
+          .grid.grid-cols-12 {
+            gap: 0.5rem;
           }
         }
       `}</style>
