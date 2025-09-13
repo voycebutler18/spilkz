@@ -166,17 +166,13 @@ function RightPhotoRail({
       removeLocally(active.id);
       if (existing?.id && existing.id !== active.id) removeLocally(existing.id);
 
-      closeViewer();
-      toast({ title: "Deleted", description: "Your photo was removed." });
-    } catch (e: any) {
-      console.error(e);
-      toast({
-        title: "Delete failed",
-        description: e?.message || "Please try again",
-        variant: "destructive",
-      });
-    }
-  };
+      // inside deleteActive(), after the delete succeeds
+closeViewer();
+toast({
+  title: "Photo deleted",
+  description:
+    "Heads up: the Activity panel may take a little time to update. If the count looks off, refresh the page to see the latest.",
+});
 
   useEffect(() => {
     let cancelled = false;
