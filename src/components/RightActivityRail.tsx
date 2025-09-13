@@ -1,3 +1,4 @@
+// src/components/RightActivityRail.tsx
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +37,7 @@ type Group = {
 
 const TIME_WINDOW_HOURS = 24;
 
+/** helpers */
 function timeAgo(ts: number) {
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60) return `${s}s`;
@@ -43,14 +45,15 @@ function timeAgo(ts: number) {
   const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24); return `${d}d`;
 }
-
 const bestName = (p?: Profile) =>
   (p?.username && p.username.trim()) ||
   (p?.display_name && p.display_name.trim()) ||
   (p?.id ? `user_${p.id.slice(0, 6)}` : "User");
-
 const profileSlug = (p?: Profile) =>
   (p?.username && p.username.trim()) || p?.id || "";
+/** NEW: treat image URLs as "photo" regardless of type coming from the view */
+const looksLikeImageUrl = (u?: string | null) =>
+  !!u && /\.(jpe?g|png|gif|webp)$/i.test(u);
 
 export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
   const navigate = useNavigate();
@@ -112,13 +115,18 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
       if (error) throw error;
 
-      const rows: Activity[] = (data || []).map((r: any) => ({
-        id: String(r.id),
-        user_id: r.user_id ?? null,
-        kind: (r.type as ActivityKind) || "photo",
-        created_at: r.created_at as string,
-        media_url: r.media_url ?? null,
-      }));
+      // FIX: coerce kind to "photo" when media_url is an image
+      const rows: Activity[] = (data || []).map((r: any) => {
+        const incoming: ActivityKind = (r.type as ActivityKind) || "photo";
+        const kind: ActivityKind = looksLikeImageUrl(r.media_url) ? "photo" : incoming;
+        return {
+          id: String(r.id),
+          user_id: r.user_id ?? null,
+          kind,
+          created_at: r.created_at as string,
+          media_url: r.media_url ?? null,
+        };
+      });
 
       const sig = JSON.stringify(rows.map((r) => [r.user_id, r.kind, r.id]));
       if (sig !== sigRef.current) {
@@ -133,8 +141,12 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
     load().catch(() => {});
 
+    // Subscribe to changes (right_rail_feed if it's a table; plus underlying tables)
     const ch = supabase
       .channel("right-rail-activity")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "right_rail_feed" }, load)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "right_rail_feed" }, load)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "right_rail_feed" }, load)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "vibe_photos" }, load)
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "vibe_photos" }, load)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "vibe_photos" }, load)
@@ -146,7 +158,7 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
       alive = false;
       supabase.removeChannel(ch);
     };
-  }, [limit]);
+  }, [limit, profiles]);
 
   const summaryText = (g: Group) => {
     const parts: string[] = [];
