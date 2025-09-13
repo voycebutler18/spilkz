@@ -20,6 +20,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+// NEW: use the same Activity component everywhere
+import RightActivityRail from "@/components/RightActivityRail";
+
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
 
 const preconnect = (url?: string | null) => {
@@ -168,7 +171,11 @@ function RightPhotoRail({
       if (existing?.id && existing.id !== active.id) removeLocally(existing.id);
 
       closeViewer();
-      toast({ title: "Deleted", description: "Heads up: the Activity panel may take a little time to update. If the count looks off, refresh the page to see the latest.",});
+      toast({
+        title: "Deleted",
+        description:
+          "Heads up: the Activity panel may take a little time to update. If the count looks off, refresh the page to see the latest.",
+      });
     } catch (e: any) {
       console.error(e);
       toast({
@@ -817,6 +824,12 @@ const Explore = () => {
               </Button>
             </div>
           </div>
+        </div>
+      </div> {/* ← FIX: close header wrapper */}
+
+      {/* Mobile: show the same Activity rail, full width */}
+      <div className="container mt-4 lg:hidden">
+        <RightActivityRail limit={60} />
       </div>
 
       {/* GRID */}
@@ -883,7 +896,7 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* MOBILE: Photos rail full-width */}
+        {/* MOBILE: Photos rail full-width (mirrors desktop content, stacked) */}
         <div className="mt-10 lg:hidden">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xl font-semibold">Splikz Photos</h2>
