@@ -18,7 +18,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import RightActivityRail from "@/components/RightActivityRail"; // NEW
 
 /* ──────────────────────────────────────────────────────────────────────────
    Config
@@ -107,12 +106,7 @@ type PhotoGroup = {
 const displayName = (p?: RailProfile | null) => {
   if (!p) return "User";
   const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-  return (
-    p.display_name?.trim() ||
-    full ||
-    p.username?.trim() ||
-    `user_${(p.id || "").slice(0, 6) || "anon"}`
-  );
+  return p.display_name?.trim() || full || p.username?.trim() || `user_${(p.id || "").slice(0, 6) || "anon"}`;
 };
 const slugFor = (p?: RailProfile | null) =>
   p?.username ? p.username : p?.id || "";
@@ -368,7 +362,7 @@ function RightPhotoRail({
             </div>
           )}
 
-          {/* grouped: one row per creator */}
+          {/* grouped: one row per creator (mobile + desktop) */}
           {groups.map((g) => {
             const slug = slugFor(g.profile);
             const avatar = g.profile?.avatar_url || null;
@@ -377,7 +371,7 @@ function RightPhotoRail({
                 key={`grp_${g.user_id}`}
                 className="rounded-xl border border-border/40 bg-muted/30 p-3"
               >
-                {/* header: avatar + name */}
+                {/* header: avatar + name; show count on mobile only */}
                 <div className="flex items-center gap-2 mb-2">
                   <Link
                     to={slug ? `/creator/${slug}` : "#"}
@@ -385,11 +379,7 @@ function RightPhotoRail({
                     title={g.name}
                   >
                     {avatar ? (
-                      <img
-                        src={avatar}
-                        alt={g.name}
-                        className="w-full h-full object-cover"
-                      />
+                      <img src={avatar} alt={g.name} className="w-full h-full object-cover" />
                     ) : (
                       <span className="text-white text-xs font-semibold">
                         {g.name.charAt(0).toUpperCase()}
@@ -399,9 +389,8 @@ function RightPhotoRail({
                   <div className="min-w-0">
                     <p className="text-xs text-white/95 font-medium truncate">
                       {g.name}{" "}
-                      <span className="text-white/60">
-                        • {g.photos.length} photo
-                        {g.photos.length > 1 ? "s" : ""}
+                      <span className="text-white/60 lg:hidden">
+                        • {g.photos.length} photo{g.photos.length > 1 ? "s" : ""}
                       </span>
                     </p>
                   </div>
@@ -413,7 +402,7 @@ function RightPhotoRail({
                     <button
                       key={ph.id}
                       onClick={() => openViewer(ph)}
-                      className="snap-start shrink-0 w-[140px] h-[140px] sm:w-[150px] sm:h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
+                      className="snap-start shrink-0 w-[140px] h-[140px] lg:w-[150px] lg:h-[150px] rounded-lg border border-border/40 overflow-hidden bg-muted/40"
                       title="Open photo"
                     >
                       <img
@@ -520,7 +509,7 @@ function RightPhotoRail({
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   PAGE: Home feed + Splikz Photos — Mobile mirrors Desktop right rail
+   PAGE: Home feed (no Nearby) + Splikz Photos ONLY
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const [feedSpliks, setFeedSpliks] = useState<(Splik & { profile?: Profile })[]>([]);
@@ -541,9 +530,7 @@ const Explore = () => {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, session) =>
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) =>
       setUser(session?.user ?? null)
     );
     return () => subscription.unsubscribe();
@@ -565,10 +552,7 @@ const Explore = () => {
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         const byId: Record<string, Profile> = {};
         if (userIds.length) {
-          const { data: profs } = await supabase
-            .from("profiles")
-            .select("*")
-            .in("id", userIds);
+          const { data: profs } = await supabase.from("profiles").select("*").in("id", userIds);
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
         const withProfiles = rows.map((r) => ({ ...r, profile: byId[r.user_id] }));
@@ -584,11 +568,7 @@ const Explore = () => {
       }
     } catch (e) {
       console.error("Home feed load error:", e);
-      toast({
-        title: "Error",
-        description: "Failed to load your feed",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to load your feed", variant: "destructive" });
       setFeedSpliks([]);
     } finally {
       setLoading(false);
@@ -696,7 +676,7 @@ const Explore = () => {
         (entries) => {
           entries.forEach((e) => {
             videoVisibility.set(
-              (e.target as HTMLVideoElement),
+              e.target as HTMLVideoElement,
               e.intersectionRatio
             );
           });
@@ -706,7 +686,7 @@ const Explore = () => {
       );
 
       const init = () => {
-        Array.from(host.querySelectorAll("video")).forEach((v: HTMLVideoElement) => {
+        allVideos().forEach((v) => {
           if (!v.hasAttribute("data-mobile-init")) {
             setup(v);
             v.setAttribute("data-mobile-init", "1");
@@ -725,7 +705,7 @@ const Explore = () => {
       return () => {
         io.disconnect();
         mo.disconnect();
-        Array.from(host.querySelectorAll("video")).forEach((v) => v.pause());
+        pauseAll();
         videoVisibility.clear();
         currentPlayingVideo = null;
       };
@@ -850,7 +830,7 @@ const Explore = () => {
             <div>
               <h1 className="text-3xl md:text-4xl font-bold mb-2">Home</h1>
               <p className="text-muted-foreground">
-                Your video feed • Splikz Photos on the side
+                Your video feed • Splikz Photos on the side (invisible scroll)
               </p>
             </div>
             <div className="flex gap-2">
@@ -874,10 +854,10 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* GRID */}
+      {/* GRID: Desktop side-by-side; Mobile stacked */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* LEFT: HOME FEED */}
+          {/* LEFT / TOP: HOME FEED */}
           <div className="lg:col-span-9 space-y-6">
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -890,7 +870,7 @@ const Explore = () => {
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    We'll show the latest as soon as they're posted.
+                    We’ll show the latest as soon as they’re posted.
                   </p>
                   <div className="flex gap-2 justify-center">
                     <Button onClick={() => fetchHomeFeed()} variant="outline">
@@ -928,9 +908,8 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): Activity + Photos */}
-          <div className="lg:col-span-3 hidden lg:block space-y-6">
-            <RightActivityRail />
+          {/* RIGHT (DESKTOP): grouped Photos rail */}
+          <div className="lg:col-span-3 hidden lg:block">
             <RightPhotoRail
               title="Splikz Photos"
               currentUserId={user?.id}
@@ -939,27 +918,24 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* MOBILE MIRROR of the right rail (stacked) */}
-        <div className="mt-10 lg:hidden space-y-6">
-          <RightActivityRail />
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-xl font-semibold">Splikz Photos</h2>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setUploadOpen(true)}
-              >
-                <Camera className="h-4 w-4 mr-1" /> Upload
-              </Button>
-            </div>
-            <RightPhotoRail
-              title="Latest photos"
-              maxListHeight="60vh"
-              reloadToken={reloadToken}
-              currentUserId={user?.id}
-            />
+        {/* MOBILE: Photos rail full-width below feed */}
+        <div className="mt-10 lg:hidden">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xl font-semibold">Splikz Photos</h2>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setUploadOpen(true)}
+            >
+              <Camera className="h-4 w-4 mr-1" /> Upload
+            </Button>
           </div>
+          <RightPhotoRail
+            title="Latest photos"
+            maxListHeight="60vh"
+            reloadToken={reloadToken}
+            currentUserId={user?.id}
+          />
         </div>
       </div>
 
