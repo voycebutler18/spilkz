@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Loader2, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import SplikCard from "@/components/splik/SplikCard";
 import { useToast } from "@/components/ui/use-toast";
+import RightActivityRail from "@/components/RightActivityRail";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
