@@ -468,7 +468,7 @@ const Explore = () => {
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
-  the const [photoLocation, setPhotoLocation] = useState("");
+  const [photoLocation, setPhotoLocation] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
