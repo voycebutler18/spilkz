@@ -18,9 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-
-// NEW: mirror desktop right-rail on both desktop & mobile
-import RightActivityRail from "@/components/RightActivityRail";
+import RightActivityRail from "@/components/RightActivityRail"; // mirror desktop activity rail
 
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
 
@@ -337,14 +335,12 @@ function RightPhotoRail({
                   loading="lazy"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
-                {/* small category chip (optional) */}
                 {ph.category && (
                   <span className="absolute top-2 left-2 text-[10px] px-2 py-0.5 rounded-full bg-black/60 text-white border border-white/20">
                     {ph.category}
                   </span>
                 )}
 
-                {/* Bottom caption */}
                 <div className="absolute inset-x-0 bottom-0 px-2 pb-2 pt-10 bg-gradient-to-t from-black/60 via-black/10 to-transparent">
                   <div className="flex items-end gap-2">
                     <Link
@@ -383,7 +379,6 @@ function RightPhotoRail({
         </div>
       </div>
 
-      {/* Photo Viewer */}
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
         <DialogContent className="sm:max-w-3xl p-0 overflow-hidden">
           {!!active && (
@@ -673,7 +668,6 @@ const Explore = () => {
       return () => {
         io.disconnect();
         mo.disconnect();
-        pauseAll();
         videoVisibility.clear();
         currentPlayingVideo = null;
       };
@@ -682,7 +676,7 @@ const Explore = () => {
 
   useAutoplayIn(feedRef, [feedSpliks]);
 
-  const { toast: _toast } = useToast(); // keep same hook, ignore here too
+  const { toast: _toast } = useToast();
   const handleShare = async (splikId: string) => {
     const url = `${window.location.origin}/video/${splikId}`;
     try {
@@ -747,7 +741,7 @@ const Explore = () => {
         photo_url,
         description: photoDescription.trim(),
         location: photoLocation.trim() || null,
-        category: (photoCategory || "general").toLowerCase(), // NEW
+        category: (photoCategory || "general").toLowerCase(),
       };
 
       const { error: insertErr } = await supabase
@@ -762,7 +756,7 @@ const Explore = () => {
             photo_url,
             description: photoDescription.trim(),
             location: photoLocation.trim() || null,
-            category: (photoCategory || "general").toLowerCase(), // NEW
+            category: (photoCategory || "general").toLowerCase(),
           },
         })
       );
@@ -775,7 +769,7 @@ const Explore = () => {
       setFile(null);
       setPhotoDescription("");
       setPhotoLocation("");
-      setPhotoCategory("general"); // reset
+      setPhotoCategory("general");
       setUploadOpen(false);
     } catch (e: any) {
       console.error(e);
@@ -826,8 +820,8 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* MOBILE MIRROR of the right rail (stacked) */}
-      <div className="container mt-6 space-y-6 lg:hidden">
+      {/* MOBILE rails stacked (mirror desktop right rail) */}
+      <div className="container lg:hidden space-y-6 py-6">
         <RightActivityRail />
         <RightPhotoRail
           title="Splikz Photos"
@@ -837,7 +831,7 @@ const Explore = () => {
         />
       </div>
 
-      {/* GRID (Desktop keeps right rail on the side) */}
+      {/* GRID */}
       <div className="container py-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* FEED */}
@@ -891,8 +885,8 @@ const Explore = () => {
             )}
           </div>
 
-          {/* RIGHT (DESKTOP): Activity + Photos stacked */}
-          <div className="lg:col-span-3 hidden lg:flex lg:flex-col lg:gap-6">
+          {/* RIGHT (DESKTOP): Activity + Photos rail (stacked) */}
+          <div className="lg:col-span-3 hidden lg:flex lg:flex-col lg:gap-8">
             <RightActivityRail />
             <RightPhotoRail
               title="Splikz Photos"
@@ -949,7 +943,6 @@ const Explore = () => {
               />
             </div>
 
-            {/* NEW: Category */}
             <div className="grid gap-2">
               <Label htmlFor="cat">Category</Label>
               <select
