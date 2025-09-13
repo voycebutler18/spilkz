@@ -4,44 +4,25 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-  import { Label } from "@/components/ui/label";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
-  Video,
-  Users,
-  TrendingUp,
-  Settings,
-  Heart,
-  MessageCircle,
-  Shield,
-  Trash2,
-  Plus,
-  // Eye removed
-  Volume2,
-  VolumeX,
+  Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield, Trash2, Plus,
+  Volume2, VolumeX,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -65,14 +46,14 @@ interface SplikRow {
   user_id: string;
   title: string | null;
   description: string | null;
-  video_url: string | null;
-  thumbnail_url: string | null;
+  video_url: string | null;      // null for photos
+  thumbnail_url: string | null;  // for photos this is the image itself
   created_at: string;
-  likes_count?: number | null; // now represents hype (🔥) count
+  likes_count?: number | null;
   comments_count?: number | null;
-  // views_count removed
-  trim_start?: number | null;
-  trim_end?: number | null;
+  trim_start?: number | null;    // videos only
+  trim_end?: number | null;      // videos only
+  mime_type?: string | null;     // optional, helpful to distinguish photo/video
   profile?: {
     username?: string | null;
     display_name?: string | null;
@@ -99,7 +80,6 @@ interface CommentRow {
 }
 
 /* ----------------------------- Helpers for counts ----------------------------- */
-// Count hype (🔥) for a set of splik IDs.
 async function fetchHypeCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
   try {
@@ -115,8 +95,6 @@ async function fetchHypeCountsFor(ids: string[]) {
   } catch {}
   return counts;
 }
-
-// Count comments for a set of splik IDs.
 async function fetchCommentCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
   try {
@@ -131,10 +109,7 @@ async function fetchCommentCountsFor(ids: string[]) {
 
 /* ----------------------------- Comments Manager ----------------------------- */
 function CommentsManager({
-  open,
-  onClose,
-  splik,
-  onCountChange,
+  open, onClose, splik, onCountChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -260,11 +235,9 @@ function CommentsManager({
   );
 }
 
-/* ----------------------------- Feed Item (plays on tap) ----------------------------- */
+/* ----------------------------- Feed Item ----------------------------- */
 function CreatorFeedItem({
-  splik,
-  onDelete,
-  onCommentCountAdjust,
+  splik, onDelete, onCommentCountAdjust,
 }: {
   splik: SplikRow;
   onDelete: (id: string) => void;
@@ -275,10 +248,14 @@ function CreatorFeedItem({
   const [isMuted, setIsMuted] = useState(true);
   const [showComments, setShowComments] = useState(false);
 
+  const isPhoto = !splik.video_url && !!splik.thumbnail_url; // <-- key fix
   const start = Math.max(0, Number(splik.trim_start ?? 0));
   const loopEnd = start + 3;
 
+  /* Video-only lifecycle */
   useEffect(() => {
+    if (isPhoto) return; // nothing to wire for photos
+
     const v = videoRef.current;
     if (!v) return;
 
@@ -295,15 +272,11 @@ function CreatorFeedItem({
     v.disableRemotePlayback = true;
 
     const onLoaded = () => {
-      try {
-        v.currentTime = start;
-      } catch {}
+      try { v.currentTime = start; } catch {}
     };
     const onTimeUpdate = () => {
       if (v.currentTime >= loopEnd || v.currentTime < start) {
-        try {
-          v.currentTime = start;
-        } catch {}
+        try { v.currentTime = start; } catch {}
       }
     };
 
@@ -312,28 +285,22 @@ function CreatorFeedItem({
     return () => {
       v.removeEventListener("loadedmetadata", onLoaded);
       v.removeEventListener("timeupdate", onTimeUpdate);
-      try {
-        v.pause();
-      } catch {}
+      try { v.pause(); } catch {}
     };
-  }, [start, loopEnd]);
+  }, [isPhoto, start, loopEnd]);
 
   const togglePlayPause = async () => {
+    if (isPhoto) return; // no-op for photos
     const v = videoRef.current;
     if (!v) return;
 
     if (isPlaying) {
-      try {
-        v.pause();
-      } catch {}
+      try { v.pause(); } catch {}
       setIsPlaying(false);
     } else {
-      try {
-        v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01));
-      } catch {}
+      try { v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01)); } catch {}
       v.muted = isMuted;
-      if (isMuted) v.setAttribute("muted", "true");
-      else v.removeAttribute("muted");
+      if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
       try {
         await v.play();
         setIsPlaying(true);
@@ -346,22 +313,66 @@ function CreatorFeedItem({
 
   const toggleMute = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (isPhoto) return;
     const v = videoRef.current;
     if (!v) return;
     const next = !isMuted;
     v.muted = next;
-    if (next) v.setAttribute("muted", "true");
-    else v.removeAttribute("muted");
+    if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
     setIsMuted(next);
   };
 
   return (
     <div className="w-full flex justify-center">
       <div className="w-full max-w-[480px] bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        {/* Video (9:16) */}
+        {/* Media (9:16) */}
         <div className="relative w-full" style={{ paddingBottom: "177.78%" }}>
-          {splik.video_url ? (
+          {isPhoto ? (
             <>
+              {/* PHOTO */}
+              <img
+                src={splik.thumbnail_url || ""}
+                alt={splik.title || "Photo"}
+                className="absolute inset-0 w-full h-full object-contain bg-black"
+              />
+
+              {/* Top-right Delete */}
+              <div className="absolute top-3 right-3">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
+                  onClick={() => onDelete(splik.id)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Stats bar */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+                <div className="flex items-center justify-between text-white text-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1">
+                      <Heart className="h-4 w-4" />
+                      <span>{splik.likes_count || 0}</span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowComments(true);
+                      }}
+                      className="flex items-center gap-1 hover:opacity-80"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      <span>{splik.comments_count || 0}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : splik.video_url ? (
+            <>
+              {/* VIDEO */}
               <video
                 ref={videoRef}
                 src={splik.video_url}
@@ -376,6 +387,7 @@ function CreatorFeedItem({
                 controlsList="nodownload noplaybackrate noremoteplayback"
                 onClick={togglePlayPause}
               />
+
               {/* Center Play/Pause */}
               <button
                 aria-label={isPlaying ? "Pause" : "Play"}
@@ -419,7 +431,7 @@ function CreatorFeedItem({
                 {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
               </button>
 
-              {/* Stats bar (likes/hype + comments only) */}
+              {/* Stats bar */}
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
                 <div className="flex items-center justify-between text-white text-sm">
                   <div className="flex items-center gap-4">
@@ -450,16 +462,20 @@ function CreatorFeedItem({
 
         {/* Meta */}
         <div className="p-4">
-          <h4 className="font-semibold text-white">{splik.title || `Video ${splik.id.slice(0, 6)}`}</h4>
+          <h4 className="font-semibold text-white">
+            {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
+          </h4>
           {splik.description && (
             <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
           )}
           <div className="mt-2 text-xs text-gray-500">
-            {new Date(splik.created_at).toLocaleDateString()} •
-            <span className="ml-1">
-              Trimmed: {Math.max(0, Math.round((splik.trim_start ?? 0) * 10) / 10)}s –{" "}
-              {Math.round((Math.max(0, (splik.trim_start ?? 0)) + 3) * 10) / 10}s
-            </span>
+            {new Date(splik.created_at).toLocaleDateString()}
+            {!isPhoto && (
+              <span className="ml-1">
+                • Trimmed: {Math.max(0, Math.round((splik.trim_start ?? 0) * 10) / 10)}s –{" "}
+                {Math.round((Math.max(0, (splik.trim_start ?? 0)) + 3) * 10) / 10}s
+              </span>
+            )}
           </div>
 
           <div className="mt-3">
@@ -484,11 +500,9 @@ function CreatorFeedItem({
   );
 }
 
-/* ----------------------------- Feed (single column) ----------------------------- */
+/* ----------------------------- Feed ----------------------------- */
 function CreatorFeed({
-  spliks,
-  onDelete,
-  onCommentCountAdjust,
+  spliks, onDelete, onCommentCountAdjust,
 }: {
   spliks: SplikRow[];
   onDelete: (id: string) => void;
@@ -565,9 +579,7 @@ const CreatorDashboard = () => {
 
     return () => {
       if (channelCleanup.current) {
-        try {
-          channelCleanup.current();
-        } catch {}
+        try { channelCleanup.current(); } catch {}
         channelCleanup.current = null;
       }
     };
@@ -577,15 +589,12 @@ const CreatorDashboard = () => {
   /* ---------------------------- Realtime ---------------------------- */
   const setupRealtime = (uid: string) => {
     if (channelCleanup.current) {
-      try {
-        channelCleanup.current();
-      } catch {}
+      try { channelCleanup.current(); } catch {}
       channelCleanup.current = null;
     }
 
     const ch = supabase
       .channel("creator-dashboard")
-      // spliks changes
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
@@ -720,7 +729,7 @@ const CreatorDashboard = () => {
 
       const ids = (rows || []).map((r: any) => r.id as string);
       const [hypeCounts, commentCounts] = await Promise.all([
-        fetchHypeCountsFor(ids),      // 🔥
+        fetchHypeCountsFor(ids),
         fetchCommentCountsFor(ids),
       ]);
 
@@ -737,14 +746,14 @@ const CreatorDashboard = () => {
       const merged: SplikRow[] = (rows || []).map((r: any) => ({
         ...(r as SplikRow),
         profile: prof,
-        likes_count: hypeCounts[r.id] ?? 0,           // map hype → likes_count
+        likes_count: hypeCounts[r.id] ?? 0,
         comments_count: commentCounts[r.id] ?? 0,
       }));
 
       setSpliks(merged);
       recomputeStatsFromList(merged);
     } catch (e) {
-      console.error("Error fetching videos:", e);
+      console.error("Error fetching posts:", e);
     }
   };
 
@@ -787,17 +796,17 @@ const CreatorDashboard = () => {
     recomputeStatsFromList((prev) => prev);
   };
 
-  /* ------------------------- Delete video ------------------------- */
+  /* ------------------------- Delete post ------------------------- */
   const handleDeleteVideo = async (videoId: string) => {
     if (!currentUserId) return;
 
     try {
       const { error } = await supabase.from("spliks").delete().eq("id", videoId).eq("user_id", currentUserId);
       if (error) throw error;
-      toast.success("Video deleted successfully");
+      toast.success("Post deleted successfully");
     } catch (error) {
-      console.error("Error deleting video:", error);
-      toast.error("Failed to delete video");
+      console.error("Error deleting post:", error);
+      toast.error("Failed to delete post");
     }
   };
 
@@ -838,7 +847,7 @@ const CreatorDashboard = () => {
       setProfile({ ...profile, [field]: newValue });
       toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
     } catch (e) {
-      console.error("Error updating privacy:", e);
+      console.error("Error updating privacy settings", e);
       toast.error("Failed to update privacy settings");
     }
   };
@@ -881,7 +890,7 @@ const CreatorDashboard = () => {
             <div className="flex items-center gap-3">
               <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
                 <Plus className="h-4 w-4" />
-                Upload Video
+                Upload
               </Button>
               {isAdmin && (
                 <Button
@@ -904,7 +913,7 @@ const CreatorDashboard = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card className="bg-gray-900 border-gray-800">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Total Videos</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400">Total Posts</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
@@ -913,7 +922,7 @@ const CreatorDashboard = () => {
                   <Video className="h-6 w-6 text-blue-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Videos uploaded</p>
+              <p className="text-xs text-gray-500 mt-2">Videos & photos uploaded</p>
             </CardContent>
           </Card>
 
@@ -958,7 +967,7 @@ const CreatorDashboard = () => {
                   <TrendingUp className="h-6 w-6 text-purple-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Per video</p>
+              <p className="text-xs text-gray-500 mt-2">Per post</p>
             </CardContent>
           </Card>
         </div>
@@ -967,7 +976,7 @@ const CreatorDashboard = () => {
         <Tabs defaultValue="videos" className="w-full">
           <TabsList className="grid w-full grid-cols-3 bg-gray-900 border-gray-800">
             <TabsTrigger value="videos" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
-              My Videos
+              My Posts
             </TabsTrigger>
             <TabsTrigger value="analytics" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
               Analytics
@@ -977,7 +986,7 @@ const CreatorDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* My Videos — FEED STYLE */}
+          {/* Posts — FEED STYLE */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
               <CreatorFeed
@@ -988,11 +997,11 @@ const CreatorDashboard = () => {
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
                 <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
-                <h3 className="text-xl font-semibold text-white mb-2">No videos yet</h3>
+                <h3 className="text-xl font-semibold text-white mb-2">No posts yet</h3>
                 <p className="text-gray-400 mb-6">Start building your content library</p>
                 <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
                   <Plus className="h-4 w-4" />
-                  Upload Your First Video
+                  Upload Your First Post
                 </Button>
               </Card>
             )}
