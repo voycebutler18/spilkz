@@ -14,8 +14,21 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { MapPin, LocateFixed, Search as SearchIcon, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
+import {
+  MapPin,
+  LocateFixed,
+  Search as SearchIcon,
+  ExternalLink,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
 
 /* ============================= PRAYERS FEED ============================= */
 
@@ -31,7 +44,7 @@ export default function PrayersPage() {
       setLoading(true);
       const currentCursor = append ? items[items.length - 1]?.created_at : undefined;
       const list = (await fetchPrayers({ cursor: currentCursor })) || [];
-      setItems(prev => {
+      setItems((prev) => {
         const newList = append ? [...prev, ...list] : list;
         setCursor(newList.length ? newList[newList.length - 1].created_at : undefined);
         return newList;
@@ -44,7 +57,11 @@ export default function PrayersPage() {
     }
   };
 
-  useEffect(() => { load(false); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    // initial load
+    load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const grouped = useMemo(() => {
     const map = new Map<string, Prayer[]>();
@@ -58,12 +75,12 @@ export default function PrayersPage() {
 
   /* ============================= CHURCH FINDER POPUP ============================= */
 
-  // 🇺🇸 Miles only
+  // (US) miles only
   type DistanceKey = "1mi" | "3mi" | "5mi" | "10mi";
   const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number }[] = [
-    { key: "1mi",  label: "1 mile",  meters: 1609.34 },
-    { key: "3mi",  label: "3 miles", meters: 4828.03 },
-    { key: "5mi",  label: "5 miles", meters: 8046.72 },
+    { key: "1mi", label: "1 mile", meters: 1609.34 },
+    { key: "3mi", label: "3 miles", meters: 4828.03 },
+    { key: "5mi", label: "5 miles", meters: 8046.72 },
     { key: "10mi", label: "10 miles", meters: 16093.44 },
   ];
 
@@ -80,12 +97,11 @@ export default function PrayersPage() {
   type FaithOption = {
     key: string;
     label: string;
-    religionRegex: string; // OSM "religion"
-    denomRegex?: string;   // OSM "denomination" or appears in name/brand
+    religionRegex: string;
+    denomRegex?: string;
   };
 
   const FAITH_OPTIONS: FaithOption[] = [
-    // Christianity
     { key: "christian_any", label: "Christian (Any)", religionRegex: "christian" },
     { key: "christian_nondenom", label: "Christian – Non-Denominational", religionRegex: "christian", denomRegex: "non[-_ ]?denominational|nondenominational" },
     { key: "christian_catholic", label: "Christian – Catholic", religionRegex: "christian", denomRegex: "catholic|roman(_|-)?catholic" },
@@ -108,21 +124,18 @@ export default function PrayersPage() {
     { key: "christian_lds", label: "Christian – Latter-day Saints (Mormon)", religionRegex: "christian|mormon", denomRegex: "lds|latter[_ ]day|mormon" },
     { key: "christian_jehovah", label: "Christian – Jehovah's Witnesses", religionRegex: "christian", denomRegex: "jehovah" },
 
-    // Islam
     { key: "muslim_any", label: "Muslim (Any)", religionRegex: "muslim|islam" },
     { key: "muslim_sunni", label: "Muslim – Sunni", religionRegex: "muslim|islam", denomRegex: "sunni" },
     { key: "muslim_shia", label: "Muslim – Shia", religionRegex: "muslim|islam", denomRegex: "shia|shi[_ ]?ite" },
     { key: "muslim_ahmadiyya", label: "Muslim – Ahmadiyya", religionRegex: "muslim|islam", denomRegex: "ahmadi" },
     { key: "muslim_sufi", label: "Muslim – Sufi", religionRegex: "muslim|islam", denomRegex: "sufi" },
 
-    // Judaism
     { key: "jewish_any", label: "Jewish (Any)", religionRegex: "jewish|judaism" },
     { key: "jewish_orthodox", label: "Jewish – Orthodox", religionRegex: "jewish|judaism", denomRegex: "orthodox|chabad|hasidic|haredi|modern[_ ]orthodox" },
     { key: "jewish_conservative", label: "Jewish – Conservative", religionRegex: "jewish|judaism", denomRegex: "conservative" },
     { key: "jewish_reform", label: "Jewish – Reform", religionRegex: "jewish|judaism", denomRegex: "reform" },
     { key: "jewish_reconstructionist", label: "Jewish – Reconstructionist", religionRegex: "jewish|judaism", denomRegex: "reconstructionist" },
 
-    // Other religions
     { key: "hindu", label: "Hindu", religionRegex: "hindu" },
     { key: "buddhist_any", label: "Buddhist (Any)", religionRegex: "buddhist" },
     { key: "buddhist_theravada", label: "Buddhist – Theravada", religionRegex: "buddhist", denomRegex: "theravada" },
@@ -147,7 +160,7 @@ export default function PrayersPage() {
   const [locationQuery, setLocationQuery] = useState("");
   const [distanceKey, setDistanceKey] = useState<DistanceKey>("5mi");
 
-  // start broad to avoid "no results"
+  // start broad to avoid “no results”
   const [faithFilter, setFaithFilter] = useState<string>("christian_any");
   const [faithSearch, setFaithSearch] = useState("");
 
@@ -166,7 +179,7 @@ export default function PrayersPage() {
   const filteredFaithOptions = useMemo(() => {
     const q = faithSearch.trim().toLowerCase();
     if (!q) return FAITH_OPTIONS;
-    return FAITH_OPTIONS.filter(o => o.label.toLowerCase().includes(q));
+    return FAITH_OPTIONS.filter((o) => o.label.toLowerCase().includes(q));
   }, [faithSearch]);
 
   const openFinder = () => {
@@ -192,13 +205,17 @@ export default function PrayersPage() {
   const normalizeName = (tags: Record<string, string> | undefined) => {
     if (!tags) return "Place of Worship";
     return tags["name:en"] || tags["name"] || tags["brand"] || "Place of Worship";
+    // fallbacks are intentional to give a nice label even if OSM data is sparse
   };
 
   const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
     if (!tags) return "";
     if (tags["addr:full"]) return tags["addr:full"];
     const parts = [
-      [tags["addr:housename"], tags["addr:housenumber"], tags["addr:unit"]].filter(Boolean).join(" ").trim(),
+      [tags["addr:housename"], tags["addr:housenumber"], tags["addr:unit"]]
+        .filter(Boolean)
+        .join(" ")
+        .trim(),
       tags["addr:street"] || tags["addr:road"],
       tags["addr:neighbourhood"] || tags["addr:suburb"],
       tags["addr:city"] || tags["addr:town"] || tags["addr:village"],
@@ -229,13 +246,12 @@ export default function PrayersPage() {
         a.state,
         a.postcode,
       ].filter(Boolean);
-      return (parts.join(", ") || j.display_name || null);
+      return parts.join(", ") || j.display_name || null;
     } catch {
       return null;
     }
   }
 
-  // Ensure every result has a postal address (reverse-geocode all missing)
   async function ensureAddressesForAll(list: NearbyChurch[]) {
     setEnriching(true);
     try {
@@ -243,10 +259,10 @@ export default function PrayersPage() {
         if (!item.address || item.address === "Address not available") {
           const addr = await reverseGeocodeAddress(item.lat, item.lon);
           if (addr) {
-            setNearby(prev => prev.map(p => (p.id === item.id ? { ...p, address: addr } : p)));
+            setNearby((prev) => prev.map((p) => (p.id === item.id ? { ...p, address: addr } : p)));
           }
-          // Be polite to Nominatim
-          await new Promise(r => setTimeout(r, 400));
+          // be polite to Nominatim
+          await new Promise((r) => setTimeout(r, 400));
         }
       }
     } finally {
@@ -254,7 +270,7 @@ export default function PrayersPage() {
     }
   }
 
-  /* ----------------- Nominatim (place search) ----------------- */
+  /* ----------------- Nominatim helpers ----------------- */
   async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
     try {
       const url = new URL("https://nominatim.openstreetmap.org/reverse");
@@ -454,25 +470,37 @@ export default function PrayersPage() {
         setLocStage("have");
       }
 
-      const faith = FAITH_OPTIONS.find(f => f.key === faithFilter) || FAITH_OPTIONS[0];
+      const faith = FAITH_OPTIONS.find((f) => f.key === faithFilter) || FAITH_OPTIONS[0];
 
       // 1) nodes-only
-      let json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex, true));
+      let json = await overpassFetch(
+        buildQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex, true)
+      );
       let elements: any[] = json.elements || [];
 
       // 2) broaden to full if empty
       if (!elements.length) {
-        json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex, false));
+        json = await overpassFetch(
+          buildQuery(center!, metersForDistanceKey, faith.religionRegex, faith.denomRegex, false)
+        );
         elements = json.elements || [];
       }
 
       // 3) if still empty & denominational → broaden to religion-only
       if (!elements.length && faith.denomRegex) {
-        setBroadenNote(`No exact matches for "${faith.label}". Broadened to ${faith.religionRegex === "christian" ? "Christian (Any)" : "religion only"}.`);
-        json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, undefined, true));
+        setBroadenNote(
+          `No exact matches for "${faith.label}". Broadened to ${
+            faith.religionRegex === "christian" ? "Christian (Any)" : "religion only"
+          }.`
+        );
+        json = await overpassFetch(
+          buildQuery(center!, metersForDistanceKey, faith.religionRegex, undefined, true)
+        );
         elements = json.elements || [];
         if (!elements.length) {
-          json = await overpassFetch(buildQuery(center!, metersForDistanceKey, faith.religionRegex, undefined, false));
+          json = await overpassFetch(
+            buildQuery(center!, metersForDistanceKey, faith.religionRegex, undefined, false)
+          );
           elements = json.elements || [];
         }
       }
@@ -518,7 +546,7 @@ export default function PrayersPage() {
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
 
-      // Ensure ALL items have a street address
+      // ensure all have a postal address
       await ensureAddressesForAll(byDistance);
 
       if (byDistance.length === 0) {
@@ -532,17 +560,19 @@ export default function PrayersPage() {
     }
   };
 
-  const coordsPretty = useMemo(() => (coords ? `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}` : ""), [coords]);
+  const coordsPretty = useMemo(
+    () => (coords ? `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}` : ""),
+    [coords]
+  );
 
   /* ================================== RENDER ================================== */
 
   return (
     <div className="mx-auto max-w-3xl px-3 sm:px-4 py-4 space-y-4">
-      {/* Mobile-first header: stacks on phones */}
+      {/* header */}
       <div className="flex flex-col sm:flex-row sm:items-center items-start gap-3">
         <h1 className="text-[22px] sm:text-2xl leading-snug font-semibold">
-          Daily Prayers{" "}
-          <span className="sm:inline block">and Testimonies</span>
+          Daily Prayers <span className="sm:inline block">and Testimonies</span>
         </h1>
 
         <Button
@@ -553,14 +583,14 @@ export default function PrayersPage() {
           <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
           <div className="relative flex items-center justify-center gap-2">
             <MapPin className="h-[18px] w-[18px]" />
-            {/* Short label on phones, full on desktop */}
             <span className="sm:hidden">Find churches</span>
             <span className="hidden sm:inline">Find local churches near you</span>
           </div>
         </Button>
       </div>
 
-      <PrayerComposer onPosted={(p) => setItems((cur) => [p as Prayer, ...cur])} />
+      {/* composer – updates only local list; NO activity writes */}
+      <PrayerComposer onPosted={(p: Prayer) => setItems((cur) => [p, ...cur])} />
 
       {error && (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">
@@ -590,12 +620,17 @@ export default function PrayersPage() {
       ))}
 
       <div className="flex justify-center py-4">
-        <Button variant="outline" className="text-sm sm:text-base" onClick={() => load(true)} disabled={loading || !cursor}>
+        <Button
+          variant="outline"
+          className="text-sm sm:text-base"
+          onClick={() => load(true)}
+          disabled={loading || !cursor}
+        >
           {cursor ? (loading ? "Loading…" : "Load more") : "No more"}
         </Button>
       </div>
 
-      {/* ===================== MOBILE-FRIENDLY FINDER ===================== */}
+      {/* ===================== FINDER ===================== */}
       <Dialog
         open={finderOpen}
         onOpenChange={(open) => {
@@ -603,7 +638,6 @@ export default function PrayersPage() {
           if (!open) resetFinder();
         }}
       >
-        {/* Full-screen on mobile/tablet; centered modal on desktop */}
         <DialogContent
           className="
             fixed inset-0 left-0 top-0 translate-x-0 translate-y-0
@@ -620,7 +654,6 @@ export default function PrayersPage() {
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
           <div className="relative z-10 flex flex-col h-full max-w-screen">
-            {/* Fixed Header */}
             <DialogHeader className="flex-shrink-0 space-y-2 sm:space-y-4 px-4 sm:px-6 pt-6 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10 bg-slate-900/90 backdrop-blur-xl">
               <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl">
                 <div className="relative">
@@ -638,7 +671,6 @@ export default function PrayersPage() {
               </DialogDescription>
             </DialogHeader>
 
-            {/* Scrollable Content */}
             <div className="flex-1 overflow-y-auto overscroll-behavior-y-contain overscroll-contain">
               <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-20">
                 {/* Location */}
@@ -687,7 +719,11 @@ export default function PrayersPage() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
                   <div className="space-y-2">
                     <label className="text-white font-semibold text-base">Search radius</label>
-                    <Select value={distanceKey} onValueChange={(v) => setDistanceKey(v as DistanceKey)} disabled={fetchingNearby}>
+                    <Select
+                      value={distanceKey}
+                      onValueChange={(v) => setDistanceKey(v as DistanceKey)}
+                      disabled={fetchingNearby}
+                    >
                       <SelectTrigger className="bg-white/10 backdrop-blur-xl border border-white/20 text-white rounded-xl py-3 text-base">
                         <SelectValue placeholder="Distance" />
                       </SelectTrigger>
@@ -778,7 +814,7 @@ export default function PrayersPage() {
                           <div
                             key={place.id}
                             className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
-                              index !== nearby.length - 1 ? 'border-b border-white/10' : ''
+                              index !== nearby.length - 1 ? "border-b border-white/10" : ""
                             }`}
                           >
                             <div className="min-w-0 flex-1">
@@ -793,7 +829,6 @@ export default function PrayersPage() {
                               </div>
                             </div>
                             <a
-                              // Use precise coordinates so Google shows the exact spot
                               href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
                               target="_blank"
                               rel="noopener noreferrer"
