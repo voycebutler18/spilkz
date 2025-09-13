@@ -68,7 +68,7 @@ interface SplikRow {
   video_url: string | null;
   thumbnail_url: string | null;
   created_at: string;
-  likes_count?: number | null;
+  likes_count?: number | null;      // now represents hype (🔥) count
   comments_count?: number | null;
   views_count?: number | null;
   trim_start?: number | null;
@@ -99,42 +99,24 @@ interface CommentRow {
 }
 
 /* ----------------------------- Helpers for counts ----------------------------- */
-/** Count likes for a set of splik IDs. Tries common table names and falls back gracefully. */
-async function fetchLikeCountsFor(ids: string[]) {
+// Count hype (🔥) for a set of splik IDs.
+async function fetchHypeCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
-  const inc = (id?: string) => {
-    if (!id || !ids.includes(id)) return;
-    counts[id] = (counts[id] || 0) + 1;
-  };
-
-  // Try 'splik_likes'
-  try {
-    const { data } = await supabase.from("splik_likes").select("splik_id").in("splik_id", ids);
-    (data || []).forEach((r: any) => inc(r.splik_id));
-    if (Object.keys(counts).length > 0) return counts;
-  } catch {}
-
-  // Try 'likes'
-  try {
-    const { data } = await supabase.from("likes").select("splik_id").in("splik_id", ids);
-    (data || []).forEach((r: any) => inc(r.splik_id));
-    if (Object.keys(counts).length > 0) return counts;
-  } catch {}
-
-  // Try generic 'reactions' with type='like'
   try {
     const { data } = await supabase
-      .from("reactions")
-      .select("splik_id, type")
-      .in("splik_id", ids)
-      .eq("type", "like");
-    (data || []).forEach((r: any) => inc(r.splik_id));
-  } catch {}
+      .from("hype_reactions")
+      .select("splik_id")
+      .in("splik_id", ids);
 
+    (data || []).forEach((r: any) => {
+      const id = r.splik_id as string;
+      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
+    });
+  } catch {}
   return counts;
 }
 
-/** Count comments for a set of splik IDs. */
+// Count comments for a set of splik IDs.
 async function fetchCommentCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
   try {
@@ -218,7 +200,6 @@ function CommentsManager({
       const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
       if (error) throw error;
       toast.success("Comment deleted");
-      // realtime updates the list and count
     } catch (e) {
       console.error(e);
       toast.error("Failed to delete comment");
@@ -667,28 +648,16 @@ const CreatorDashboard = () => {
           recomputeStatsFromList((prev) => prev);
         }
       )
-      // likes live updates — try both common table names
+      // 🔥 hype live updates
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "splik_likes" },
+        { event: "INSERT", schema: "public", table: "hype_reactions" },
         (payload) => {
           const sid = (payload.new as any).splik_id as string;
           setSpliks((prev) => {
             if (!prev.find((s) => s.id === sid)) return prev;
-            return prev.map((s) => (s.id === sid ? { ...s, likes_count: (s.likes_count ?? 0) + 1 } : s));
-          });
-          recomputeStatsFromList((prev) => prev);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "splik_likes" },
-        (payload) => {
-          const sid = (payload.old as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
             return prev.map((s) =>
-              s.id === sid ? { ...s, likes_count: Math.max(0, (s.likes_count ?? 0) - 1) } : s
+              s.id === sid ? { ...s, likes_count: (s.likes_count ?? 0) + 1 } : s
             );
           });
           recomputeStatsFromList((prev) => prev);
@@ -696,24 +665,17 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "likes" },
-        (payload) => {
-          const sid = (payload.new as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            return prev.map((s) => (s.id === sid ? { ...s, likes_count: (s.likes_count ?? 0) + 1 } : s));
-          });
-          recomputeStatsFromList((prev) => prev);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "likes" },
+        { event: "DELETE", schema: "public", table: "hype_reactions" },
         (payload) => {
           const sid = (payload.old as any).splik_id as string;
-          setSpliks((prev) =>
-            prev.map((s) => (s.id === sid ? { ...s, likes_count: Math.max(0, (s.likes_count ?? 0) - 1) } : s))
-          );
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            return prev.map((s) =>
+              s.id === sid
+                ? { ...s, likes_count: Math.max(0, (s.likes_count ?? 0) - 1) }
+                : s
+            );
+          });
           recomputeStatsFromList((prev) => prev);
         }
       )
@@ -760,10 +722,9 @@ const CreatorDashboard = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      // Pull counts for likes & comments from their respective tables
       const ids = (rows || []).map((r: any) => r.id as string);
-      const [likeCounts, commentCounts] = await Promise.all([
-        fetchLikeCountsFor(ids),
+      const [hypeCounts, commentCounts] = await Promise.all([
+        fetchHypeCountsFor(ids),      // 🔥
         fetchCommentCountsFor(ids),
       ]);
 
@@ -780,8 +741,8 @@ const CreatorDashboard = () => {
       const merged: SplikRow[] = (rows || []).map((r: any) => ({
         ...(r as SplikRow),
         profile: prof,
-        likes_count: (r.likes_count ?? likeCounts[r.id]) ?? 0,
-        comments_count: (r.comments_count ?? commentCounts[r.id]) ?? 0,
+        likes_count: hypeCounts[r.id] ?? 0,           // map hype → likes_count
+        comments_count: commentCounts[r.id] ?? 0,
       }));
 
       setSpliks(merged);
@@ -827,7 +788,7 @@ const CreatorDashboard = () => {
         s.id === splikId ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) + delta) } : s
       )
     );
-    recomputeStatsFromList((prev) => prev); // keep the totals in sync
+    recomputeStatsFromList((prev) => prev);
   };
 
   /* ------------------------- Delete video ------------------------- */
@@ -838,7 +799,6 @@ const CreatorDashboard = () => {
       const { error } = await supabase.from("spliks").delete().eq("id", videoId).eq("user_id", currentUserId);
       if (error) throw error;
       toast.success("Video deleted successfully");
-      // realtime will remove from feed and recompute stats
     } catch (error) {
       console.error("Error deleting video:", error);
       toast.error("Failed to delete video");
@@ -972,7 +932,7 @@ const CreatorDashboard = () => {
                   <Heart className="h-6 w-6 text-pink-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Likes + comments</p>
+              <p className="text-xs text-gray-500 mt-2">Likes (🔥) + comments</p>
             </CardContent>
           </Card>
 
