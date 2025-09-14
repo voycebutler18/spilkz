@@ -178,19 +178,24 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
 
     const readCache = (): Splik[] | null => {
+      let data: Splik[] | null = null;
+      
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
-        return normalizeSpliks(storeFeed as Splik[]);
-      }
-      try {
-        const raw = sessionStorage.getItem("feed:cached");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length) {
-            return normalizeSpliks(parsed as Splik[]);
+        data = normalizeSpliks(storeFeed as Splik[]);
+      } else {
+        try {
+          const raw = sessionStorage.getItem("feed:cached");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed) && parsed.length) {
+              data = normalizeSpliks(parsed as Splik[]);
+            }
           }
-        }
-      } catch {}
-      return null;
+        } catch {}
+      }
+      
+      // Always shuffle cached data on every page load
+      return data ? shuffle(data) : null;
     };
 
     const writeCache = (rows: Splik[]) => {
@@ -213,10 +218,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     const load = async () => {
       const cached = readCache();
       if (cached && !cancelled) {
-        setSpliks(cached);
+        // Apply smart shuffle to cached data
+        const { shuffled, newSeenPosts } = smartShuffle(cached.spliks, cached.seenPosts);
+        setSpliks(shuffled);
         setLoading(false);
-        primeUI(cached);
+        primeUI(shuffled);
         backgroundRefreshFavs();
+        
+        // Update the seen posts in cache
+        writeCache(shuffled, newSeenPosts);
         // Keep going and refresh in the background
       }
 
@@ -253,12 +263,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
 
         const stitched = rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
-        const ordered = shuffle(normalizeSpliks(stitched));
+        const normalized = normalizeSpliks(stitched);
+
+        // Use existing seen posts or start fresh
+        const seenPosts = cached?.seenPosts || new Set<string>();
+        const { shuffled, newSeenPosts } = smartShuffle(normalized, seenPosts);
 
         if (!cancelled) {
-          setSpliks(ordered);
-          primeUI(ordered);
-          writeCache(ordered);
+          setSpliks(shuffled);
+          primeUI(shuffled);
+          writeCache(shuffled, newSeenPosts);
         }
 
         backgroundRefreshFavs();
