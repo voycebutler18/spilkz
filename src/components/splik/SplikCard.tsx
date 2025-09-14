@@ -1,7 +1,7 @@
 // src/components/splik/SplikCard.tsx
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { Flame, Bookmark, BookmarkCheck, Share2, VolumeX, Volume2 } from "lucide-react";
+import { Flame, Bookmark, BookmarkCheck, Share2, VolumeX, Volume2, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ type Props = {
   onSplik?: () => void;
   onReact?: () => void;
   onShare?: () => void;
+  onPromote?: (splikId: string) => void; // Add promote callback
 };
 
 const VISIBILITY_THRESHOLD = 0.6;
@@ -48,6 +49,7 @@ export default function SplikCard({
   shouldLoad = true,
   onPrimaryVisible,
   onShare,
+  onPromote,
 }: Props) {
   const { toast } = useToast();
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
@@ -64,11 +66,14 @@ export default function SplikCard({
   const [isSaved, setIsSaved] = React.useState<boolean>(false);
   const [loadingCounts, setLoadingCounts] = React.useState(false);
 
-  // Local profile fallback (fetch if feed didn’t attach one)
+  // Local profile fallback (fetch if feed didn't attach one)
   const [loadedProfile, setLoadedProfile] = React.useState<Profile | null>(null);
 
   // Is this a video?
   const hasVideo = Boolean(splik.video_url) || (splik.mime_type?.startsWith("video/") ?? false);
+
+  // Check if current user is the creator
+  const isCreator = user?.id === splik.user_id;
 
   React.useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
@@ -231,6 +236,17 @@ export default function SplikCard({
     } catch {}
   };
 
+  const handlePromote = () => {
+    if (!isCreator) {
+      toast({ 
+        title: "Access denied", 
+        description: "Only the creator can promote their content." 
+      });
+      return;
+    }
+    onPromote?.(splik.id);
+  };
+
   const onToggleMute = (e: React.MouseEvent) => {
     e.preventDefault(); e.stopPropagation();
     if (!hasVideo) return;
@@ -310,12 +326,29 @@ export default function SplikCard({
       {/* Actions */}
       <div className="px-4 pb-4 pt-3">
         <div className="flex items-center gap-2">
-          <FollowButton
-            profileId={splik.user_id}
-            username={profile?.username || undefined}
-            size="sm"
-            variant="outline"
-          />
+          {/* Show Follow button only if not creator */}
+          {!isCreator && (
+            <FollowButton
+              profileId={splik.user_id}
+              username={profile?.username || undefined}
+              size="sm"
+              variant="outline"
+            />
+          )}
+          
+          {/* Show Promote button only if creator */}
+          {isCreator && (
+            <Button
+              variant="default"
+              size="sm"
+              className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+              onClick={handlePromote}
+            >
+              <TrendingUp className="h-4 w-4" />
+              Promote
+            </Button>
+          )}
+
           <Button
             variant={hasHyped ? "default" : "outline"}
             size="sm"
