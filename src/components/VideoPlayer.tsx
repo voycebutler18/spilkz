@@ -1,6 +1,5 @@
 // src/components/VideoPlayer.tsx
 import React, { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -18,7 +17,6 @@ import {
   Volume2,
   VolumeX,
   X,
-  TrendingUp,        // ← added
 } from "lucide-react";
 
 type VideoKind = "main" | "trailer";
@@ -59,13 +57,6 @@ export type VideoPlayerProps = {
   /** Show a delete button for the owner. */
   canDelete?: boolean;
   onDelete?: () => void;
-
-  /** NEW: show a Promote button (for creators only). */
-  canPromote?: boolean;
-  /** If provided, clicking Promote navigates here. Example: `/promote/abc123` */
-  promoteTo?: string;
-  /** Optional callback if you want to handle navigation yourself. */
-  onPromoteClick?: () => void;
 };
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -94,11 +85,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   canDelete = false,
   onDelete,
-
-  // NEW
-  canPromote = false,
-  promoteTo,
-  onPromoteClick,
 }) => {
   const [currentVideo, setCurrentVideo] = useState<VideoKind>("main");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -337,33 +323,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 </h2>
 
                 <div className="flex items-center gap-2">
-                  {/* NEW: Promote button (creator only) */}
-                  {canPromote &&
-                    (promoteTo ? (
-                      <Button
-                        asChild
-                        size="sm"
-                        className="relative z-20 pointer-events-auto bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
-                      >
-                        <Link to={promoteTo} onClick={(e) => e.stopPropagation()}>
-                          <TrendingUp className="h-4 w-4 mr-2" />
-                          Promote
-                        </Link>
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onPromoteClick?.();
-                        }}
-                        className="relative z-20 pointer-events-auto bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
-                      >
-                        <TrendingUp className="h-4 w-4 mr-2" />
-                        Promote
-                      </Button>
-                    ))}
-
                   {videoUrl && trailerUrl && (
                     <>
                       <Button
