@@ -21,6 +21,25 @@ const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
 const isMobile =
   typeof window !== "undefined" && /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent);
 
+// ✅ ADD SHUFFLE FUNCTIONALITY FROM FOOD.TSX
+const cRandom = () => {
+  if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
+    const u = new Uint32Array(1);
+    (crypto as any).getRandomValues(u);
+    return u[0] / 2 ** 32;
+  }
+  return Math.random();
+};
+
+const shuffle = <T,>(arr: T[]) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(cRandom() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
 const preconnect = (url?: string | null) => {
   if (!url) return;
   try {
@@ -484,7 +503,7 @@ const Explore = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  /* feed */
+  /* ✅ UPDATED FEED FUNCTION WITH SHUFFLING */
   const fetchHomeFeed = async (showRefreshToast = false) => {
     try {
       showRefreshToast ? setRefreshing(true) : setLoading(true);
@@ -506,13 +525,22 @@ const Explore = () => {
           (r) => !!r.video_url || (r.mime_type?.startsWith("video/") ?? false)
         );
 
-        const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
+        // ✅ SHUFFLE THE DATA BEFORE PROFILE HYDRATION (like Food.tsx)
+        const shuffledRows = shuffle(
+          rows.map((item) => ({
+            ...item,
+            likes_count: item.likes_count || 0,
+            boost_score: item.boost_score || 0,
+          }))
+        );
+
+        const userIds = Array.from(new Set(shuffledRows.map((r) => r.user_id)));
         const byId: Record<string, Profile> = {};
         if (userIds.length) {
           const { data: profs } = await supabase.from("profiles").select("*").in("id", userIds);
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
-        const withProfiles = rows.map((r) => ({ ...r, profile: byId[r.user_id] }));
+        const withProfiles = shuffledRows.map((r) => ({ ...r, profile: byId[r.user_id] }));
 
         setFeedSpliks(withProfiles);
         preconnect(withProfiles[0]?.video_url || null);
@@ -823,7 +851,7 @@ const Explore = () => {
                   <Sparkles className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No videos yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    We’ll show the latest as soon as they’re posted.
+                    We'll show the latest as soon as they're posted.
                   </p>
                   <div className="flex gap-2 justify-center">
                     <Button onClick={() => fetchHomeFeed()} variant="outline">
