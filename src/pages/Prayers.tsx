@@ -28,6 +28,7 @@ import {
   ExternalLink,
   Loader2,
   Sparkles,
+  X,
 } from "lucide-react";
 
 /* ============================= PRAYERS FEED ============================= */
@@ -89,7 +90,7 @@ export default function PrayersPage() {
     lat: number;
     lon: number;
     distanceKm: number;
-    address: string; // guaranteed real postal address after enrichment
+    address?: string;
     tags?: Record<string, string>;
   };
 
@@ -159,7 +160,7 @@ export default function PrayersPage() {
   const [locationQuery, setLocationQuery] = useState("");
   const [distanceKey, setDistanceKey] = useState<DistanceKey>("5mi");
 
-  // start broad to avoid “no results”
+  // start broad to avoid "no results"
   const [faithFilter, setFaithFilter] = useState<string>("christian_any");
   const [faithSearch, setFaithSearch] = useState("");
 
@@ -167,9 +168,10 @@ export default function PrayersPage() {
   const [nearbyError, setNearbyError] = useState<string | null>(null);
   const [nearby, setNearby] = useState<NearbyChurch[]>([]);
   const [broadenNote, setBroadenNote] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState(false);
 
-  // scroll containers/anchors
-  const contentScrollRef = useRef<HTMLDivElement | null>(null);
+  // scroll plumbing
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const resultsAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const metersForDistanceKey = useMemo(
@@ -196,13 +198,10 @@ export default function PrayersPage() {
     setNearbyError(null);
     setBroadenNote(null);
     setFetchingNearby(false);
+    setEnriching(false);
     setDistanceKey("5mi");
     setFaithFilter("christian_any");
     setFaithSearch("");
-    // scroll to top of the modal content
-    queueMicrotask(() => {
-      if (contentScrollRef.current) contentScrollRef.current.scrollTop = 0;
-    });
   };
 
   /* ------------ Address + name helpers ------------ */
@@ -214,28 +213,55 @@ export default function PrayersPage() {
 
   const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
     if (!tags) return "";
+    
+    // Check for pre-formatted address first
     if (tags["addr:full"]) return tags["addr:full"];
-    const parts = [
-      [tags["addr:housename"], tags["addr:housenumber"], tags["addr:unit"]]
-        .filter(Boolean)
-        .join(" ")
-        .trim(),
-      tags["addr:street"] || tags["addr:road"],
-      tags["addr:neighbourhood"] || tags["addr:suburb"],
-      tags["addr:city"] || tags["addr:town"] || tags["addr:village"],
-      tags["addr:state"],
-      tags["addr:postcode"],
-    ].filter(Boolean);
-    return parts.join(", ");
+    
+    // Build address from components
+    const parts = [];
+    
+    // House number + street
+    const houseNum = tags["addr:housenumber"] || tags["addr:housename"];
+    const street = tags["addr:street"] || tags["addr:road"];
+    if (houseNum && street) {
+      parts.push(`${houseNum} ${street}`);
+    } else if (street) {
+      parts.push(street);
+    }
+    
+    // Neighborhood/suburb (optional)
+    const neighborhood = tags["addr:neighbourhood"] || tags["addr:suburb"];
+    if (neighborhood) {
+      parts.push(neighborhood);
+    }
+    
+    // City/town (important)
+    const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"];
+    if (city) {
+      parts.push(city);
+    }
+    
+    // State (important)
+    const state = tags["addr:state"];
+    if (state) {
+      parts.push(state);
+    }
+    
+    // ZIP code
+    const zip = tags["addr:postcode"];
+    if (zip) {
+      parts.push(zip);
+    }
+    
+    const fullAddress = parts.join(", ");
+    
+    // Only return if we have at least a street or city
+    if (fullAddress && (street || city)) {
+      return fullAddress;
+    }
+    
+    return ""; // Return empty string if no useful address data
   };
-
-  /** “Strong” postal address: has street + number (and usually a comma) */
-  const looksLikeRealAddress = (addr?: string | null) =>
-    !!addr &&
-    /\d/.test(addr) && // number present
-    /(st|ave|avenue|rd|road|blvd|ln|lane|dr|drive|way|ct|court|pl|place|hwy|highway|pkwy|trail|cir|loop)/i.test(
-      addr
-    );
 
   async function reverseGeocodeAddress(lat: number, lon: number): Promise<string | null> {
     try {
@@ -244,7 +270,6 @@ export default function PrayersPage() {
       url.searchParams.set("lat", String(lat));
       url.searchParams.set("lon", String(lon));
       url.searchParams.set("addressdetails", "1");
-      url.searchParams.set("zoom", "18");
       const res = await fetch(url.toString(), {
         headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
       });
@@ -259,10 +284,26 @@ export default function PrayersPage() {
         a.state,
         a.postcode,
       ].filter(Boolean);
-      const assembled = parts.join(", ") || j.display_name || null;
-      return assembled;
+      return parts.join(", ") || j.display_name || null;
     } catch {
       return null;
+    }
+  }
+
+  async function ensureAddressesForAll(list: NearbyChurch[]) {
+    setEnriching(true);
+    try {
+      for (const item of list) {
+        if (!item.address || item.address === "Address not available") {
+          const addr = await reverseGeocodeAddress(item.lat, item.lon);
+          if (addr) {
+            setNearby((prev) => prev.map((p) => (p.id === item.id ? { ...p, address: addr } : p)));
+          }
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+    } finally {
+      setEnriching(false);
     }
   }
 
@@ -440,30 +481,11 @@ export default function PrayersPage() {
     );
   };
 
-  /** Small concurrency helper */
-  const pMap = async <T, R>(
-    items: T[],
-    worker: (item: T, i: number) => Promise<R>,
-    concurrency = 3
-  ): Promise<R[]> => {
-    const ret: R[] = new Array(items.length);
-    let next = 0;
-    const runners: Promise<void>[] = [];
-    const run = async () => {
-      while (next < items.length) {
-        const cur = next++;
-        ret[cur] = await worker(items[cur], cur);
-      }
-    };
-    for (let i = 0; i < Math.min(concurrency, items.length); i++) runners.push(run());
-    await Promise.all(runners);
-    return ret;
-  };
-
   const runNearbySearch = async () => {
     try {
       setNearbyError(null);
       setBroadenNote(null);
+      setEnriching(false);
       setFetchingNearby(true);
       setNearby([]);
 
@@ -520,8 +542,7 @@ export default function PrayersPage() {
         }
       }
 
-      // Map raw results
-      const prelim = elements
+      const mapped: NearbyChurch[] = elements
         .map((el) => {
           const name = normalizeName(el.tags);
           const rLat = el.lat ?? el.center?.lat;
@@ -532,8 +553,8 @@ export default function PrayersPage() {
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
 
-          const fromTags = assembleAddressFromTags(el.tags);
-          const address = looksLikeRealAddress(fromTags) ? fromTags : ""; // may be filled later
+          const addrFromTags = assembleAddressFromTags(el.tags);
+          const address = addrFromTags || "Address not available";
 
           return {
             id: `${el.type}/${el.id}`,
@@ -547,8 +568,8 @@ export default function PrayersPage() {
         })
         .filter(Boolean) as NearbyChurch[];
 
-      // Dedup by (name, lat, lon)
-      const unique = prelim.reduce((acc, item) => {
+      // dedupe & sort
+      const unique = mapped.reduce((acc, item) => {
         const existing = acc.find(
           (r) =>
             r.name === item.name &&
@@ -559,41 +580,15 @@ export default function PrayersPage() {
         return acc;
       }, [] as NearbyChurch[]);
 
-      // Enrich missing addresses (strict) with concurrency limit
-      const enriched = await pMap(unique, async (it) => {
-        if (!looksLikeRealAddress(it.address)) {
-          const addr = await reverseGeocodeAddress(it.lat, it.lon);
-          if (looksLikeRealAddress(addr)) it.address = addr!;
-          else it.address = ""; // force empty for later filter
-          // be polite to Nominatim
-          await new Promise((r) => setTimeout(r, 250));
-        }
-        return it;
-      }, 3);
+      const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
+      setNearby(byDistance);
 
-      // Keep ONLY items with a strong postal address
-      const withAddresses = enriched
-        .filter((x) => looksLikeRealAddress(x.address))
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-        .slice(0, 100);
+      // ensure all have a postal address
+      await ensureAddressesForAll(byDistance);
 
-      if (!withAddresses.length) {
-        setNearbyError("No results with postal addresses. Try a larger radius or a broader denomination.");
-        setNearby([]);
-        return;
+      if (byDistance.length === 0) {
+        setNearbyError("No results found. Try a larger radius or a different denomination.");
       }
-
-      setNearby(withAddresses);
-
-      // Smooth scroll the inner content to results anchor
-      queueMicrotask(() => {
-        const host = contentScrollRef.current;
-        const anchor = resultsAnchorRef.current;
-        if (host && anchor) {
-          const top = anchor.offsetTop - 16; // small padding
-          host.scrollTo({ top, behavior: "smooth" });
-        }
-      });
     } catch (err: any) {
       console.error("Church search error:", err);
       setNearbyError(err.message || "Couldn't load places of worship. Please try again.");
@@ -606,6 +601,25 @@ export default function PrayersPage() {
     () => (coords ? `${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}` : ""),
     [coords]
   );
+
+  // === Auto-scroll to results anchor when results appear ===
+  useEffect(() => {
+    if (!finderOpen) return;
+    if (fetchingNearby) return;
+    if (nearby.length === 0 && !nearbyError) return;
+    // Smooth scroll so results aren't hidden on mobile
+    const el = resultsAnchorRef.current;
+    if (el) {
+      // use a short delay to ensure layout is painted
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    } else if (scrollAreaRef.current) {
+      setTimeout(() => {
+        scrollAreaRef.current!.scrollTo({ top: scrollAreaRef.current!.scrollHeight, behavior: "smooth" });
+      }, 80);
+    }
+  }, [finderOpen, fetchingNearby, nearby.length, nearbyError]);
 
   /* ================================== RENDER ================================== */
 
@@ -672,228 +686,224 @@ export default function PrayersPage() {
         </Button>
       </div>
 
-      {/* ===================== FINDER ===================== */}
-      <Dialog
-        open={finderOpen}
-        onOpenChange={(open) => {
-          setFinderOpen(open);
-          if (!open) resetFinder();
-        }}
-      >
-        <DialogContent
-          className="
-            fixed inset-0 left-0 top-0 w-screen h-[100svh] max-w-none rounded-none m-0 p-0
-            bg-slate-900/95 backdrop-blur-2xl shadow-2xl overflow-hidden z-50 border-0
-            lg:left-1/2 lg:top-1/2 lg:translate-x-[-50%] lg:translate-y-[-50%]
-            lg:w-full lg:max-w-3xl lg:max-h-[90svh] lg:rounded-3xl lg:border lg:border-white/20
-          "
-        >
+      {/* ===================== FINDER DIALOG ===================== */}
+      <Dialog open={finderOpen} onOpenChange={setFinderOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl">
+          {/* Single explicit close button */}
+          <button
+            aria-label="Close"
+            onClick={() => setFinderOpen(false)}
+            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 z-50"
+          >
+            <X className="h-4 w-4" />
+          </button>
+
           <div className="absolute inset-0 bg-gradient-to-br from-purple-900/20 via-transparent to-pink-900/20 pointer-events-none"></div>
 
-          <div className="relative z-10 flex flex-col h-full max-w-screen">
-            <DialogHeader className="flex-shrink-0 space-y-2 sm:space-y-4 px-4 sm:px-6 pt-6 sm:pt-6 pb-3 sm:pb-4 border-b border-white/10 bg-slate-900/90 backdrop-blur-xl">
-              <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl">
-                <div className="relative">
-                  <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
-                  <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 to-orange-500 p-2 sm:p-3">
-                    <MapPin className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
-                  </div>
+          <DialogHeader className="relative z-10 space-y-4 pb-6 border-b border-white/10">
+            <DialogTitle className="flex items-center gap-3 text-2xl">
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
+                <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 to-orange-500 p-3">
+                  <MapPin className="h-6 w-6 text-white" />
                 </div>
-                <span className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent font-bold">
-                  Find Places of Worship Near You
-                </span>
-              </DialogTitle>
-              <DialogDescription className="text-gray-300 text-sm sm:text-base">
-                Search by location, distance, and denomination.
-              </DialogDescription>
-            </DialogHeader>
+              </div>
+              <span className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent font-bold">
+                Find Places of Worship Near You
+              </span>
+            </DialogTitle>
+            <DialogDescription className="text-gray-300 text-lg">
+              Search by location, distance, and denomination.
+            </DialogDescription>
+          </DialogHeader>
 
-            {/* Single scroll area inside modal */}
-            <div
-              ref={contentScrollRef}
-              className="flex-1 overflow-y-auto overscroll-contain"
-            >
-              <div className="space-y-6 py-5 sm:py-6 px-4 sm:px-6 pb-24">
-
-                {/* Location */}
-                <div className="space-y-3">
-                  <label className="text-white font-semibold text-base sm:text-lg flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-yellow-400" />
-                    Where are we searching?
-                  </label>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <Input
-                      placeholder="City or ZIP (e.g., Chicago, 60601)"
-                      value={locationQuery}
-                      onChange={(e) => {
-                        setLocationQuery(e.target.value);
-                        if (e.target.value.trim() && coords) {
-                          setCoords(null);
-                          setLocStage("idle");
-                        }
-                      }}
-                      disabled={fetchingNearby}
-                      className="bg-white/10 backdrop-blur-xl border border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3 text-base focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300"
-                    />
-                    <Button
-                      variant="outline"
-                      onClick={requestLocation}
-                      disabled={fetchingNearby || locStage === "asking"}
-                      className="w-full sm:w-auto px-6 py-3 text-base bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 border-0 text-white font-semibold rounded-xl shadow-xl"
-                    >
-                      <LocateFixed className="h-4 w-4 mr-2" />
-                      {locStage === "asking" ? "Locating…" : "Use location"}
-                    </Button>
-                  </div>
-                  {locStage === "asking" && (
-                    <div className="flex items-center gap-3 text-blue-200 text-sm">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Requesting location permission…
-                    </div>
-                  )}
-                  {coords && (
-                    <div className="text-green-300 text-sm">
-                      Location confirmed: <span className="font-mono">{coordsPretty}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Distance + Faith */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-                  <div className="space-y-2">
-                    <label className="text-white font-semibold text-base">Search radius</label>
-                    <Select
-                      value={distanceKey}
-                      onValueChange={(v) => setDistanceKey(v as DistanceKey)}
-                      disabled={fetchingNearby}
-                    >
-                      <SelectTrigger className="bg-white/10 backdrop-blur-xl border border-white/20 text-white rounded-xl py-3 text-base">
-                        <SelectValue placeholder="Distance" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-800 border border-white/20 rounded-xl !max-w-[min(92vw,28rem)]">
-                        {DISTANCE_OPTIONS.map((d) => (
-                          <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
-                            {d.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="lg:col-span-2 space-y-2">
-                    <label className="text-white font-semibold text-base">Faith / Denomination</label>
-                    <div className="rounded-xl border border-white/20 bg-white/10 backdrop-blur-xl p-3">
-                      <Input
-                        placeholder="Search (e.g., Non-Denominational, Baptist, Sunni, Orthodox)…"
-                        value={faithSearch}
-                        onChange={(e) => setFaithSearch(e.target.value)}
-                        className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
-                      />
-                      <div className="max-h-48 overflow-y-auto overscroll-contain pr-1">
-                        <div className="grid grid-cols-1 gap-2">
-                          {filteredFaithOptions.map((opt) => (
-                            <button
-                              key={opt.key}
-                              type="button"
-                              onClick={() => setFaithFilter(opt.key)}
-                              className={`text-left px-3 py-3 rounded-lg border text-sm sm:text-base transition-all duration-200 ${
-                                faithFilter === opt.key
-                                  ? "border-purple-400 bg-purple-400/20 text-white"
-                                  : "border-white/10 hover:bg-white/10 text-gray-200"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Search Button */}
-                <div className="flex justify-center pt-2">
+          {/* Scrollable content with visible scrollbar */}
+          <div ref={scrollAreaRef} className="relative z-10 h-[70vh] overflow-y-auto">
+            <div className="px-4 sm:px-6 py-5 space-y-6 pb-24">
+              {/* Location */}
+              <div className="space-y-3">
+                <label className="text-white font-semibold text-base sm:text-lg flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-yellow-400" />
+                  Where are we searching?
+                </label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    placeholder="City or ZIP (e.g., Chicago, 60601)"
+                    value={locationQuery}
+                    onChange={(e) => {
+                      setLocationQuery(e.target.value);
+                      if (e.target.value.trim() && coords) {
+                        setCoords(null);
+                        setLocStage("idle");
+                      }
+                    }}
+                    disabled={fetchingNearby}
+                    className="bg-white/10 border-white/20 text-white placeholder-gray-400 rounded-xl px-4 py-3 text-base"
+                  />
                   <Button
-                    onClick={runNearbySearch}
-                    disabled={fetchingNearby || (!coords && !locationQuery.trim())}
-                    className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
-                               w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
+                    variant="outline"
+                    onClick={requestLocation}
+                    disabled={fetchingNearby || locStage === "asking"}
+                    className="w-full sm:w-auto px-6 py-3 text-base bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 border-0 text-white font-semibold rounded-xl"
                   >
-                    <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                    <div className="relative flex items-center gap-3 justify-center">
-                      <SearchIcon className="h-5 w-5" />
-                      <span>{fetchingNearby ? "Searching…" : "Find Churches Near You"}</span>
-                    </div>
+                    <LocateFixed className="h-4 w-4 mr-2" />
+                    {locStage === "asking" ? "Locating…" : "Use location"}
                   </Button>
                 </div>
-
-                {/* Status Messages */}
-                {broadenNote && !nearbyError && (
-                  <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-500/30 text-amber-200 text-sm">
-                    {broadenNote}
+                {locStage === "asking" && (
+                  <div className="flex items-center gap-3 text-blue-200 text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Requesting location permission…
                   </div>
                 )}
-
-                {nearbyError && (
-                  <div className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 text-red-200 text-sm sm:text-base">
-                    {nearbyError}
-                  </div>
-                )}
-
-                {fetchingNearby && (
-                  <div className="flex items-center gap-3 text-purple-200 text-sm sm:text-base justify-center">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    Searching for places of worship…
-                  </div>
-                )}
-
-                {/* Results */}
-                <div ref={resultsAnchorRef} />
-                {!fetchingNearby && nearby.length > 0 && (
-                  <div className="space-y-4">
-                    <h3 className="text-white text-lg sm:text-xl font-semibold">Found {nearby.length} nearby</h3>
-                    <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                      <div className="max-h-[65svh] overflow-y-auto overscroll-contain">
-                        {nearby.map((place, index) => (
-                          <div
-                            key={place.id}
-                            className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
-                              index !== nearby.length - 1 ? "border-b border-white/10" : ""
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
-                                {place.name}
-                              </div>
-                              <div className="text-gray-300 text-sm leading-relaxed mb-2">
-                                {place.address}
-                              </div>
-                              <div className="text-yellow-300 text-sm font-medium">
-                                {prettyDistance(place.distanceKm)} away
-                              </div>
-                            </div>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.name}, ${place.address}`)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
-                              title={`Open ${place.name} in Google Maps`}
-                            >
-                              <span className="hidden sm:inline">View</span>
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
-                  <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-base">
-                    No results found. Try a larger radius or a different denomination.
+                {coords && (
+                  <div className="text-green-300 text-sm">
+                    Location confirmed: <span className="font-mono">{coordsPretty}</span>
                   </div>
                 )}
               </div>
+
+              {/* Distance + Faith */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+                <div className="space-y-2">
+                  <label className="text-white font-semibold text-base">Search radius</label>
+                  <Select
+                    value={distanceKey}
+                    onValueChange={(v) => setDistanceKey(v as DistanceKey)}
+                    disabled={fetchingNearby}
+                  >
+                    <SelectTrigger className="bg-white/10 border-white/20 text-white rounded-xl py-3 text-base">
+                      <SelectValue placeholder="Distance" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border border-white/20 rounded-xl">
+                      {DISTANCE_OPTIONS.map((d) => (
+                        <SelectItem key={d.key} value={d.key} className="text-white hover:bg-white/10">
+                          {d.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="lg:col-span-2 space-y-2">
+                  <label className="text-white font-semibold text-base">Faith / Denomination</label>
+                  <div className="rounded-xl border border-white/20 bg-white/10 backdrop-blur-xl p-3">
+                    <Input
+                      placeholder="Search (e.g., Non-Denominational, Baptist, Sunni, Orthodox)…"
+                      value={faithSearch}
+                      onChange={(e) => setFaithSearch(e.target.value)}
+                      className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
+                    />
+                    {/* Scrollable faith options with visible scrollbar */}
+                    <div className="max-h-48 overflow-y-auto">
+                      <div className="grid grid-cols-1 gap-2">
+                        {filteredFaithOptions.map((opt) => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setFaithFilter(opt.key)}
+                            className={`text-left px-3 py-3 rounded-lg border text-sm sm:text-base transition-all duration-200 ${
+                              faithFilter === opt.key
+                                ? "border-purple-400 bg-purple-400/20 text-white"
+                                : "border-white/10 hover:bg-white/10 text-gray-200"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Search Button */}
+              <div className="flex justify-center pt-2">
+                <Button
+                  onClick={runNearbySearch}
+                  disabled={fetchingNearby || (!coords && !locationQuery.trim())}
+                  className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
+                             w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="relative flex items-center gap-3 justify-center">
+                    <SearchIcon className="h-5 w-5" />
+                    <span>{fetchingNearby ? "Searching…" : "Find Churches Near You"}</span>
+                  </div>
+                </Button>
+              </div>
+
+              {/* Auto-scroll anchor */}
+              <div ref={resultsAnchorRef} />
+
+              {/* Status Messages */}
+              {broadenNote && !nearbyError && (
+                <div className="p-3 rounded-xl bg-amber-900/20 border border-amber-500/30 text-amber-200 text-sm">
+                  {broadenNote}
+                </div>
+              )}
+
+              {nearbyError && (
+                <div className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 text-red-200 text-sm sm:text-base">
+                  {nearbyError}
+                </div>
+              )}
+
+              {(fetchingNearby || enriching) && (
+                <div className="flex items-center gap-3 text-purple-200 text-sm sm:text-base justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  {fetchingNearby ? "Searching for places of worship…" : "Adding street addresses…"}
+                </div>
+              )}
+
+              {/* Results */}
+              {!fetchingNearby && nearby.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-white text-lg sm:text-xl font-semibold">
+                    Found {nearby.length} nearby
+                  </h3>
+                  <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
+                    {/* Results list with visible scrollbar */}
+                    <div className="max-h-[50vh] sm:max-h-[65vh] overflow-y-auto">
+                      {nearby.map((place, index) => (
+                        <div
+                          key={place.id}
+                          className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
+                            index !== nearby.length - 1 ? "border-b border-white/10" : ""
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
+                              {place.name}
+                            </div>
+                            <div className="text-gray-300 text-sm leading-relaxed mb-2">
+                              {place.address || "Loading address…"}
+                            </div>
+                            <div className="text-yellow-300 text-sm font-medium">
+                              {prettyDistance(place.distanceKm)} away
+                            </div>
+                          </div>
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
+                            title={`Open ${place.name} in Google Maps`}
+                          >
+                            <span className="hidden sm:inline">View</span>
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
+                <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-base">
+                  No results found. Try a larger radius or a different denomination.
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
