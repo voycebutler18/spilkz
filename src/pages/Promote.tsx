@@ -126,14 +126,12 @@ export default function Promote() {
         });
 
         if (!res.ok) {
-          // Read a little of the body for debugging
           const peek = (await res.text().catch(() => "")).slice(0, 140);
           throw new Error(`Checkout failed (${res.status}) ${peek ? `– ${peek}` : ""}`);
         }
 
         const ct = res.headers.get("content-type") || "";
         if (ct.includes("application/json")) {
-          // JSON path
           const j = await res.json().catch(() => ({} as any));
           const urlField: string | undefined = j.url || j.checkout_url || j.paymentUrl;
           if (urlField && /^https?:\/\//i.test(urlField)) {
@@ -141,13 +139,11 @@ export default function Promote() {
             return true;
           }
           if (j.client_secret) {
-            // Embedded flow would be handled here if you wire it up
             toast({ title: "Ready to pay", description: "Embedded checkout not wired up in this UI yet." });
             return true;
           }
           throw new Error("Unexpected checkout response (missing URL).");
         } else {
-          // Non-JSON: allow plain text URL
           const text = (await res.text()).trim();
           if (/^https?:\/\//i.test(text)) {
             window.location.href = text;
@@ -165,17 +161,15 @@ export default function Promote() {
           if (success) break;
         } catch (e) {
           lastErr = e;
-          // try next endpoint
         }
       }
 
       if (!success) throw lastErr || new Error("No checkout endpoint responded.");
     } catch (e: any) {
-      toast({
-        title: "Payment error",
-        description: e?.message || "We couldn’t start checkout. Please try again.",
-        variant: "destructive",
-      });
+      const msg = e?.message?.includes("Failed to fetch")
+        ? "Could not reach the payment server. Check your API URL or CORS."
+        : e?.message || "We couldn’t start checkout. Please try again.";
+      toast({ title: "Payment error", description: msg, variant: "destructive" });
     } finally {
       setCheckingOut(false);
     }
@@ -183,7 +177,6 @@ export default function Promote() {
 
   const onClose = () => {
     setOpen(false);
-    // small delay so dialog can animate out
     setTimeout(() => navigate(-1), 120);
   };
 
@@ -191,7 +184,7 @@ export default function Promote() {
     <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : onClose())}>
       <DialogContent
         className="
-          max-w-3xl w-[min(96vw,850px)]
+          max-w-3xl w=[min(96vw,850px)]
           max-h-[90vh] p-0 overflow-hidden rounded-2xl
           bg-slate-900/95 backdrop-blur-2xl border border-white/15 shadow-2xl
           flex flex-col
@@ -227,7 +220,6 @@ export default function Promote() {
           <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center gap-3">
             <div className="relative w-20 h-14 overflow-hidden rounded-lg bg-black/30 flex-shrink-0">
               {splik?.thumbnail_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={splik.thumbnail_url} alt={splik.title ?? "Post"} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full grid place-items-center text-white/50 text-xs">No preview</div>
