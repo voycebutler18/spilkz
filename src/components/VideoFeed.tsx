@@ -187,6 +187,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const readCache = (): Splik[] | null => {
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
+        // Always shuffle store feed on each read
         return shuffle(normalizeSpliks(storeFeed));
       }
       try {
@@ -194,6 +195,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length) {
+          // FIXED: Always shuffle cached data on every read (page refresh)
           return shuffle(normalizeSpliks(parsed as Splik[]));
         }
       } catch {}
@@ -202,6 +204,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const writeCache = (rows: Splik[]) => {
       try {
+        // Store the original unshuffled data so we can shuffle it differently each time
         sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 40)));
       } catch {}
     };
@@ -262,11 +265,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
 
         const stitched = rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
-        const normalized = shuffle(normalizeSpliks(stitched));
+        const normalized = normalizeSpliks(stitched);
+        
+        // FIXED: Cache the unshuffled data, but display shuffled
+        const shuffled = shuffle(normalized);
 
         if (!cancelled) {
-          setSpliks(normalized);
-          primeUI(normalized);
+          setSpliks(shuffled);
+          primeUI(shuffled);
+          // Store unshuffled data in cache so it can be shuffled differently on next refresh
           writeCache(normalized);
         }
 
