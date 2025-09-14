@@ -1,4 +1,3 @@
-// src/pages/Explore.tsx
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -826,10 +825,7 @@ const Explore = () => {
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 <span className="hidden md:inline ml-2">Update</span>
               </Button>
-              <Button size="sm" onClick={() => setUploadOpen(true)} aria-label="Upload Photo">
-                <Camera className="h-4 w-4" />
-                <span className="hidden md:inline ml-2">Upload Photo</span>
-              </Button>
+              {/* Upload button removed as requested */}
             </div>
           </div>
         </div>
@@ -900,7 +896,7 @@ const Explore = () => {
         </div>
       </div>
 
-      {/* Upload Photo dialog */}
+      {/* Upload Photo dialog (kept; trigger removed) */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
