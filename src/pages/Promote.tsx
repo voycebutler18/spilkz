@@ -73,7 +73,7 @@ export default function Promote() {
     return () => { isMounted = false; };
   }, [splikId, toast]);
 
-  /** Checkout → redirect to your function (no fetch, no CORS) */
+  /** Checkout → go straight to your Render API, which 303s to Stripe (no CORS/fetch) */
   const handleCheckout = () => {
     if (checkingOut) return;
 
@@ -91,36 +91,21 @@ export default function Promote() {
       return;
     }
 
-    // build target URL from envs
-    let raw = (import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined)?.trim() || "";
-    const supa = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, "") || "";
-
-    // if VITE_PROMOTE_CHECKOUT_URL isn't set, fall back to Supabase function
-    if (!raw) {
-      if (!supa) {
-        toast({ title: "Setup error", description: "Set VITE_PROMOTE_CHECKOUT_URL or VITE_SUPABASE_URL.", variant: "destructive" });
-        return;
-      }
-      raw = `${supa}/functions/v1/promotions-checkout`;
-    } else if (!/^https?:\/\//i.test(raw)) {
-      // if someone set it to a path like "/functions/v1/promotions-checkout"
-      if (!supa) {
-        toast({ title: "Setup error", description: "VITE_SUPABASE_URL is required with a relative checkout URL.", variant: "destructive" });
-        return;
-      }
-      raw = `${supa}/${raw.replace(/^\//, "")}`;
-    }
-
     setCheckingOut(true);
     try {
-      const url = new URL(raw);
+      // Prefer env var; fall back to your Render URL
+      const base =
+        (import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined)?.trim() ||
+        "https://splikz-promote-api.onrender.com/pay/checkout";
+
+      const url = new URL(base);
       url.searchParams.set("splikId", splikId);
       if (userId) url.searchParams.set("userId", userId);
       url.searchParams.set("days", String(durationDays));
       url.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
       url.searchParams.set("currency", "USD");
 
-      console.info("Redirecting to checkout:", url.toString());
+      // Full page nav → Render → 303 → Stripe
       window.location.assign(url.toString());
     } catch (err: any) {
       setCheckingOut(false);
@@ -190,7 +175,9 @@ export default function Promote() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-white/70">Starts immediately and runs for <strong className="text-white">{durationDays}</strong> {durationDays === 1 ? "day" : "days"}.</p>
+              <p className="text-xs text-white/70">
+                Starts immediately and runs for <strong className="text-white">{durationDays}</strong> {durationDays === 1 ? "day" : "days"}.
+              </p>
             </div>
 
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
