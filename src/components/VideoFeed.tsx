@@ -110,71 +110,50 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [muted, setMuted] = useState<Record<number, boolean>>({});
   const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
 
-  // Fade-in control — true when first frame is painted
-  const [frameReady, setFrameReady] = useState<Record<number, boolean>>({});
-
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
   // prewarmed feed
   const { feed: storeFeed } = useFeedStore();
 
-  // Batch preloading state
-  const BATCH_SIZE = 20;
-  const [loadedBatches, setLoadedBatches] = useState<Set<number>>(new Set([0]));
-  const [preloadingVideos, setPreloadingVideos] = useState<Set<number>>(new Set());
+  // Cleanup function for preload elements
+  const preloadCleanupRef = useRef<(() => void)[]>([]);
 
-  // Preload first 10 videos immediately
+  // Simple preload for mobile - only preload 3 videos max
   useEffect(() => {
     if (spliks.length === 0) return;
 
-    // Add preconnect and preload hints
-    const head = document.head;
+    // Clean up previous preloads
+    preloadCleanupRef.current.forEach(cleanup => cleanup());
+    preloadCleanupRef.current = [];
+
+    // Only preload first 3 videos on mobile, 5 on desktop
+    const preloadCount = isTouchDevice() ? 3 : 5;
     
-    // Add preconnect for video domains
-    const preconnectLinks = spliks.slice(0, 10).map(splik => {
+    spliks.slice(0, preloadCount).forEach((splik, index) => {
+      // Simple preconnect only
       const url = new URL(splik.video_url);
-      return url.origin;
-    });
-    
-    const uniqueDomains = Array.from(new Set(preconnectLinks));
-    uniqueDomains.forEach(domain => {
-      if (!document.querySelector(`link[href="${domain}"]`)) {
+      const domain = url.origin;
+      
+      if (!document.querySelector(`link[rel="preconnect"][href="${domain}"]`)) {
         const link = document.createElement('link');
         link.rel = 'preconnect';
         link.href = domain;
-        head.appendChild(link);
+        document.head.appendChild(link);
+        
+        preloadCleanupRef.current.push(() => {
+          if (link.parentNode) {
+            link.parentNode.removeChild(link);
+          }
+        });
       }
     });
 
-    // Preload first 10 videos
-    spliks.slice(0, 10).forEach((splik, index) => {
-      const preloadLink = document.createElement('link');
-      preloadLink.rel = 'preload';
-      preloadLink.as = 'video';
-      preloadLink.href = splik.video_url;
-      head.appendChild(preloadLink);
-
-      // Create hidden video elements for prewarming
-      const hiddenVideo = document.createElement('video');
-      hiddenVideo.preload = 'auto';
-      hiddenVideo.muted = true;
-      hiddenVideo.playsInline = true;
-      hiddenVideo.setAttribute('webkit-playsinline', 'true');
-      hiddenVideo.style.display = 'none';
-      hiddenVideo.src = splik.video_url;
-      
-      const startAt = Number(splik.trim_start ?? 0);
-      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-
-      hiddenVideo.addEventListener('loadeddata', () => {
-        try {
-          hiddenVideo.currentTime = resetAt;
-        } catch {}
-      }, { once: true });
-
-      document.body.appendChild(hiddenVideo);
-    });
+    // Cleanup function
+    return () => {
+      preloadCleanupRef.current.forEach(cleanup => cleanup());
+      preloadCleanupRef.current = [];
+    };
   }, [spliks]);
 
   // Try store → sessionStorage → network (only if needed)
@@ -188,9 +167,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         mutedState[index] = true; // All videos start muted for autoplay
       });
       setMuted(mutedState);
-      setFrameReady({}); // reset ready map
-
       setOrderEpoch((e) => e + 1);
+      
       // iOS Safari can throw on unknown behavior; use "auto"
       try {
         containerRef.current?.scrollTo({ top: 0, behavior: "auto" });
@@ -217,7 +195,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const writeCache = (rows: Splik[]) => {
       try {
-        sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 60)));
+        sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 40))); // Reduced cache size
       } catch {}
     };
 
@@ -230,7 +208,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       } catch {}
     };
 
-    const ABORT_TIMEOUT_MS = 15000;
+    const ABORT_TIMEOUT_MS = 10000; // Reduced timeout
 
     const load = async () => {
       const cached = readCache();
@@ -247,8 +225,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
 
-        // 1) Fetch base spliks (limit smaller on mobile for stability)
-        const limit = isTouchDevice() ? 30 : 100;
+        // Reduced limits for better mobile performance
+        const limit = isTouchDevice() ? 20 : 50;
         const { data: base, error: baseErr } = await supabase
           .from("spliks")
           .select(
@@ -344,100 +322,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     });
   };
 
-  /* ===================== Batch preloading ===================== */
-  const preloadVideoBatch = async (batchIndex: number) => {
-    if (loadedBatches.has(batchIndex)) return;
-
-    const startIdx = batchIndex * BATCH_SIZE;
-    const endIdx = Math.min(startIdx + BATCH_SIZE, spliks.length);
-
-    setLoadedBatches((prev) => {
-      const ns = new Set(prev);
-      ns.add(batchIndex);
-      return ns;
-    });
-
-    for (let i = startIdx; i < endIdx; i++) {
-      if (!preloadingVideos.has(i)) {
-        setPreloadingVideos((prev) => {
-          const ns = new Set(prev);
-          ns.add(i);
-          return ns;
-        });
-
-        const preloadVideo = document.createElement("video");
-        preloadVideo.preload = "auto";
-        preloadVideo.muted = true;
-        preloadVideo.playsInline = true;
-        // @ts-expect-error iOS attribute
-        preloadVideo.setAttribute("webkit-playsinline", "true");
-        preloadVideo.src = spliks[i]?.video_url || "";
-
-        const startAt = Number(spliks[i]?.trim_start ?? 0);
-        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-
-        preloadVideo.addEventListener(
-          "loadeddata",
-          () => {
-            try {
-              preloadVideo.currentTime = resetAt;
-            } catch {}
-          },
-          { once: true }
-        );
-
-        const finish = () => {
-          setPreloadingVideos((prev) => {
-            const ns = new Set(prev);
-            ns.delete(i);
-            return ns;
-          });
-          preloadVideo.remove();
-        };
-
-        preloadVideo.addEventListener("canplaythrough", finish, { once: true });
-        preloadVideo.addEventListener("error", finish, { once: true });
-
-        preloadVideo.style.display = "none";
-        document.body.appendChild(preloadVideo);
-      }
-    }
-  };
-
-  // Scroll-based batch loading
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || spliks.length === 0) return;
-
-    const handleScroll = () => {
-      const scrollTop = container.scrollTop;
-      const containerHeight = container.clientHeight;
-      const currentVideoIndex = Math.floor(scrollTop / containerHeight);
-      const currentBatch = Math.floor(currentVideoIndex / BATCH_SIZE);
-      const batchProgress = (currentVideoIndex % BATCH_SIZE) / BATCH_SIZE;
-      if (batchProgress > 0.75) {
-        const nextBatch = currentBatch + 1;
-        if (nextBatch * BATCH_SIZE < spliks.length) {
-          preloadVideoBatch(nextBatch);
-        }
-      }
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    preloadVideoBatch(0);
-
-    return () => {
-      container.removeEventListener("scroll", handleScroll);
-    };
-  }, [spliks.length, loadedBatches, preloadingVideos]);
-
-  /* ========== Autoplay with 3-second loop ========== */
+  /* ========== Simplified Autoplay - No flickering ========== */
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     let currentPlayingVideo: HTMLVideoElement | null = null;
     let currentPlayingIndex = -1;
+    let timeUpdateHandlers = new Map<HTMLVideoElement, () => void>();
 
     const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
@@ -454,34 +346,30 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
         const loopDuration = 3; // 3 second loop
 
-        if (entry.intersectionRatio > 0.35) { // Changed threshold to 35%
+        if (entry.intersectionRatio > 0.5) { // Simplified threshold
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
+            // Clean up old time update handler
+            const oldHandler = timeUpdateHandlers.get(currentPlayingVideo);
+            if (oldHandler) {
+              currentPlayingVideo.removeEventListener("timeupdate", oldHandler);
+              timeUpdateHandlers.delete(currentPlayingVideo);
+            }
             setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
           }
 
           muteOtherVideos(index);
 
           video.setAttribute("playsinline", "true");
-          // @ts-expect-error - iOS attr
           video.setAttribute("webkit-playsinline", "true");
           video.disablePictureInPicture = true;
-          video.preload = "auto";
-          video.crossOrigin = "anonymous";
-          video.muted = muted[index] ?? true; // Always start muted
-          video.controls = false; // Explicitly disable controls
+          video.preload = "metadata"; // Changed from "auto" to reduce memory usage
+          video.muted = muted[index] ?? true;
+          video.controls = false;
 
-          // Only show video after a frame is painted
-          setFrameReady((prev) => ({ ...prev, [index]: false }));
-
-          const armSeekedOnce = () => {
-            const onSeeked = () => setFrameReady((prev) => ({ ...prev, [index]: true }));
-            video.addEventListener("seeked", onSeeked, { once: true });
-          };
-
+          // Set initial time without waiting for seeked event
           try {
-            if (video.readyState >= 2 && video.currentTime === 0) {
-              armSeekedOnce();
+            if (video.readyState >= 1) {
               video.currentTime = resetAt;
             }
           } catch {}
@@ -491,29 +379,43 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             const currentTime = video.currentTime;
             if (currentTime - startAt >= loopDuration) {
               try {
-                armSeekedOnce();
                 video.currentTime = resetAt;
               } catch {}
             }
           };
-          video.removeEventListener("timeupdate", onTimeUpdate);
+
+          // Clean up existing handler
+          const existingHandler = timeUpdateHandlers.get(video);
+          if (existingHandler) {
+            video.removeEventListener("timeupdate", existingHandler);
+          }
+          
           video.addEventListener("timeupdate", onTimeUpdate);
+          timeUpdateHandlers.set(video, onTimeUpdate);
 
           try {
-            await video.play();
+            const playPromise = video.play();
+            if (playPromise) {
+              await playPromise;
+            }
             currentPlayingVideo = video;
             currentPlayingIndex = index;
             setIsPlaying((prev) => ({ ...prev, [index]: true }));
-          } catch {
-            // Fallback for autoplay restrictions
-            try {
-              armSeekedOnce();
-              video.currentTime = resetAt;
-            } catch {}
+          } catch (error) {
+            // Autoplay failed, that's ok
+            console.log("Autoplay prevented for video", index);
           }
-        } else if (entry.intersectionRatio < 0.35 && video === currentPlayingVideo) {
+        } else if (video === currentPlayingVideo) {
           video.pause();
           setIsPlaying((prev) => ({ ...prev, [index]: false }));
+          
+          // Clean up time update handler
+          const handler = timeUpdateHandlers.get(video);
+          if (handler) {
+            video.removeEventListener("timeupdate", handler);
+            timeUpdateHandlers.delete(video);
+          }
+          
           if (currentPlayingVideo === video) {
             currentPlayingVideo = null;
             currentPlayingIndex = -1;
@@ -522,9 +424,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }
     };
 
+    // Simplified intersection observer
     const observer = new IntersectionObserver(handleVideoPlayback, {
       root: container,
-      threshold: [0, 0.25, 0.35, 0.5, 0.75, 1.0], // Added 0.35 threshold
+      threshold: [0.5], // Single threshold to reduce complexity
       rootMargin: "0px",
     });
 
@@ -533,6 +436,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     return () => {
       observer.disconnect();
+      
+      // Clean up all handlers
+      timeUpdateHandlers.forEach((handler, video) => {
+        video.removeEventListener("timeupdate", handler);
+      });
+      timeUpdateHandlers.clear();
+      
       videoRefs.current.forEach((video) => {
         if (video && !video.paused) video.pause();
       });
@@ -613,7 +523,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         {spliks.map((s, i) => {
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
-          const ready = frameReady[i] ?? false;
 
           return (
             <section
@@ -643,17 +552,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </Button>
                 </div>
 
-                {/* video */}
+                {/* video - simplified, no flickering */}
                 <div className="relative bg-black aspect-[9/16] max-h-[600px]">
                   <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
-                  {/* Poster overlay stays until the first real frame is painted */}
+                  {/* Static poster image - only show if video fails to load */}
                   {s.thumbnail_url && (
                     <img
                       src={s.thumbnail_url}
                       alt=""
                       className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
-                      style={{ opacity: ready ? 0 : 1, transition: "opacity 120ms linear", willChange: "opacity" }}
+                      style={{ 
+                        zIndex: 1,
+                        display: 'block'
+                      }}
+                      onLoad={(e) => {
+                        // Hide poster once video starts playing
+                        const video = videoRefs.current[i];
+                        if (video && !video.paused) {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }
+                      }}
                     />
                   )}
 
@@ -662,57 +581,48 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       videoRefs.current[i] = el;
                       if (el) {
                         el.setAttribute("playsinline", "true");
-                        // @ts-expect-error iOS attribute
                         el.setAttribute("webkit-playsinline", "true");
                         el.disablePictureInPicture = true;
-                        el.preload = "auto";
-                        el.crossOrigin = "anonymous";
+                        el.preload = "metadata";
                         el.muted = true;
-                        el.controls = false; // Explicitly disable controls
+                        el.controls = false;
                       }
                     }}
                     src={s.video_url}
                     className="w-full h-full object-cover"
+                    style={{
+                      zIndex: 2,
+                      position: 'relative',
+                      backgroundColor: 'black'
+                    }}
                     playsInline
-                    preload="auto"
+                    preload="metadata"
                     muted
                     controls={false}
-                    onLoadedData={() => {
+                    onPlay={() => {
+                      // Hide poster when video starts playing
+                      const poster = containerRef.current?.querySelector(`[data-index="${i}"] img`);
+                      if (poster) {
+                        (poster as HTMLElement).style.display = 'none';
+                      }
+                    }}
+                    onLoadedMetadata={() => {
                       const v = videoRefs.current[i];
                       const startAt = Number(spliks[i]?.trim_start ?? 0);
                       const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-                      if (v && v.readyState >= 2 && v.currentTime === 0) {
-                        setFrameReady((p) => ({ ...p, [i]: false }));
-                        const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
-                        v.addEventListener("seeked", onSeeked, { once: true });
+                      if (v) {
                         try {
                           v.currentTime = resetAt;
                         } catch {}
                       }
                     }}
-                    onCanPlayThrough={() => {
-                      const v = videoRefs.current[i];
-                      const startAt = Number(spliks[i]?.trim_start ?? 0);
-                      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-                      if (v && v.currentTime === 0) {
-                        setFrameReady((p) => ({ ...p, [i]: false }));
-                        const onSeeked = () => setFrameReady((p) => ({ ...p, [i]: true }));
-                        v.addEventListener("seeked", onSeeked, { once: true });
-                        try {
-                          v.currentTime = resetAt;
-                        } catch {}
+                    onError={(e) => {
+                      console.warn("video error", s.id, e);
+                      // Show poster if video fails
+                      const poster = containerRef.current?.querySelector(`[data-index="${i}"] img`);
+                      if (poster) {
+                        (poster as HTMLElement).style.display = 'block';
                       }
-                    }}
-                    onPlay={() => setFrameReady((p) => ({ ...p, [i]: true }))}
-                    onError={(e) => console.warn("video error", s.id, e)}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      backgroundColor: "transparent",
-                      opacity: ready ? 1 : 0,
-                      transition: "opacity 120ms linear",
-                      willChange: "opacity",
                     }}
                   />
 
@@ -724,9 +634,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   />
 
                   {/* Mute indicator in corner */}
-                  <div
-                    className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 pointer-events-none"
-                  >
+                  <div className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 pointer-events-none">
                     {muted[i] ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
                   </div>
 
@@ -771,4 +679,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       aria-label={isSaved ? "Saved" : "Save"}
                       title={isSaved ? "Saved" : "Save"}
                     >
-                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className
+                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            </section>
+          );
+        })}
+      </div>
+    </>
+  );
+}
