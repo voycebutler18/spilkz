@@ -2,9 +2,8 @@ import express from "express";
 import compression from "compression";
 import Stripe from "stripe";
 
-/** ─── ENV ─────────────────────────────────────────────────────────────
- * Set on Render:
- *  - STRIPE_SECRET_KEY = sk_live_or_test_...
+/* ENV on Render:
+ *  - STRIPE_SECRET_KEY = sk_test_... or sk_live_...
  *  - PUBLIC_SITE_URL   = https://splikz.onrender.com
  */
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
@@ -16,23 +15,11 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(compression());
 
-/** Health check */
+// quick probes
+app.get("/", (_req, res) => res.send("OK: promote API"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-/**
- * GET /pay/checkout
- * Query params:
- *   splikId             (string, optional but nice to have)
- *   userId              (string, optional)
- *   days                (int, required: 1..30)
- *   dailyBudgetCents    (int, required: 50..50000)  // 50¢ .. $500.00
- *   currency            (string, default: USD)
- *
- * Behavior: creates a Stripe Checkout Session and 303 redirects to it.
- * Cancel/back goes to the page the user came from (Referer) or home as fallback.
- * Success goes to your HOME PAGE.
- */
-app.get("/pay/checkout", async (req, res) => {
+async function createCheckout(req, res) {
   try {
     const splikId = String(req.query.splikId || "");
     const userId = String(req.query.userId || "");
@@ -40,42 +27,35 @@ app.get("/pay/checkout", async (req, res) => {
     const dailyBudgetCents = Math.round(Number(req.query.dailyBudgetCents || 0));
     const currency = String(req.query.currency || "USD").toLowerCase();
 
-    if (!days || !dailyBudgetCents) {
-      return res.status(400).send("Missing fields");
-    }
+    if (!days || !dailyBudgetCents) return res.status(400).send("Missing fields");
     if (days < 1 || days > 30) return res.status(400).send("Invalid days");
-    const daily = Math.max(50, Math.min(50000, dailyBudgetCents)); // clamp 50¢..$500
+
+    const daily = Math.max(50, Math.min(50000, dailyBudgetCents)); // 50¢..$500/day
     const totalCents = Math.round(days * daily);
-    if (!Number.isFinite(totalCents) || totalCents < 50) {
-      return res.status(400).send("Invalid amount");
-    }
+    if (!Number.isFinite(totalCents) || totalCents < 50) return res.status(400).send("Invalid amount");
 
-    // Where Stripe's “Cancel and return” goes:
+    // back button (Stripe cancel)
     const referer = req.get("referer");
-    const cancelUrl =
-      (referer && referer.startsWith("http")) ? referer : `${PUBLIC_SITE_URL}/`;
-
-    // Where Stripe sends them after successful payment:
-    const successUrl = `${PUBLIC_SITE_URL}/`;
+    const cancel_url = referer && /^https?:\/\//i.test(referer) ? referer : `${PUBLIC_SITE_URL}/`;
+    // success → home
+    const success_url = `${PUBLIC_SITE_URL}/`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency,
-            product_data: {
-              name: splikId ? `Promotion for Splik #${splikId}` : "Promotion",
-              description: `${days} day(s) × ${(daily / 100).toFixed(2)} per day`,
-            },
-            unit_amount: totalCents,
+      line_items: [{
+        price_data: {
+          currency,
+          product_data: {
+            name: splikId ? `Promotion for Splik #${splikId}` : "Promotion",
+            description: `${days} day(s) × ${(daily / 100).toFixed(2)} per day`,
           },
-          quantity: 1,
+          unit_amount: totalCents,
         },
-      ],
-      cancel_url: cancelUrl,
-      success_url: successUrl,
+        quantity: 1,
+      }],
+      cancel_url,
+      success_url,
       client_reference_id: splikId || undefined,
       metadata: {
         splikId,
@@ -86,15 +66,20 @@ app.get("/pay/checkout", async (req, res) => {
       },
     });
 
-    // send the browser straight to Stripe
     return res.redirect(303, session.url);
   } catch (err) {
     console.error("checkout error:", err);
     return res.status(500).send("Server error");
   }
-});
+}
+
+// ALL supported paths:
+app.get("/pay/checkout", createCheckout);
+app.get("/api/promotions/checkout", createCheckout);
+app.get("/api/promote/checkout", createCheckout);
+
+// explicit 404
+app.use((_req, res) => res.status(404).send("Not Found"));
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`Listening on :${port}`);
-});
+app.listen(port, () => console.log(`Listening on :${port}`));
