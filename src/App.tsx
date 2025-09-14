@@ -68,8 +68,8 @@ import PrayersSearchPage from "./pages/PrayersSearch";
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
-// ✅ NEW: Promote page
-import Promote from "./pages/Promote";
+// ✅ Promote page (use alias so the path resolves on Linux builds)
+import Promote from "@/pages/Promote";
 
 const queryClient = new QueryClient();
 
