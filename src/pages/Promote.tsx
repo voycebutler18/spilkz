@@ -29,7 +29,11 @@ import {
 
 /** Small helpers */
 const fmtUSD = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(n);
 
 type SplikRow = {
   id: string;
@@ -41,8 +45,8 @@ type SplikRow = {
 };
 
 const DURATIONS = [
-  { key: "3",  days: 3,  label: "3 days"  },
-  { key: "7",  days: 7,  label: "7 days"  },
+  { key: "3", days: 3, label: "3 days" },
+  { key: "7", days: 7, label: "7 days" },
   { key: "14", days: 14, label: "14 days" },
   { key: "30", days: 30, label: "30 days" },
 ] as const;
@@ -71,8 +75,14 @@ export default function Promote() {
   // $1 – $50 per day (slider + input stay in sync)
   const [dailyBudget, setDailyBudget] = useState<number>(5);
 
-  const total = useMemo(() => Number((durationDays * dailyBudget).toFixed(2)), [durationDays, dailyBudget]);
-  const reach = useMemo(() => estReach(durationDays, dailyBudget), [durationDays, dailyBudget]);
+  const total = useMemo(
+    () => Number((durationDays * dailyBudget).toFixed(2)),
+    [durationDays, dailyBudget]
+  );
+  const reach = useMemo(
+    () => estReach(durationDays, dailyBudget),
+    [durationDays, dailyBudget]
+  );
 
   /** Load a tiny preview for context */
   useEffect(() => {
@@ -82,22 +92,35 @@ export default function Promote() {
         setLoading(true);
         const { data, error } = await supabase
           .from("spliks")
-          .select("id,title,thumbnail_url,description,created_at,user_id")
+          .select(
+            "id,title,thumbnail_url,description,created_at,user_id"
+          )
           .eq("id", splikId)
           .maybeSingle();
 
         if (error) throw error;
         if (isMounted) setSplik((data as any) ?? null);
       } catch (e: any) {
-        toast({ title: "Couldn’t load your post", description: e.message || "Please try again.", variant: "destructive" });
+        toast({
+          title: "Couldn’t load your post",
+          description: e.message || "Please try again.",
+          variant: "destructive",
+        });
       } finally {
         if (isMounted) setLoading(false);
       }
     })();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [splikId, toast]);
 
-  /** Robust checkout that accepts JSON OR plain text URL and tries multiple endpoints */
+  /**
+   * Checkout handler:
+   * - Prefer calling your dedicated API service via VITE_API_BASE_URL
+   * - Fallback to optional override or Supabase Function if provided
+   * - Accept JSON or plain-text URL from backend
+   */
   const handleCheckout = async () => {
     if (checkingOut) return;
     setCheckingOut(true);
@@ -109,14 +132,22 @@ export default function Promote() {
         currency: "USD",
       };
 
-      // Candidate endpoints in priority order
+      const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
       const supaUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-      const endpoints = [
-        import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined,                // optional override
-        "/api/promotions/checkout",
-        "/api/promote/checkout",
-        supaUrl ? `${supaUrl}/functions/v1/promotions/checkout` : undefined,           // Supabase Edge Function (if you deploy it)
-      ].filter(Boolean) as string[];
+
+      const endpoints: string[] = [];
+
+      // Primary: dedicated API (Express / Render)
+      if (API_BASE) endpoints.push(`${API_BASE}/api/promotions/checkout`);
+
+      // Optional override (if you configured one)
+      if (import.meta.env.VITE_PROMOTE_CHECKOUT_URL) {
+        endpoints.push(String(import.meta.env.VITE_PROMOTE_CHECKOUT_URL));
+      }
+
+      // Fallbacks (kept for compatibility)
+      endpoints.push("/api/promotions/checkout", "/api/promote/checkout");
+      if (supaUrl) endpoints.push(`${supaUrl}/functions/v1/promotions/checkout`);
 
       const tryOnce = async (url: string) => {
         const res = await fetch(url, {
@@ -139,7 +170,10 @@ export default function Promote() {
             return true;
           }
           if (j.client_secret) {
-            toast({ title: "Ready to pay", description: "Embedded checkout not wired up in this UI yet." });
+            toast({
+              title: "Ready to pay",
+              description: "Embedded checkout not wired up in this UI yet.",
+            });
             return true;
           }
           throw new Error("Unexpected checkout response (missing URL).");
@@ -161,13 +195,16 @@ export default function Promote() {
           if (success) break;
         } catch (e) {
           lastErr = e;
+          // keep trying the next endpoint
         }
       }
 
-      if (!success) throw lastErr || new Error("No checkout endpoint responded.");
+      if (!success) {
+        throw lastErr || new Error("No checkout endpoint responded.");
+      }
     } catch (e: any) {
       const msg = e?.message?.includes("Failed to fetch")
-        ? "Could not reach the payment server. Check your API URL or CORS."
+        ? "Could not reach the payment server. Check your API URL (VITE_API_BASE_URL) or CORS."
         : e?.message || "We couldn’t start checkout. Please try again.";
       toast({ title: "Payment error", description: msg, variant: "destructive" });
     } finally {
@@ -184,7 +221,7 @@ export default function Promote() {
     <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : onClose())}>
       <DialogContent
         className="
-          max-w-3xl w=[min(96vw,850px)]
+          max-w-3xl w-[min(96vw,850px)]
           max-h-[90vh] p-0 overflow-hidden rounded-2xl
           bg-slate-900/95 backdrop-blur-2xl border border-white/15 shadow-2xl
           flex flex-col
@@ -201,7 +238,9 @@ export default function Promote() {
                 </div>
               </div>
               <div>
-                <DialogTitle className="text-xl sm:text-2xl font-bold text-white">Promote your post</DialogTitle>
+                <DialogTitle className="text-xl sm:text-2xl font-bold text-white">
+                  Promote your post
+                </DialogTitle>
                 <DialogDescription className="text-gray-300">
                   Choose your duration and daily budget. Pay securely; we’ll handle delivery.
                 </DialogDescription>
@@ -220,14 +259,24 @@ export default function Promote() {
           <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center gap-3">
             <div className="relative w-20 h-14 overflow-hidden rounded-lg bg-black/30 flex-shrink-0">
               {splik?.thumbnail_url ? (
-                <img src={splik.thumbnail_url} alt={splik.title ?? "Post"} className="w-full h-full object-cover" />
+                <img
+                  src={splik.thumbnail_url}
+                  alt={splik.title ?? "Post"}
+                  className="w-full h-full object-cover"
+                />
               ) : (
-                <div className="w-full h-full grid place-items-center text-white/50 text-xs">No preview</div>
+                <div className="w-full h-full grid place-items-center text-white/50 text-xs">
+                  No preview
+                </div>
               )}
             </div>
             <div className="min-w-0">
-              <div className="text-white font-semibold truncate">{splik?.title || "Untitled post"}</div>
-              <div className="text-white/70 text-xs line-clamp-2">{splik?.description || "—"}</div>
+              <div className="text-white font-semibold truncate">
+                {splik?.title || "Untitled post"}
+              </div>
+              <div className="text-white/70 text-xs line-clamp-2">
+                {splik?.description || "—"}
+              </div>
             </div>
             <Badge className="ml-auto bg-purple-600 text-white">Splik #{splikId}</Badge>
           </div>
@@ -253,7 +302,9 @@ export default function Promote() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-white/70">
-                Starts immediately and runs for <strong className="text-white">{durationDays}</strong> day{durationDays > 1 ? "s" : ""}.
+                Starts immediately and runs for{" "}
+                <strong className="text-white">{durationDays}</strong> day
+                {durationDays > 1 ? "s" : ""}.
               </p>
             </div>
 
@@ -303,8 +354,12 @@ export default function Promote() {
                   <TrendingUp className="h-4 w-4 text-yellow-300" />
                   <span className="font-semibold">Estimated reach</span>
                 </div>
-                <div className="text-white text-2xl font-bold mt-1">{reach.toLocaleString()}</div>
-                <div className="text-white/70 text-xs">Approximate impressions across your target audience.</div>
+                <div className="text-white text-2xl font-bold mt-1">
+                  {reach.toLocaleString()}
+                </div>
+                <div className="text-white/70 text-xs">
+                  Approximate impressions across your target audience.
+                </div>
               </div>
 
               <div className="h-px sm:h-20 sm:w-px sm:bg-white/10" />
@@ -314,9 +369,12 @@ export default function Promote() {
                   <ShieldCheck className="h-4 w-4 text-emerald-300" />
                   <span className="font-semibold">Total</span>
                 </div>
-                <div className="text-white text-2xl font-bold mt-1">{fmtUSD(total)}</div>
+                <div className="text-white text-2xl font-bold mt-1">
+                  {fmtUSD(total)}
+                </div>
                 <div className="text-white/70 text-xs">
-                  {fmtUSD(dailyBudget)} / day × {durationDays} day{durationDays > 1 ? "s" : ""}.
+                  {fmtUSD(dailyBudget)} / day × {durationDays} day
+                  {durationDays > 1 ? "s" : ""}.
                 </div>
               </div>
             </div>
