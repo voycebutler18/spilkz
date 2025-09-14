@@ -1,13 +1,21 @@
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Share2, Bookmark, BookmarkCheck, MoreVertical, Volume2, VolumeX } from "lucide-react";
+import {
+  Share2,
+  Bookmark,
+  BookmarkCheck,
+  MoreVertical,
+  Volume2,
+  VolumeX,
+  TrendingUp,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
+import { useToast } from "@/components/ui/use-toast";
 import { useFeedStore } from "@/store/feedStore";
 
 /* ---------------- types ---------------- */
@@ -96,6 +104,7 @@ const isTouchDevice = () =>
 
 export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,8 +122,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  // prewarmed feed
-  const { feed: storeFeed } = useFeedStore();
+  // prewarmed feed (if your store provides it)
+  const { feed: storeFeed } = useFeedStore() as { feed?: Splik[] };
 
   // Cleanup function for preload elements
   const preloadCleanupRef = useRef<(() => void)[]>([]);
@@ -124,34 +133,34 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     if (spliks.length === 0) return;
 
     // Clean up previous preloads
-    preloadCleanupRef.current.forEach(cleanup => cleanup());
+    preloadCleanupRef.current.forEach((cleanup) => cleanup());
     preloadCleanupRef.current = [];
 
     // Only preload first 3 videos on mobile, 5 on desktop
     const preloadCount = isTouchDevice() ? 3 : 5;
-    
-    spliks.slice(0, preloadCount).forEach((splik, index) => {
-      // Simple preconnect only
-      const url = new URL(splik.video_url);
-      const domain = url.origin;
-      
-      if (!document.querySelector(`link[rel="preconnect"][href="${domain}"]`)) {
-        const link = document.createElement('link');
-        link.rel = 'preconnect';
-        link.href = domain;
-        document.head.appendChild(link);
-        
-        preloadCleanupRef.current.push(() => {
-          if (link.parentNode) {
-            link.parentNode.removeChild(link);
-          }
-        });
+
+    spliks.slice(0, preloadCount).forEach((splik) => {
+      try {
+        const url = new URL(splik.video_url);
+        const domain = url.origin;
+
+        if (!document.querySelector(`link[rel="preconnect"][href="${domain}"]`)) {
+          const link = document.createElement("link");
+          link.rel = "preconnect";
+          link.href = domain;
+          document.head.appendChild(link);
+
+          preloadCleanupRef.current.push(() => {
+            if (link.parentNode) link.parentNode.removeChild(link);
+          });
+        }
+      } catch {
+        // ignore bad URLs
       }
     });
 
-    // Cleanup function
     return () => {
-      preloadCleanupRef.current.forEach(cleanup => cleanup());
+      preloadCleanupRef.current.forEach((cleanup) => cleanup());
       preloadCleanupRef.current = [];
     };
   }, [spliks]);
@@ -168,8 +177,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       setMuted(mutedState);
       setOrderEpoch((e) => e + 1);
-      
-      // iOS Safari can throw on unknown behavior; use "auto"
+
       try {
         containerRef.current?.scrollTo({ top: 0, behavior: "auto" });
       } catch {
@@ -178,56 +186,48 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
 
     const readCache = (): Splik[] | null => {
-      let data: Splik[] | null = null;
-      
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
-        data = normalizeSpliks(storeFeed as Splik[]);
-      } else {
-        try {
-          const raw = sessionStorage.getItem("feed:cached");
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed) && parsed.length) {
-              data = normalizeSpliks(parsed as Splik[]);
-            }
-          }
-        } catch {}
+        return shuffle(normalizeSpliks(storeFeed));
       }
-      
-      // Always shuffle cached data on every page load
-      return data ? shuffle(data) : null;
+      try {
+        const raw = sessionStorage.getItem("feed:cached");
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) {
+          return shuffle(normalizeSpliks(parsed as Splik[]));
+        }
+      } catch {}
+      return null;
     };
 
     const writeCache = (rows: Splik[]) => {
       try {
-        sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 40))); // Reduced cache size
+        sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 40)));
       } catch {}
     };
 
     const backgroundRefreshFavs = async () => {
       try {
         if (user?.id) {
-          const { data: favs } = await supabase.from("favorites").select("splik_id").eq("user_id", user.id);
-          if (favs) setSavedIds(new Set(favs.map((f: any) => f.splik_id)));
+          const { data: favs } = await supabase
+            .from("favorites")
+            .select("video_id")
+            .eq("user_id", user.id);
+          if (favs) setSavedIds(new Set(favs.map((f: any) => String(f.video_id))));
         }
       } catch {}
     };
 
-    const ABORT_TIMEOUT_MS = 10000; // Reduced timeout
+    const ABORT_TIMEOUT_MS = 10000;
 
     const load = async () => {
       const cached = readCache();
       if (cached && !cancelled) {
-        // Apply smart shuffle to cached data
-        const { shuffled, newSeenPosts } = smartShuffle(cached.spliks, cached.seenPosts);
-        setSpliks(shuffled);
+        setSpliks(cached);
         setLoading(false);
-        primeUI(shuffled);
+        primeUI(cached);
         backgroundRefreshFavs();
-        
-        // Update the seen posts in cache
-        writeCache(shuffled, newSeenPosts);
-        // Keep going and refresh in the background
+        // continue to refresh in background
       }
 
       setLoading(true);
@@ -235,7 +235,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
 
-        // Reduced limits for better mobile performance
         const limit = isTouchDevice() ? 20 : 50;
         const { data: base, error: baseErr } = await supabase
           .from("spliks")
@@ -251,7 +250,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         const rows = (base || []) as Splik[];
 
-        // 2) Fetch profiles in a second call (no JOINs = fewer edge issues on mobile)
+        // Fetch profiles in a second call
         const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
         let byId: Record<string, any> = {};
         if (userIds.length) {
@@ -263,16 +262,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
 
         const stitched = rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
-        const normalized = normalizeSpliks(stitched);
-
-        // Use existing seen posts or start fresh
-        const seenPosts = cached?.seenPosts || new Set<string>();
-        const { shuffled, newSeenPosts } = smartShuffle(normalized, seenPosts);
+        const normalized = shuffle(normalizeSpliks(stitched));
 
         if (!cancelled) {
-          setSpliks(shuffled);
-          primeUI(shuffled);
-          writeCache(shuffled, newSeenPosts);
+          setSpliks(normalized);
+          primeUI(normalized);
+          writeCache(normalized);
         }
 
         backgroundRefreshFavs();
@@ -302,19 +297,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "favorites", filter: `user_id=eq.${user.id}` },
         (payload) => {
-          const sid = (payload.new as any)?.splik_id;
-          if (sid) setSavedIds((prev) => new Set(prev).add(sid));
+          const vid = (payload.new as any)?.video_id;
+          if (vid) setSavedIds((prev) => new Set(prev).add(String(vid)));
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "favorites", filter: `user_id=eq.${user.id}` },
         (payload) => {
-          const sid = (payload.old as any)?.splik_id;
-          if (sid)
+          const vid = (payload.old as any)?.video_id;
+          if (vid)
             setSavedIds((prev) => {
               const ns = new Set(prev);
-              ns.delete(sid);
+              ns.delete(String(vid));
               return ns;
             });
         }
@@ -360,10 +355,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
         const loopDuration = 3; // 3 second loop
 
-        if (entry.intersectionRatio > 0.5) { // Simplified threshold
+        if (entry.intersectionRatio > 0.5) {
           if (currentPlayingVideo && currentPlayingVideo !== video) {
             currentPlayingVideo.pause();
-            // Clean up old time update handler
             const oldHandler = timeUpdateHandlers.get(currentPlayingVideo);
             if (oldHandler) {
               currentPlayingVideo.removeEventListener("timeupdate", oldHandler);
@@ -377,18 +371,16 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           video.setAttribute("playsinline", "true");
           video.setAttribute("webkit-playsinline", "true");
           video.disablePictureInPicture = true;
-          video.preload = "metadata"; // Changed from "auto" to reduce memory usage
+          video.preload = "metadata";
           video.muted = muted[index] ?? true;
           video.controls = false;
 
-          // Set initial time without waiting for seeked event
           try {
             if (video.readyState >= 1) {
               video.currentTime = resetAt;
             }
           } catch {}
 
-          // 3-second loop behavior
           const onTimeUpdate = () => {
             const currentTime = video.currentTime;
             if (currentTime - startAt >= loopDuration) {
@@ -398,38 +390,34 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             }
           };
 
-          // Clean up existing handler
           const existingHandler = timeUpdateHandlers.get(video);
           if (existingHandler) {
             video.removeEventListener("timeupdate", existingHandler);
           }
-          
+
           video.addEventListener("timeupdate", onTimeUpdate);
           timeUpdateHandlers.set(video, onTimeUpdate);
 
           try {
             const playPromise = video.play();
-            if (playPromise) {
-              await playPromise;
-            }
+            if (playPromise) await playPromise;
             currentPlayingVideo = video;
             currentPlayingIndex = index;
             setIsPlaying((prev) => ({ ...prev, [index]: true }));
-          } catch (error) {
-            // Autoplay failed, that's ok
+          } catch {
+            // Autoplay failed
             console.log("Autoplay prevented for video", index);
           }
         } else if (video === currentPlayingVideo) {
           video.pause();
           setIsPlaying((prev) => ({ ...prev, [index]: false }));
-          
-          // Clean up time update handler
+
           const handler = timeUpdateHandlers.get(video);
           if (handler) {
             video.removeEventListener("timeupdate", handler);
             timeUpdateHandlers.delete(video);
           }
-          
+
           if (currentPlayingVideo === video) {
             currentPlayingVideo = null;
             currentPlayingIndex = -1;
@@ -438,10 +426,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       }
     };
 
-    // Simplified intersection observer
     const observer = new IntersectionObserver(handleVideoPlayback, {
       root: container,
-      threshold: [0.5], // Single threshold to reduce complexity
+      threshold: [0.5],
       rootMargin: "0px",
     });
 
@@ -450,13 +437,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     return () => {
       observer.disconnect();
-      
-      // Clean up all handlers
+
       timeUpdateHandlers.forEach((handler, video) => {
         video.removeEventListener("timeupdate", handler);
       });
       timeUpdateHandlers.clear();
-      
+
       videoRefs.current.forEach((video) => {
         if (video && !video.paused) video.pause();
       });
@@ -474,7 +460,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   };
 
   // favorites: optimistic + realtime-backed
-  const toggleFavorite = async (splikId: string) => {
+  const toggleFavorite = async (videoId: string) => {
     if (!user?.id) {
       toast({
         title: "Sign in required",
@@ -483,37 +469,37 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       return;
     }
-    if (savingIds.has(splikId)) return;
+    if (savingIds.has(videoId)) return;
 
-    setSavingIds((s) => new Set(s).add(splikId));
+    setSavingIds((s) => new Set(s).add(videoId));
 
-    const currentlySaved = savedIds.has(splikId);
+    const currentlySaved = savedIds.has(videoId);
     setSavedIds((prev) => {
       const ns = new Set(prev);
-      currentlySaved ? ns.delete(splikId) : ns.add(splikId);
+      currentlySaved ? ns.delete(videoId) : ns.add(videoId);
       return ns;
     });
 
     try {
       if (currentlySaved) {
-        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splikId);
+        await supabase.from("favorites").delete().eq("user_id", user.id).eq("video_id", videoId);
         toast({ title: "Removed from favorites" });
       } else {
-        await supabase.from("favorites").insert({ user_id: user.id, splik_id: splikId });
+        await supabase.from("favorites").insert({ user_id: user.id, video_id: videoId });
         toast({ title: "Added to favorites" });
       }
     } catch {
       // revert
       setSavedIds((prev) => {
         const ns = new Set(prev);
-        currentlySaved ? ns.add(splikId) : ns.delete(splikId);
+        currentlySaved ? ns.add(videoId) : ns.delete(videoId);
         return ns;
       });
       toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     } finally {
       setSavingIds((s) => {
         const ns = new Set(s);
-        ns.delete(splikId);
+        ns.delete(videoId);
         return ns;
       });
     }
@@ -537,6 +523,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         {spliks.map((s, i) => {
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
+          const isCreator = user?.id === s.user_id;
 
           return (
             <section
@@ -566,7 +553,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </Button>
                 </div>
 
-                {/* video - simplified, no flickering */}
+                {/* video */}
                 <div className="relative bg-black aspect-[9/16] max-h-[600px]">
                   <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
 
@@ -576,15 +563,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       src={s.thumbnail_url}
                       alt=""
                       className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
-                      style={{ 
-                        zIndex: 1,
-                        display: 'block'
-                      }}
+                      style={{ zIndex: 1, display: "block" }}
                       onLoad={(e) => {
-                        // Hide poster once video starts playing
                         const video = videoRefs.current[i];
                         if (video && !video.paused) {
-                          (e.target as HTMLImageElement).style.display = 'none';
+                          (e.target as HTMLImageElement).style.display = "none";
                         }
                       }}
                     />
@@ -604,20 +587,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     }}
                     src={s.video_url}
                     className="w-full h-full object-cover"
-                    style={{
-                      zIndex: 2,
-                      position: 'relative',
-                      backgroundColor: 'black'
-                    }}
+                    style={{ zIndex: 2, position: "relative", backgroundColor: "black" }}
                     playsInline
                     preload="metadata"
                     muted
                     controls={false}
                     onPlay={() => {
-                      // Hide poster when video starts playing
-                      const poster = containerRef.current?.querySelector(`[data-index="${i}"] img`);
+                      const poster = containerRef.current?.querySelector(
+                        `[data-index="${i}"] img`
+                      );
                       if (poster) {
-                        (poster as HTMLElement).style.display = 'none';
+                        (poster as HTMLElement).style.display = "none";
                       }
                     }}
                     onLoadedMetadata={() => {
@@ -632,10 +612,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     }}
                     onError={(e) => {
                       console.warn("video error", s.id, e);
-                      // Show poster if video fails
-                      const poster = containerRef.current?.querySelector(`[data-index="${i}"] img`);
+                      const poster = containerRef.current?.querySelector(
+                        `[data-index="${i}"] img`
+                      );
                       if (poster) {
-                        (poster as HTMLElement).style.display = 'block';
+                        (poster as HTMLElement).style.display = "block";
                       }
                     }}
                   />
@@ -649,7 +630,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
                   {/* Mute indicator in corner */}
                   <div className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 pointer-events-none">
-                    {muted[i] ? <VolumeX className="h-4 w-4 text-white" /> : <Volume2 className="h-4 w-4 text-white" />}
+                    {muted[i] ? (
+                      <VolumeX className="h-4 w-4 text-white" />
+                    ) : (
+                      <Volume2 className="h-4 w-4 text-white" />
+                    )}
                   </div>
 
                   {/* title overlay */}
@@ -665,13 +650,26 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 {/* actions */}
                 <div className="p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      {/* Promote — only creator sees it */}
+                      {isCreator && (
+                        <Button
+                          size="sm"
+                          className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                          onClick={() => navigate(`/promote/${s.id}`)}
+                          title="Promote this video"
+                        >
+                          <TrendingUp className="h-4 w-4" />
+                          Promote
+                        </Button>
+                      )}
+
                       {/* Share */}
                       <Button
                         size="icon"
                         variant="ghost"
                         onClick={() => {
-                          const url = `${window.location.origin.replace(/\/$/,"")}/splik/${s.id}`;
+                          const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
                           navigator.clipboard.writeText(url);
                           toast({ title: "Link copied!" });
                         }}
@@ -688,12 +686,18 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       variant="ghost"
                       onClick={() => toggleFavorite(s.id)}
                       disabled={saving}
-                      className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                      className={
+                        isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"
+                      }
                       aria-pressed={isSaved}
                       aria-label={isSaved ? "Saved" : "Save"}
                       title={isSaved ? "Saved" : "Save"}
                     >
-                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                      {isSaved ? (
+                        <BookmarkCheck className="h-6 w-6" />
+                      ) : (
+                        <Bookmark className="h-6 w-6" />
+                      )}
                     </Button>
                   </div>
                 </div>
