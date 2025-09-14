@@ -81,7 +81,7 @@ export default function Promote() {
         if (isMounted) setSplik((data as any) ?? null);
       } catch (e: any) {
         toast({
-          title: "Couldn’t load your post",
+          title: "Couldn't load your post",
           description: e.message || "Please try again.",
           variant: "destructive",
         });
@@ -97,6 +97,7 @@ export default function Promote() {
   const handleCheckout = async () => {
     if (checkingOut) return;
     setCheckingOut(true);
+    
     try {
       const payload = {
         splikId,
@@ -105,72 +106,149 @@ export default function Promote() {
         currency: "USD",
       };
 
+      console.log("Starting checkout with payload:", payload);
+
+      // Get API base URL from environment, with fallbacks for different setups
       const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
       const supaUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-
+      
+      // Prioritized list of endpoints to try
       const endpoints = [
+        // 1. Direct API URL from environment (highest priority)
         import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined,
-        apiBase ? `${apiBase}/api/promotions/checkout` : undefined,      // ← use API base if provided
+        // 2. API base + standard path
+        apiBase ? `${apiBase}/api/promotions/checkout` : undefined,
+        // 3. Common API naming patterns for Render deployments
+        "https://spilkz-promote-api.onrender.com/api/promotions/checkout",
+        "https://spilkz-api.onrender.com/api/promotions/checkout", 
+        "https://splikz-promote-api.onrender.com/api/promotions/checkout",
+        "https://splikz-api.onrender.com/api/promotions/checkout",
+        // 4. Relative paths (for same-domain deployments)
         "/api/promotions/checkout",
         "/api/promote/checkout",
+        // 5. Supabase Edge Functions (as fallback)
         supaUrl ? `${supaUrl}/functions/v1/promotions/checkout` : undefined,
       ].filter(Boolean) as string[];
 
-      const tryOnce = async (url: string) => {
+      console.log("Will try these endpoints in order:", endpoints);
+
+      const tryEndpoint = async (url: string) => {
+        console.log(`Trying endpoint: ${url}`);
+        
         const res = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            // Add CORS headers for debugging
+            "Accept": "application/json",
+          },
           body: JSON.stringify(payload),
+          // Don't include credentials unless needed
+          credentials: 'omit'
+        });
+
+        console.log(`Response from ${url}:`, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: Object.fromEntries(res.headers.entries())
         });
 
         if (!res.ok) {
-          const peek = (await res.text().catch(() => "")).slice(0, 140);
-          throw new Error(`Checkout failed (${res.status}) ${peek ? `– ${peek}` : ""}`);
+          const errorText = await res.text().catch(() => "");
+          console.error(`Error from ${url}:`, errorText);
+          throw new Error(`HTTP ${res.status}: ${errorText.slice(0, 100) || res.statusText}`);
         }
 
-        const ct = res.headers.get("content-type") || "";
-        if (ct.includes("application/json")) {
-          const j = await res.json().catch(() => ({} as any));
-          const urlField: string | undefined = j.url || j.checkout_url || j.paymentUrl;
-          if (urlField && /^https?:\/\//i.test(urlField)) {
-            window.location.href = urlField;
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const responseData = await res.json();
+          console.log(`JSON response from ${url}:`, responseData);
+          
+          // Look for checkout URL in response
+          const checkoutUrl = responseData.url || responseData.checkout_url || responseData.paymentUrl;
+          if (checkoutUrl && /^https?:\/\//i.test(checkoutUrl)) {
+            console.log("Found checkout URL, redirecting to:", checkoutUrl);
+            window.location.href = checkoutUrl;
             return true;
           }
-          if (j.client_secret) {
-            toast({
-              title: "Ready to pay",
-              description: "Embedded checkout not wired up in this UI yet.",
+          
+          // Handle embedded checkout (client_secret)
+          if (responseData.client_secret) {
+            console.log("Got client_secret for embedded checkout");
+            // Navigate to your Pay.tsx page with the client secret
+            const params = new URLSearchParams({
+              cs: responseData.client_secret,
+              amt: String(Math.round(dailyBudget * durationDays * 100)),
+              cur: "USD",
+              splik: splikId
             });
+            navigate(`/pay?${params.toString()}`);
             return true;
           }
-          throw new Error("Unexpected checkout response (missing URL).");
+          
+          throw new Error("Response missing checkout URL or client_secret");
         } else {
-          const text = (await res.text()).trim();
-          if (/^https?:\/\//i.test(text)) {
-            window.location.href = text;
+          // Handle plain text URL response
+          const text = await res.text();
+          console.log(`Text response from ${url}:`, text);
+          
+          if (/^https?:\/\//i.test(text.trim())) {
+            console.log("Found URL in text response, redirecting to:", text.trim());
+            window.location.href = text.trim();
             return true;
           }
-          throw new Error(`Unexpected response type (${ct || "no content-type"})`);
+          
+          throw new Error(`Unexpected response format: ${contentType || 'unknown'}`);
         }
       };
 
+      // Try each endpoint until one succeeds
       let success = false;
-      let lastErr: unknown = null;
-      for (const ep of endpoints) {
+      let lastError: Error | null = null;
+      
+      for (const endpoint of endpoints) {
         try {
-          success = await tryOnce(ep);
-          if (success) break;
-        } catch (e) {
-          lastErr = e;
+          success = await tryEndpoint(endpoint);
+          if (success) {
+            console.log("Checkout successful with endpoint:", endpoint);
+            break;
+          }
+        } catch (error) {
+          console.warn(`Endpoint ${endpoint} failed:`, error);
+          lastError = error as Error;
+          
+          // Special handling for CORS errors
+          if (error instanceof Error && error.message.includes('CORS')) {
+            console.error("CORS error detected. Check your API CORS configuration.");
+          }
         }
       }
 
-      if (!success) throw lastErr || new Error("No checkout endpoint responded.");
-    } catch (e: any) {
-      const msg = e?.message?.includes("Failed to fetch")
-        ? "Could not reach the payment server. Check your API URL (VITE_API_BASE_URL) or CORS."
-        : e?.message || "We couldn’t start checkout. Please try again.";
-      toast({ title: "Payment error", description: msg, variant: "destructive" });
+      if (!success) {
+        throw lastError || new Error("All checkout endpoints failed");
+      }
+
+    } catch (error: any) {
+      console.error("Checkout failed:", error);
+      
+      // Provide user-friendly error messages
+      let errorMessage = "We couldn't start checkout. Please try again.";
+      
+      if (error.message?.includes("Failed to fetch") || error.message?.includes("CORS")) {
+        errorMessage = "Could not reach the payment server. Please check your internet connection and try again.";
+      } else if (error.message?.includes("HTTP 404")) {
+        errorMessage = "Payment service not found. Please contact support.";
+      } else if (error.message?.includes("HTTP 500")) {
+        errorMessage = "Payment server error. Please try again in a moment.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      toast({
+        title: "Payment Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
     } finally {
       setCheckingOut(false);
     }
@@ -204,7 +282,7 @@ export default function Promote() {
               <div>
                 <DialogTitle className="text-xl sm:text-2xl font-bold text-white">Promote your post</DialogTitle>
                 <DialogDescription className="text-gray-300">
-                  Choose your duration and daily budget. Pay securely; we’ll handle delivery.
+                  Choose your duration and daily budget. Pay securely; we'll handle delivery.
                 </DialogDescription>
               </div>
             </div>
@@ -321,7 +399,7 @@ export default function Promote() {
 
         {/* Footer */}
         <div className="px-5 sm:px-6 py-4 border-t border-white/10 bg-slate-900/80 flex items-center justify-between">
-          <div className="text-xs sm:text-sm text-white/70">You’ll review and pay securely on the next screen.</div>
+          <div className="text-xs sm:text-sm text-white/70">You'll review and pay securely on the next screen.</div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose} className="rounded-xl" disabled={checkingOut}>
               Cancel
