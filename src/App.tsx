@@ -11,7 +11,7 @@ import {
   useNavigate,
   useLocation,
 } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
 
@@ -68,11 +68,44 @@ import PrayersSearchPage from "./pages/PrayersSearch";
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
-// ✅ Promote page (use alias so the path resolves on Linux builds)
+// ✅ Promote page
 import Promote from "@/pages/Promote";
 
 const queryClient = new QueryClient();
 
+/* ---------- Small, local ErrorBoundary to avoid “black screen” ---------- */
+import React from "react";
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(err: any) {
+    // Optionally log to your error service
+    console.error("App router error:", err);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-[100svh] flex items-center justify-center p-6">
+          <div className="text-center">
+            <div className="mx-auto h-12 w-12 rounded-full bg-primary/10 mb-3" />
+            <h2 className="text-lg font-semibold mb-1">Something went wrong</h2>
+            <p className="text-sm text-muted-foreground">
+              Try refreshing, or navigate back to the home page.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* --------------------- Helpers you already had --------------------- */
 function UploadRoute() {
   const { openUpload, isOpen } = useUploadModal();
   const navigate = useNavigate();
@@ -133,6 +166,7 @@ function MessagesThreadRoute() {
   return isDesktop ? <CombinedMessages /> : <MessageThread />;
 }
 
+/* ------------------------------ App ------------------------------ */
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -141,76 +175,87 @@ const App = () => (
       <BrowserRouter>
         <ScrollToTop />
         <UploadModalProvider>
-          <Routes>
-            {/* Auth (no layout) */}
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
-            <Route path="/reset-password" element={<ResetPassword />} />
+          <ErrorBoundary>
+            {/* Suspense avoids hard-crashing the whole tree if a page is slow or throws during lazy bits */}
+            <Suspense
+              fallback={
+                <div className="min-h-[100svh] flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+                </div>
+              }
+            >
+              <Routes>
+                {/* Auth (no layout) */}
+                <Route path="/login" element={<Login />} />
+                <Route path="/signup" element={<Signup />} />
+                <Route path="/auth/callback" element={<AuthCallback />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
 
-            {/* Admin (no public layout) */}
-            <Route path="/admin" element={<Admin />} />
+                {/* Admin (no public layout) */}
+                <Route path="/admin" element={<Admin />} />
 
-            {/* Back-compat upload (no layout) */}
-            <Route path="/upload" element={<UploadRoute />} />
+                {/* Back-compat upload (no layout) */}
+                <Route path="/upload" element={<UploadRoute />} />
 
-            {/* Splash OUTSIDE layout */}
-            <Route path="/" element={<Splash />} />
+                {/* Splash OUTSIDE layout */}
+                <Route path="/" element={<Splash />} />
 
-            {/* Everything else uses the global layout */}
-            <Route element={<AppLayout />}>
-              {/* Home */}
-              <Route path="/home" element={<Explore />} />
-              <Route path="/explore" element={<Navigate to="/home" replace />} />
+                {/* Everything else uses the global layout */}
+                <Route element={<AppLayout />}>
+                  {/* Home stays on Explore (your original) */}
+                  <Route path="/home" element={<Explore />} />
+                  <Route path="/explore" element={<Navigate to="/home" replace />} />
 
-              {/* Old links */}
-              <Route path="/thoughts/*" element={<Navigate to="/home" replace />} />
+                  {/* Old links */}
+                  <Route path="/thoughts/*" element={<Navigate to="/home" replace />} />
 
-              {/* Static */}
-              <Route path="/about" element={<About />} />
-              <Route path="/food" element={<Food />} />
-              <Route path="/brands" element={<ForBrands />} />
-              <Route path="/creators" element={<ForCreators />} />
-              <Route path="/press" element={<Press />} />
-              <Route path="/help" element={<HelpCenter />} />
-              <Route path="/contact" element={<Contact />} />
+                  {/* Static */}
+                  <Route path="/about" element={<About />} />
+                  <Route path="/food" element={<Food />} />
+                  <Route path="/brands" element={<ForBrands />} />
+                  <Route path="/creators" element={<ForCreators />} />
+                  <Route path="/press" element={<Press />} />
+                  <Route path="/help" element={<HelpCenter />} />
+                  <Route path="/contact" element={<Contact />} />
 
-              {/* Legal / Community */}
-              <Route path="/terms" element={<Terms />} />
-              <Route path="/privacy" element={<Privacy />} />
-              <Route path="/dmca" element={<DMCA />} />
-              <Route path="/guidelines" element={<Guidelines />} />
-              <Route path="/safety" element={<Safety />} />
-              <Route path="/accessibility" element={<Accessibility />} />
+                  {/* Legal / Community */}
+                  <Route path="/terms" element={<Terms />} />
+                  <Route path="/privacy" element={<Privacy />} />
+                  <Route path="/dmca" element={<DMCA />} />
+                  <Route path="/guidelines" element={<Guidelines />} />
+                  <Route path="/safety" element={<Safety />} />
+                  <Route path="/accessibility" element={<Accessibility />} />
 
-              {/* Dashboard */}
-              <Route path="/dashboard" element={<CreatorDashboard />} />
-              <Route path="/dashboard/favorites" element={<Favorites />} />
+                  {/* Dashboard */}
+                  <Route path="/dashboard" element={<CreatorDashboard />} />
+                  <Route path="/dashboard/favorites" element={<Favorites />} />
 
-              {/* Profiles & videos */}
-              <Route path="/profile/:id" element={<Profile />} />
-              <Route path="/creator/:slug" element={<CreatorProfile />} />
-              <Route path="/video/:id" element={<VideoPage />} />
-              <Route path="/splik/:id" element={<SplikPage />} />
-              <Route path="/search" element={<Search />} />
+                  {/* Profiles & videos */}
+                  <Route path="/profile/:id" element={<Profile />} />
+                  <Route path="/creator/:slug" element={<CreatorProfile />} />
+                  <Route path="/video/:id" element={<VideoPage />} />
+                  <Route path="/splik/:id" element={<SplikPage />} />
+                  <Route path="/search" element={<Search />} />
 
-              {/* ✅ Promote */}
-              <Route path="/promote/:splikId" element={<Promote />} />
+                  {/* ✅ Promote */}
+                  <Route path="/promote/:splikId" element={<Promote />} />
 
-              {/* Messaging */}
-              <Route path="/messages" element={<MessagesIndexRoute />} />
-              <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
+                  {/* Messaging */}
+                  <Route path="/messages" element={<MessagesIndexRoute />} />
+                  <Route path="/messages/:otherId" element={<MessagesThreadRoute />} />
 
-              {/* Prayers */}
-              <Route path="/prayers" element={<PrayersPage />} />
-              <Route path="/prayers/search" element={<PrayersSearchPage />} />
-              <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
-              <Route path="/prayers/:id" element={<PrayerDetailPage />} />
+                  {/* Prayers */}
+                  <Route path="/prayers" element={<PrayersPage />} />
+                  <Route path="/prayers/search" element={<PrayersSearchPage />} />
+                  <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
+                  <Route path="/prayers/:id" element={<PrayerDetailPage />} />
 
-              {/* 404 */}
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
+                  {/* 404 */}
+                  <Route path="*" element={<NotFound />} />
+                </Route>
+              </Routes>
+            </Suspense>
+          </ErrorBoundary>
         </UploadModalProvider>
       </BrowserRouter>
     </TooltipProvider>
