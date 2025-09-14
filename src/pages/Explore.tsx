@@ -852,6 +852,8 @@ const Explore = () => {
                           .catch(() => {});
                       }
                     }}
+                    /* ✅ Promote navigation added — nothing else changed */
+                    onPromote={(id) => navigate(`/promote/${id}`)}
                   />
                 ))}
               </div>
