@@ -58,6 +58,7 @@ export default function Promote() {
 
   const [open, setOpen] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [checkingOut, setCheckingOut] = useState(false);
   const [splik, setSplik] = useState<SplikRow | null>(null);
 
   // Controls
@@ -96,53 +97,87 @@ export default function Promote() {
     return () => { isMounted = false; };
   }, [splikId, toast]);
 
-  /** Checkout handler – call your backend */
+  /** Robust checkout that accepts JSON OR plain text URL and tries multiple endpoints */
   const handleCheckout = async () => {
+    if (checkingOut) return;
+    setCheckingOut(true);
     try {
       const payload = {
         splikId,
         durationDays,
         dailyBudgetCents: Math.round(dailyBudget * 100),
         currency: "USD",
-        // you can add: startAt, geo, interests, etc.
       };
 
-      // Try your canonical endpoint first, fall back to an alt path if needed
-      const res =
-        await fetch("/api/promotions/checkout", {
+      // Candidate endpoints in priority order
+      const supaUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+      const endpoints = [
+        import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined,                // optional override
+        "/api/promotions/checkout",
+        "/api/promote/checkout",
+        supaUrl ? `${supaUrl}/functions/v1/promotions/checkout` : undefined,           // Supabase Edge Function (if you deploy it)
+      ].filter(Boolean) as string[];
+
+      const tryOnce = async (url: string) => {
+        const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-        }).catch(() => fetch("/api/promote/checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }));
+        });
 
-      if (!res || !res.ok) throw new Error(`Checkout failed (${res?.status || "network"})`);
-      const j = await res.json();
+        if (!res.ok) {
+          // Read a little of the body for debugging
+          const peek = (await res.text().catch(() => "")).slice(0, 140);
+          throw new Error(`Checkout failed (${res.status}) ${peek ? `– ${peek}` : ""}`);
+        }
 
-      // Support either {url} or {checkout_url}
-      const url: string | undefined = j.url || j.checkout_url || j.paymentUrl;
-      if (url) {
-        window.location.href = url;
-        return;
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+          // JSON path
+          const j = await res.json().catch(() => ({} as any));
+          const urlField: string | undefined = j.url || j.checkout_url || j.paymentUrl;
+          if (urlField && /^https?:\/\//i.test(urlField)) {
+            window.location.href = urlField;
+            return true;
+          }
+          if (j.client_secret) {
+            // Embedded flow would be handled here if you wire it up
+            toast({ title: "Ready to pay", description: "Embedded checkout not wired up in this UI yet." });
+            return true;
+          }
+          throw new Error("Unexpected checkout response (missing URL).");
+        } else {
+          // Non-JSON: allow plain text URL
+          const text = (await res.text()).trim();
+          if (/^https?:\/\//i.test(text)) {
+            window.location.href = text;
+            return true;
+          }
+          throw new Error(`Unexpected response type (${ct || "no content-type"})`);
+        }
+      };
+
+      let success = false;
+      let lastErr: unknown = null;
+      for (const ep of endpoints) {
+        try {
+          success = await tryOnce(ep);
+          if (success) break;
+        } catch (e) {
+          lastErr = e;
+          // try next endpoint
+        }
       }
 
-      // If the backend returns client_secret for embedded payment, handle here.
-      if (j.client_secret) {
-        // TODO: mount your payment element here if you support embedded checkout.
-        toast({ title: "Ready to pay", description: "Embedded checkout not wired in this UI yet." });
-        return;
-      }
-
-      throw new Error("Unexpected checkout response. Missing URL.");
+      if (!success) throw lastErr || new Error("No checkout endpoint responded.");
     } catch (e: any) {
       toast({
         title: "Payment error",
-        description: e.message || "We couldn’t start checkout. Please try again.",
+        description: e?.message || "We couldn’t start checkout. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setCheckingOut(false);
     }
   };
 
@@ -302,11 +337,15 @@ export default function Promote() {
             You’ll review and pay securely on the next screen.
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose} className="rounded-xl">
+            <Button variant="outline" onClick={onClose} className="rounded-xl" disabled={checkingOut}>
               Cancel
             </Button>
-            <Button onClick={handleCheckout} className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700">
-              Continue to payment
+            <Button
+              onClick={handleCheckout}
+              className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700"
+              disabled={checkingOut}
+            >
+              {checkingOut ? "Redirecting…" : "Continue to payment"}
             </Button>
           </div>
         </div>
