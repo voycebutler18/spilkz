@@ -23,7 +23,7 @@ const app = express();
 app.set("trust proxy", 1); // good default behind proxies (Render, etc.)
 
 /* ─────────────────────────────
-   CORS
+   CORS - UPDATED
    Allow your production site, any origins listed in ALLOWED_ORIGINS,
    and localhost for dev.
 ────────────────────────────── */
@@ -34,9 +34,14 @@ const splitList = (s) =>
     .filter(Boolean)
     .map((x) => x.replace(/\/$/, "")); // strip trailing slash
 
+// Add default allowed origins if env vars are missing
 const allowedFromEnv = [
   (process.env.PUBLIC_SITE_URL || "").replace(/\/$/, ""),
   ...splitList(process.env.ALLOWED_ORIGINS),
+  // Add your known domains as fallbacks
+  "https://spilkz.onrender.com",
+  "https://splikz.com",
+  "https://www.splikz.com", // with www subdomain
 ].filter(Boolean);
 
 const corsOptions = {
@@ -63,16 +68,37 @@ const corsOptions = {
     })();
 
     const allowLocalhost = /http:\/\/localhost:\d+$/i.test(o);
+    
+    // Also allow any *.onrender.com domain for development
+    const allowRender = /https:\/\/[^\.]+\.onrender\.com$/i.test(o);
 
-    const ok = allowExact || allowByHost || allowLocalhost;
+    const ok = allowExact || allowByHost || allowLocalhost || allowRender;
+    
+    // Log for debugging
+    if (!ok) {
+      console.log(`CORS BLOCKED: ${o}. Allowed origins:`, allowedFromEnv);
+    } else {
+      console.log(`CORS ALLOWED: ${o}`);
+    }
+    
     cb(ok ? null : new Error(`CORS blocked: ${o}`), ok);
   },
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type", 
+    "Authorization", 
+    "X-Requested-With",
+    "Accept",
+    "Origin"
+  ],
+  credentials: true, // Add this if your frontend sends credentials
+  optionsSuccessStatus: 200 // For legacy browser support
 };
 
+// Apply CORS before other middleware
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // preflight
+
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 
@@ -86,6 +112,11 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 ────────────────────────────── */
 async function createPromotionCheckout(req, res) {
   try {
+    console.log("Received checkout request:", {
+      origin: req.get('origin'),
+      body: req.body
+    });
+
     const {
       splikId,
       durationDays,
@@ -94,24 +125,29 @@ async function createPromotionCheckout(req, res) {
     } = req.body || {};
 
     if (!splikId || !durationDays || !dailyBudgetCents) {
+      console.log("Missing fields:", { splikId, durationDays, dailyBudgetCents });
       return res.status(400).json({ error: "missing_fields" });
     }
 
     if (!process.env.STRIPE_SECRET_KEY) {
+      console.log("Stripe not configured");
       return res.status(500).json({ error: "stripe_not_configured" });
     }
 
     const unitAmount = Number(durationDays) * Number(dailyBudgetCents); // cents
     if (!Number.isFinite(unitAmount) || unitAmount < 50) {
       // Stripe min is $0.50 (50 cents)
+      console.log("Amount too small:", unitAmount);
       return res.status(400).json({ error: "amount_too_small" });
     }
 
     const successBase = (process.env.PUBLIC_SITE_URL || "").replace(/\/$/, "");
     if (!successBase) {
+      console.log("Missing PUBLIC_SITE_URL");
       return res.status(500).json({ error: "missing_PUBLIC_SITE_URL" });
     }
 
+    console.log("Creating Stripe session...");
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -139,10 +175,11 @@ async function createPromotionCheckout(req, res) {
       },
     });
 
+    console.log("Stripe session created successfully");
     return res.json({ url: session.url });
   } catch (err) {
     console.error("checkout error:", err);
-    return res.status(500).json({ error: "server_error" });
+    return res.status(500).json({ error: "server_error", message: err.message });
   }
 }
 
@@ -153,12 +190,26 @@ async function createPromotionCheckout(req, res) {
 app.post("/api/promotions/checkout", createPromotionCheckout);
 app.post("/api/promote/checkout", createPromotionCheckout); // alias
 
+// Add a test endpoint to verify CORS
+app.get("/api/test", (req, res) => {
+  res.json({ 
+    message: "CORS test successful",
+    origin: req.get('origin'),
+    timestamp: new Date().toISOString()
+  });
+});
+
 /* ─────────────────────────────
    Start
 ────────────────────────────── */
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`Promote API listening on :${port}`);
+  console.log("Environment check:");
+  console.log("- PUBLIC_SITE_URL:", process.env.PUBLIC_SITE_URL || "(missing)");
+  console.log("- ALLOWED_ORIGINS:", process.env.ALLOWED_ORIGINS || "(missing)");
+  console.log("- STRIPE_SECRET_KEY:", process.env.STRIPE_SECRET_KEY ? "(present)" : "(missing)");
+  
   if (allowedFromEnv.length) {
     console.log("CORS allowed origins:", allowedFromEnv.join(", "));
   } else {
