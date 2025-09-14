@@ -34,7 +34,8 @@ const DAY_CHOICES = Array.from({ length: 30 }, (_, i) => i + 1);
 const estReach = (days: number, dailyBudget: number) => Math.round(days * dailyBudget * 600);
 
 export default function Promote() {
-  const { splikId = "" } = useParams();
+  const { splikId: splikIdParam } = useParams<{ splikId: string }>();
+  const splikId = splikIdParam ?? "";
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -56,7 +57,11 @@ export default function Promote() {
       try {
         setLoading(true);
         const [{ data, error }, session] = await Promise.all([
-          supabase.from("spliks").select("id,title,thumbnail_url,description,created_at,user_id").eq("id", splikId).maybeSingle(),
+          supabase
+            .from("spliks")
+            .select("id,title,thumbnail_url,description,created_at,user_id")
+            .eq("id", splikId)
+            .maybeSingle(),
           supabase.auth.getUser(),
         ]);
         if (error) throw error;
@@ -65,19 +70,61 @@ export default function Promote() {
           setUserId(session.data.user?.id ?? null);
         }
       } catch (e: any) {
-        toast({ title: "Couldn't load your post", description: e.message || "Please try again.", variant: "destructive" });
+        toast({
+          title: "Couldn't load your post",
+          description: e?.message || "Please try again.",
+          variant: "destructive",
+        });
       } finally {
         if (isMounted) setLoading(false);
       }
     })();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+    };
   }, [splikId, toast]);
 
-  /** Checkout → go straight to your Render API, which 303s to Stripe (no CORS/fetch) */
+  /** Pick the first viable checkout endpoint and return a full URL */
+  const buildCheckoutUrl = (): URL | null => {
+    const explicit = (import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined)?.trim();
+    const apiBase = (import.meta.env.VITE_PROMOTE_API_BASE as string | undefined)?.replace(/\/$/, "");
+    const supa = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, "");
+
+    const candidates: string[] = [];
+
+    // 1) Explicit full URL or relative path
+    if (explicit) candidates.push(explicit);
+
+    // 2) API base → /pay/checkout
+    if (apiBase) candidates.push(`${apiBase}/pay/checkout`);
+
+    // 3) Render default fallback
+    candidates.push("https://splikz-promote-api.onrender.com/pay/checkout");
+
+    // 4) Supabase Edge Function fallback
+    if (supa) candidates.push(`${supa}/functions/v1/promotions-checkout`);
+
+    // Normalize: if a candidate is relative, prepend supabase URL (last resort)
+    for (const c of candidates) {
+      if (!c) continue;
+      if (/^https?:\/\//i.test(c)) {
+        try {
+          return new URL(c);
+        } catch {}
+      } else if (supa) {
+        try {
+          return new URL(`${supa}/${c.replace(/^\//, "")}`);
+        } catch {}
+      }
+    }
+    return null;
+  };
+
+  /** Checkout → redirect to your backend, which 303s to Stripe (no CORS/fetch) */
   const handleCheckout = () => {
     if (checkingOut) return;
 
-    // quick guards
+    // basic guards
     if (!splikId) {
       toast({ title: "Missing post", description: "We couldn't find that post.", variant: "destructive" });
       return;
@@ -87,29 +134,41 @@ export default function Promote() {
       return;
     }
     if (dailyBudget < 0.5 || dailyBudget > 500) {
-      toast({ title: "Daily budget out of range", description: "Pick between $0.50 and $500 per day.", variant: "destructive" });
+      toast({
+        title: "Daily budget out of range",
+        description: "Pick between $0.50 and $500 per day.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const endpoint = buildCheckoutUrl();
+    if (!endpoint) {
+      toast({
+        title: "Setup error",
+        description: "No checkout endpoint is configured.",
+        variant: "destructive",
+      });
       return;
     }
 
     setCheckingOut(true);
     try {
-      // Prefer env var; fall back to your Render URL
-      const base =
-        (import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined)?.trim() ||
-        "https://splikz-promote-api.onrender.com/pay/checkout";
+      endpoint.searchParams.set("splikId", splikId);
+      if (userId) endpoint.searchParams.set("userId", userId);
+      endpoint.searchParams.set("days", String(durationDays));
+      endpoint.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
+      endpoint.searchParams.set("currency", "USD");
 
-      const url = new URL(base);
-      url.searchParams.set("splikId", splikId);
-      if (userId) url.searchParams.set("userId", userId);
-      url.searchParams.set("days", String(durationDays));
-      url.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
-      url.searchParams.set("currency", "USD");
-
-      // Full page nav → Render → 303 → Stripe
-      window.location.assign(url.toString());
+      // Full page nav → backend → 303 → Stripe
+      window.location.assign(endpoint.toString());
     } catch (err: any) {
       setCheckingOut(false);
-      toast({ title: "Payment error", description: err?.message || "We couldn’t start checkout.", variant: "destructive" });
+      toast({
+        title: "Payment error",
+        description: err?.message || "We couldn’t start checkout.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -132,7 +191,9 @@ export default function Promote() {
               </div>
               <div>
                 <DialogTitle className="text-xl sm:text-2xl font-bold text-white">Promote your post</DialogTitle>
-                <DialogDescription className="text-gray-300">Choose your duration and daily budget. Pay securely; we'll handle delivery.</DialogDescription>
+                <DialogDescription className="text-gray-300">
+                  Choose your duration and daily budget. Pay securely; we'll handle delivery.
+                </DialogDescription>
               </div>
             </div>
             <Button variant="ghost" className="h-9 w-9 rounded-full" onClick={onClose} aria-label="Close">
@@ -145,7 +206,7 @@ export default function Promote() {
           <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center gap-3">
             <div className="relative w-20 h-14 overflow-hidden rounded-lg bg-black/30 flex-shrink-0">
               {splik?.thumbnail_url ? (
-                <img src={splik.thumbnail_url} alt={splik.title ?? "Post"} className="w-full h-full object-cover" />
+                <img src={splik.thumbnail_url} alt={splik?.title ?? "Post"} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full grid place-items-center text-white/50 text-xs">No preview</div>
               )}
@@ -176,7 +237,8 @@ export default function Promote() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-white/70">
-                Starts immediately and runs for <strong className="text-white">{durationDays}</strong> {durationDays === 1 ? "day" : "days"}.
+                Starts immediately and runs for <strong className="text-white">{durationDays}</strong>{" "}
+                {durationDays === 1 ? "day" : "days"}.
               </p>
             </div>
 
@@ -186,7 +248,14 @@ export default function Promote() {
                 <Label className="text-white">Daily budget</Label>
               </div>
               <div className="flex items-center gap-3">
-                <Slider value={[dailyBudget]} min={0.5} max={500} step={0.5} onValueChange={(v) => setDailyBudget(v[0] ?? 5)} className="flex-1" />
+                <Slider
+                  value={[dailyBudget]}
+                  min={0.5}
+                  max={500}
+                  step={0.5}
+                  onValueChange={(v) => setDailyBudget(v[0] ?? 5)}
+                  className="flex-1"
+                />
                 <div className="w-28">
                   <Input
                     type="number"
@@ -223,7 +292,9 @@ export default function Promote() {
                   <span className="font-semibold">Total</span>
                 </div>
                 <div className="text-white text-2xl font-bold mt-1">{fmtUSD(total)}</div>
-                <div className="text-white/70 text-xs">{fmtUSD(dailyBudget)} / day × {durationDays} {durationDays === 1 ? "day" : "days"}.</div>
+                <div className="text-white/70 text-xs">
+                  {fmtUSD(dailyBudget)} / day × {durationDays} {durationDays === 1 ? "day" : "days"}.
+                </div>
               </div>
             </div>
           </div>
@@ -232,8 +303,14 @@ export default function Promote() {
         <div className="px-5 sm:px-6 py-4 border-t border-white/10 bg-slate-900/80 flex items-center justify-between">
           <div className="text-xs sm:text-sm text-white/70">You'll review and pay securely on the next screen.</div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose} className="rounded-xl" disabled={checkingOut}>Cancel</Button>
-            <Button onClick={handleCheckout} className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700" disabled={checkingOut || loading}>
+            <Button variant="outline" onClick={onClose} className="rounded-xl" disabled={checkingOut}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCheckout}
+              className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700"
+              disabled={checkingOut || loading}
+            >
               {checkingOut ? "Redirecting…" : "Continue to payment"}
             </Button>
           </div>
