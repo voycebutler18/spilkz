@@ -118,19 +118,6 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
             Browse
           </div>
           <nav className="flex flex-col space-y-1">
-            {/* Thoughts */}
-            <Link
-              to="/thoughts"
-              onClick={(e) => {
-                e.preventDefault();
-                go("/thoughts");
-              }}
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
-            >
-              <Brain className="h-4 w-4 text-blue-400 group-hover:text-blue-300 transition-colors" />
-              <span>Thoughts</span>
-            </Link>
-
             {/* Food */}
             <Link
               to="/food"
