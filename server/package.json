@@ -1,0 +1,14 @@
+{
+  "name": "spilkz-api",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "stripe": "^16.6.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
