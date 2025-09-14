@@ -437,9 +437,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         video.currentTime = resetAt;
         const playPromise = video.play();
         if (playPromise) {
-          await playPromise;
-          activeVideo = video;
-          setCurrentPlayingIndex(index);
+          playPromise.then(() => {
+            activeVideo = video;
+            setCurrentPlayingIndex(index);
+          });
         }
       } catch (e) {
         // If immediate play fails, wait for canplay event
@@ -667,6 +668,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         /* Smooth video transitions - no black flicker */
         video {
           background: transparent !important;
+        }
+        
+        /* Prevent any loading states or buffering indicators */
+        video::-webkit-media-controls-loading-panel {
+          display: none !important;
         }
       `}</style>
       
