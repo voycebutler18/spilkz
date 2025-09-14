@@ -1,4 +1,6 @@
+// src/components/VideoPlayer.tsx
 import React, { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -16,7 +18,7 @@ import {
   Volume2,
   VolumeX,
   X,
-  Rocket,
+  TrendingUp,        // ← added
 } from "lucide-react";
 
 type VideoKind = "main" | "trailer";
@@ -30,10 +32,10 @@ export type VideoPlayerProps = {
   // Visuals
   coverUrl?: string;
   streamThumbnailUrl?: string;
-
-  // Metadata / UX
   title: string;
   description?: string;
+
+  // Metadata / UX
   genre?: string;
   contentType: string;
 
@@ -58,14 +60,12 @@ export type VideoPlayerProps = {
   canDelete?: boolean;
   onDelete?: () => void;
 
-  /** NEW: Show a promote button (parent decides ownership). */
+  /** NEW: show a Promote button (for creators only). */
   canPromote?: boolean;
-
-  /** NEW: Which post to promote. Used for fallback navigation. */
-  splikId?: string;
-
-  /** NEW: Custom promote handler (e.g., navigate(`/promote/${id}`)) */
-  onPromote?: (splikId?: string) => void;
+  /** If provided, clicking Promote navigates here. Example: `/promote/abc123` */
+  promoteTo?: string;
+  /** Optional callback if you want to handle navigation yourself. */
+  onPromoteClick?: () => void;
 };
 
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
@@ -97,8 +97,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // NEW
   canPromote = false,
-  splikId,
-  onPromote,
+  promoteTo,
+  onPromoteClick,
 }) => {
   const [currentVideo, setCurrentVideo] = useState<VideoKind>("main");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -257,41 +257,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const handlePromote = () => {
-    if (!canPromote) return;
-    if (onPromote) return onPromote(splikId);
-    if (splikId) {
-      // Fallback: simple navigation if parent didn't pass a handler
-      window.location.href = `/promote/${splikId}`;
-    } else {
-      // No id to route with
-      console.warn("Promote clicked but no splikId provided.");
-    }
-  };
-
-  const PromoteButton = ({ size = "sm" as const }) =>
-    !canPromote ? null : (
-      <Button
-        size={size}
-        onClick={handlePromote}
-        className={
-          size === "sm"
-            ? "bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700"
-            : "bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700"
-        }
-        title="Promote this video"
-      >
-        <Rocket className="h-4 w-4 mr-2" />
-        Promote
-      </Button>
-    );
-
   const PlayerSurface = (
     <div
       ref={playerRef}
       className={`relative w-full h-full bg-black ${isFullscreen ? "video-player-fullscreen" : ""}`}
     >
-      {/* Cloudflare Stream (iframe) */}
+      {/* Cloudflare Stream */}
       {hasStreamPlayback && currentVideo === "main" ? (
         <div className="relative w-full h-full">
           <iframe
@@ -304,12 +275,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             style={{ backgroundColor: "black", pointerEvents: "auto", zIndex: 0 }}
             loading="eager"
           />
-          {/* Overlay promote (works over iframe) */}
-          {canPromote && (
-            <div className="absolute top-3 right-3 z-10">
-              <PromoteButton />
-            </div>
-          )}
         </div>
       ) : (
         // Direct <video>
@@ -356,21 +321,49 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </div>
           )}
 
-          {/* Controls/overlay */}
+          {/* Controls overlay */}
           <div
             className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 transition-opacity duration-300 ${
               showControls ? "opacity-100" : "opacity-0"
             }`}
             onMouseEnter={() => setShowControls(true)}
           >
-            {/* top bar */}
+            {/* top bar (can be hidden) */}
             {!hideOverlayHeader && (
               <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center">
                 <h2 className="text-white text-lg font-semibold">
                   {title}
                   {currentVideo === "trailer" && " (Trailer)"}
                 </h2>
-                <div className="flex gap-2 items-center">
+
+                <div className="flex items-center gap-2">
+                  {/* NEW: Promote button (creator only) */}
+                  {canPromote &&
+                    (promoteTo ? (
+                      <Button
+                        asChild
+                        size="sm"
+                        className="relative z-20 pointer-events-auto bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                      >
+                        <Link to={promoteTo} onClick={(e) => e.stopPropagation()}>
+                          <TrendingUp className="h-4 w-4 mr-2" />
+                          Promote
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onPromoteClick?.();
+                        }}
+                        className="relative z-20 pointer-events-auto bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                      >
+                        <TrendingUp className="h-4 w-4 mr-2" />
+                        Promote
+                      </Button>
+                    ))}
+
                   {videoUrl && trailerUrl && (
                     <>
                       <Button
@@ -391,8 +384,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       </Button>
                     </>
                   )}
-                  {/* Promote in header (owner only) */}
-                  <PromoteButton />
                 </div>
               </div>
             )}
@@ -445,7 +436,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
                   {/* volume */}
                   <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="sm" onClick={toggleMute} className="text-white hover:bg:white/20">
+                    <Button variant="ghost" size="sm" onClick={toggleMute} className="text-white hover:bg-white/20">
                       {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
                     </Button>
                     <div className="w-20 hidden md:block">
@@ -465,8 +456,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* Promote down here too (owner only) */}
-                  <PromoteButton />
                   <Button variant="ghost" size="sm" className="text-white hover:bg-white/20">
                     <Settings className="h-5 w-5" />
                   </Button>
@@ -495,24 +484,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-2">
             <Badge variant="secondary">{contentType}</Badge>
-            <div className="flex items-center gap-2">
-              {genre && <Badge variant="outline">{genre}</Badge>}
-            </div>
+            {genre && <Badge variant="outline">{genre}</Badge>}
           </div>
-
-          {description && (
-            <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{description}</p>
-          )}
-
-          <div className="flex justify-end gap-2">
-            {canPromote && <PromoteButton />}
-            {canDelete && (
+          {/* Title intentionally omitted here; pages can render their own */}
+          {description && <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{description}</p>}
+          {canDelete && (
+            <div className="flex justify-end">
               <Button size="sm" variant="destructive" onClick={onDelete}>
                 <X className="h-4 w-4 mr-1" />
                 Delete
               </Button>
-            )}
-          </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -530,12 +513,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onClick={open}
         >
           {displayThumbnail ? (
-            <img
-              src={displayThumbnail}
-              alt={`${title} cover`}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
+            <img src={displayThumbnail} alt={`${title} cover`} className="w-full h-full object-cover" loading="lazy" />
           ) : canPlaySomething ? (
             <div className="w-full h-full bg-black" />
           ) : (
@@ -551,34 +529,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </Button>
             )}
           </div>
-          {/* Promote chip on thumbnail (owner only) */}
-          {canPromote && (
-            <div className="absolute top-3 right-3">
-              <PromoteButton />
-            </div>
-          )}
         </div>
       </div>
 
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-2">
           <Badge variant="secondary">{contentType}</Badge>
-          <div className="flex items-center gap-2">
-            {genre && <Badge variant="outline">{genre}</Badge>}
-          </div>
+          {genre && <Badge variant="outline">{genre}</Badge>}
         </div>
         <h3 className="text-lg font-semibold mb-2 line-clamp-1">{title}</h3>
         {description && <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{description}</p>}
-
-        <div className="flex justify-end gap-2">
-          {canPromote && <PromoteButton />}
-          {canDelete && (
+        {canDelete && (
+          <div className="flex justify-end">
             <Button size="sm" variant="destructive" onClick={onDelete}>
               <X className="h-4 w-4 mr-1" />
               Delete
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
 
       <Dialog open={showFullPlayer} onOpenChange={setShowFullPlayer}>
@@ -593,4 +561,5 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   );
 };
 
+// Export both ways so existing imports keep working
 export default VideoPlayer;
