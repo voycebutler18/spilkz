@@ -117,15 +117,14 @@ export default function Promote() {
     setCheckingOut(true);
 
     try {
-      // prefer explicit API base; fall back to same-origin
-      const rawBase =
-        (import.meta.env.VITE_PROMOTE_API_BASE as string | undefined) ||
-        (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
-        "";
+      // Force API host so we never hit the frontend by accident
+      const API_BASE =
+        ((import.meta.env.VITE_PROMOTE_API_BASE as string | undefined) ||
+          (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+          "https://splikz-promote-api.onrender.com") // correct domain
+          .replace(/\/$/, "");
 
-      const base = (rawBase || "").replace(/\/$/, "");
-      const target = base ? new URL(`${base}/pay/checkout`) : new URL(`/pay/checkout`, window.location.origin);
-
+      const target = new URL(`${API_BASE}/pay/checkout`);
       target.searchParams.set("splikId", splikId);
       if (userId) target.searchParams.set("userId", userId);
       target.searchParams.set("days", String(durationDays));
