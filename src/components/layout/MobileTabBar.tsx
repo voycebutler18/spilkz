@@ -1,6 +1,9 @@
 // src/components/layout/MobileTabBar.tsx
+import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Home, PlusCircle, User, Heart } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import NotificationBellDropdown from "@/components/notifications/NotificationBellDropdown";
 
 interface MobileTabBarProps {
   onUploadClick: () => void;    // opens your existing Upload modal
@@ -24,7 +27,21 @@ export default function MobileTabBar({
 }: MobileTabBarProps) {
   const nav = useNavigate();
   const { pathname } = useLocation();
-  
+
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getUser().then(({ data }) => mounted && setUser(data.user ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (mounted) setUser(session?.user ?? null);
+    });
+    return () => {
+      mounted = false;
+      sub?.subscription?.unsubscribe();
+    };
+  }, []);
+
   const isProfile =
     pathname.startsWith("/creator") ||
     pathname.startsWith("/profile") ||
@@ -45,8 +62,9 @@ export default function MobileTabBar({
     >
       {/* Subtle gradient overlay */}
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-      
-      <div className="mx-auto max-w-[520px] grid grid-cols-4 px-2">
+
+      {/* ⬇️ now 5 columns to include Notifications */}
+      <div className="mx-auto max-w-[520px] grid grid-cols-5 px-2">
         {/* Home */}
         <NavLink to="/" className={item}>
           {({ isActive }) => (
@@ -63,6 +81,14 @@ export default function MobileTabBar({
             </div>
           )}
         </NavLink>
+
+        {/* Notifications (dropdown bell with live badge) */}
+        <div className={item} aria-label="Notifications">
+          <div className="relative flex flex-col items-center">
+            <NotificationBellDropdown user={user} />
+            <span className="mt-1 font-medium text-muted-foreground">Alerts</span>
+          </div>
+        </div>
 
         {/* Daily Prayers */}
         <NavLink to="/prayers" className={item}>
@@ -95,7 +121,6 @@ export default function MobileTabBar({
           <div className="relative">
             {/* Glow effect */}
             <div className="absolute -inset-3 bg-gradient-to-r from-primary/20 via-primary/30 to-primary/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 group-active:opacity-75 transition-all duration-300" />
-            
             {/* Main button */}
             <div className="relative bg-gradient-to-r from-primary via-primary to-primary rounded-2xl p-2 shadow-lg group-hover:shadow-xl group-hover:shadow-primary/25 transition-all duration-200">
               <PlusCircle className="h-7 w-7 text-primary-foreground" />
