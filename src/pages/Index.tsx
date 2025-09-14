@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import VideoFeed from "@/components/ui/VideoFeed";
 import { useToast } from "@/components/ui/use-toast";
+import NotificationBell from "@/components/notifications/NotificationBell";
 
 export default function Index() {
   const [user, setUser] = useState<any>(null);
@@ -19,13 +20,14 @@ export default function Index() {
       if (mounted) setUser(data.user ?? null);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: authSub } = supabase.auth.onAuthStateChange((_e, session) => {
       if (mounted) setUser(session?.user ?? null);
     });
 
     return () => {
       mounted = false;
-      sub?.subscription.unsubscribe();
+      // supabase-js v2 cleanup (defensive chaining)
+      authSub?.subscription?.unsubscribe?.();
     };
   }, []);
 
@@ -45,8 +47,21 @@ export default function Index() {
     <div className="min-h-[100svh]">
       {/* Header */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Home</h1>
-        <Button onClick={openUpload}>Upload</Button>
+        {/* Left: brand + bell on mobile */}
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">Splikz</h1>
+          <div className="md:hidden">
+            <NotificationBell user={user} />
+          </div>
+        </div>
+
+        {/* Right: bell on desktop + upload */}
+        <div className="flex items-center gap-3">
+          <div className="hidden md:block">
+            <NotificationBell user={user} />
+          </div>
+          <Button onClick={openUpload}>Upload</Button>
+        </div>
       </div>
 
       {/* The feed paints instantly from Splash cache; refreshes in background */}
