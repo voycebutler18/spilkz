@@ -65,10 +65,11 @@ import PrayerDetailPage from "./pages/PrayerDetail";
 import PrayersTagPage from "./pages/PrayersTag";
 import PrayersSearchPage from "./pages/PrayersSearch";
 
-// ❌ Pulse/Vibes removed
-
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
+
+// ✅ NEW: Promote page
+import Promote from "./pages/Promote";
 
 const queryClient = new QueryClient();
 
@@ -162,9 +163,10 @@ const App = () => (
               <Route path="/home" element={<Explore />} />
               <Route path="/explore" element={<Navigate to="/home" replace />} />
 
-              {/* 🚫 Thoughts removed; redirect any old links to /home */}
+              {/* Old links */}
               <Route path="/thoughts/*" element={<Navigate to="/home" replace />} />
 
+              {/* Static */}
               <Route path="/about" element={<About />} />
               <Route path="/food" element={<Food />} />
               <Route path="/brands" element={<ForBrands />} />
@@ -191,6 +193,9 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
+
+              {/* ✅ Promote */}
+              <Route path="/promote/:splikId" element={<Promote />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
