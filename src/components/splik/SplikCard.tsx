@@ -8,7 +8,6 @@ import {
   Share2,
   VolumeX,
   Volume2,
-  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -46,8 +45,6 @@ type Props = {
   onSplik?: () => void;
   onReact?: () => void;
   onShare?: () => void;
-  /** Navigate handler for Promote flow */
-  onPromote?: (splikId: string) => void;
 };
 
 const VISIBILITY_THRESHOLD = 0.6;
@@ -58,7 +55,6 @@ export default function SplikCard({
   shouldLoad = true,
   onPrimaryVisible,
   onShare,
-  onPromote,
 }: Props) {
   const { toast } = useToast();
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
@@ -304,17 +300,6 @@ export default function SplikCard({
     }
   };
 
-  const handlePromote = () => {
-    if (!isCreator) {
-      toast({
-        title: "Access denied",
-        description: "Only the creator can promote their content.",
-      });
-      return;
-    }
-    onPromote?.(splik.id);
-  };
-
   const onToggleMute = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -398,25 +383,6 @@ export default function SplikCard({
                 <Volume2 className="h-5 w-5 text-white" />
               )}
             </button>
-
-            {/* Promote (video only, creator only) */}
-            {isCreator && (
-              <div className="absolute top-3 right-3">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePromote();
-                  }}
-                  className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shadow"
-                  aria-label="Promote this video"
-                >
-                  <TrendingUp className="h-4 w-4" />
-                  Promote
-                </Button>
-              </div>
-            )}
           </>
         ) : (
           // Photo-only fallback (never tries to play)
