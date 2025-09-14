@@ -117,7 +117,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const [muted, setMuted] = useState<Record<number, boolean>>({});
-  const [isPlaying, setIsPlaying] = useState<Record<number, boolean>>({});
+  const [currentPlayingIndex, setCurrentPlayingIndex] = useState<number>(-1);
+  const [videosReady, setVideosReady] = useState<Record<number, boolean>>({});
 
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
@@ -128,7 +129,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   // Cleanup function for preload elements
   const preloadCleanupRef = useRef<(() => void)[]>([]);
 
-  // Simple preload for mobile - only preload 3 videos max
+  // Enhanced preload for better mobile performance
   useEffect(() => {
     if (spliks.length === 0) return;
 
@@ -136,26 +137,44 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     preloadCleanupRef.current.forEach((cleanup) => cleanup());
     preloadCleanupRef.current = [];
 
-    // Only preload first 3 videos on mobile, 5 on desktop
-    const preloadCount = isTouchDevice() ? 3 : 5;
+    // Aggressive preloading for mobile - preconnect to all video domains
+    const preloadCount = isTouchDevice() ? 5 : 8;
+    const domains = new Set<string>();
 
     spliks.slice(0, preloadCount).forEach((splik) => {
       try {
         const url = new URL(splik.video_url);
-        const domain = url.origin;
-
-        if (!document.querySelector(`link[rel="preconnect"][href="${domain}"]`)) {
-          const link = document.createElement("link");
-          link.rel = "preconnect";
-          link.href = domain;
-          document.head.appendChild(link);
-
-          preloadCleanupRef.current.push(() => {
-            if (link.parentNode) link.parentNode.removeChild(link);
-          });
-        }
+        domains.add(url.origin);
       } catch {
         // ignore bad URLs
+      }
+    });
+
+    // Preconnect to all unique domains
+    domains.forEach((domain) => {
+      if (!document.querySelector(`link[rel="preconnect"][href="${domain}"]`)) {
+        const link = document.createElement("link");
+        link.rel = "preconnect";
+        link.href = domain;
+        document.head.appendChild(link);
+
+        preloadCleanupRef.current.push(() => {
+          if (link.parentNode) link.parentNode.removeChild(link);
+        });
+      }
+    });
+
+    // Also add DNS prefetch for faster resolution
+    domains.forEach((domain) => {
+      if (!document.querySelector(`link[rel="dns-prefetch"][href="${domain}"]`)) {
+        const link = document.createElement("link");
+        link.rel = "dns-prefetch";
+        link.href = domain;
+        document.head.appendChild(link);
+
+        preloadCleanupRef.current.push(() => {
+          if (link.parentNode) link.parentNode.removeChild(link);
+        });
       }
     });
 
@@ -172,10 +191,14 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     // helper to set UI state consistently
     const primeUI = (rows: Splik[]) => {
       const mutedState: Record<number, boolean> = {};
+      const readyState: Record<number, boolean> = {};
       rows.forEach((_, index) => {
         mutedState[index] = true; // All videos start muted for autoplay
+        readyState[index] = false;
       });
       setMuted(mutedState);
+      setVideosReady(readyState);
+      setCurrentPlayingIndex(-1);
       setOrderEpoch((e) => e + 1);
 
       try {
@@ -187,7 +210,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const readCache = (): Splik[] | null => {
       if (Array.isArray(storeFeed) && storeFeed.length > 0) {
-        // Always shuffle store feed on each read
         return shuffle(normalizeSpliks(storeFeed));
       }
       try {
@@ -195,7 +217,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length) {
-          // FIXED: Always shuffle cached data on every read (page refresh)
           return shuffle(normalizeSpliks(parsed as Splik[]));
         }
       } catch {}
@@ -204,7 +225,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     const writeCache = (rows: Splik[]) => {
       try {
-        // Store the original unshuffled data so we can shuffle it differently each time
         sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 40)));
       } catch {}
     };
@@ -221,7 +241,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       } catch {}
     };
 
-    const ABORT_TIMEOUT_MS = 10000;
+    const ABORT_TIMEOUT_MS = 8000; // Reduced timeout for mobile
 
     const load = async () => {
       const cached = readCache();
@@ -230,7 +250,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         setLoading(false);
         primeUI(cached);
         backgroundRefreshFavs();
-        // continue to refresh in background
+        return; // Use cache only on mobile for better performance
       }
 
       setLoading(true);
@@ -238,7 +258,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
 
-        const limit = isTouchDevice() ? 20 : 50;
+        // Reduce limit further for mobile to improve loading
+        const limit = isTouchDevice() ? 15 : 40;
         const { data: base, error: baseErr } = await supabase
           .from("spliks")
           .select(
@@ -266,14 +287,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
         const stitched = rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
         const normalized = normalizeSpliks(stitched);
-        
-        // FIXED: Cache the unshuffled data, but display shuffled
         const shuffled = shuffle(normalized);
 
         if (!cancelled) {
           setSpliks(shuffled);
           primeUI(shuffled);
-          // Store unshuffled data in cache so it can be shuffled differently on next refresh
           writeCache(normalized);
         }
 
@@ -327,27 +345,126 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
   }, [user?.id]);
 
-  // Mute all other videos
-  const muteOtherVideos = (exceptIndex: number) => {
-    videoRefs.current.forEach((video, index) => {
-      if (video && index !== exceptIndex) {
-        video.muted = true;
-        video.pause();
-        setIsPlaying((prev) => ({ ...prev, [index]: false }));
-      }
-    });
+  // Improved video setup function
+  const setupVideo = (video: HTMLVideoElement, index: number) => {
+    video.setAttribute("playsinline", "true");
+    video.setAttribute("webkit-playsinline", "true");
+    video.setAttribute("x5-video-player-type", "h5"); // WeChat browser
+    video.setAttribute("x5-video-player-fullscreen", "false");
+    video.setAttribute("x5-video-orientation", "portrait");
+    video.disablePictureInPicture = true;
+    video.preload = "metadata";
+    video.muted = true;
+    video.controls = false;
+    video.loop = false; // We'll handle looping manually
+    
+    // Remove any existing controls that might appear
+    video.removeAttribute("controls");
+    
+    // Prevent context menu
+    video.oncontextmenu = (e) => e.preventDefault();
+    
+    // Handle loaded metadata
+    video.onloadedmetadata = () => {
+      setVideosReady(prev => ({ ...prev, [index]: true }));
+      const startAt = Number(spliks[index]?.trim_start ?? 0);
+      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+      try {
+        video.currentTime = resetAt;
+      } catch {}
+    };
   };
 
-  /* ========== Simplified Autoplay - No flickering ========== */
+  // Enhanced autoplay with better mobile handling
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || spliks.length === 0) return;
 
-    let currentPlayingVideo: HTMLVideoElement | null = null;
-    let currentPlayingIndex = -1;
+    let activeVideo: HTMLVideoElement | null = null;
     let timeUpdateHandlers = new Map<HTMLVideoElement, () => void>();
 
-    const handleVideoPlayback = async (entries: IntersectionObserverEntry[]) => {
+    const pauseAllVideos = (except?: HTMLVideoElement) => {
+      videoRefs.current.forEach((video, index) => {
+        if (video && video !== except && !video.paused) {
+          video.pause();
+          const handler = timeUpdateHandlers.get(video);
+          if (handler) {
+            video.removeEventListener("timeupdate", handler);
+            timeUpdateHandlers.delete(video);
+          }
+        }
+      });
+    };
+
+    const playVideo = async (video: HTMLVideoElement, index: number) => {
+      if (activeVideo === video) return;
+      
+      // Pause all other videos first
+      pauseAllVideos(video);
+      
+      // Setup video if not already done
+      if (!video.hasAttribute("data-setup")) {
+        setupVideo(video, index);
+        video.setAttribute("data-setup", "true");
+      }
+
+      const startAt = Number(spliks[index]?.trim_start ?? 0);
+      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
+      const loopDuration = 5; // 5 second loop
+
+      // Set up time update handler for looping
+      const onTimeUpdate = () => {
+        const currentTime = video.currentTime;
+        if (currentTime - startAt >= loopDuration) {
+          try {
+            video.currentTime = resetAt;
+          } catch {}
+        }
+      };
+
+      // Remove existing handler if any
+      const existingHandler = timeUpdateHandlers.get(video);
+      if (existingHandler) {
+        video.removeEventListener("timeupdate", existingHandler);
+      }
+
+      video.addEventListener("timeupdate", onTimeUpdate);
+      timeUpdateHandlers.set(video, onTimeUpdate);
+
+      // Ensure video is ready and attempt to play
+      try {
+        if (video.readyState >= 2 || videosReady[index]) {
+          video.currentTime = resetAt;
+          const playPromise = video.play();
+          if (playPromise) {
+            await playPromise;
+            activeVideo = video;
+            setCurrentPlayingIndex(index);
+          }
+        } else {
+          // Wait for video to be ready
+          const onCanPlay = async () => {
+            video.removeEventListener("canplay", onCanPlay);
+            try {
+              video.currentTime = resetAt;
+              const playPromise = video.play();
+              if (playPromise) {
+                await playPromise;
+                activeVideo = video;
+                setCurrentPlayingIndex(index);
+              }
+            } catch (e) {
+              console.warn("Video play failed:", e);
+            }
+          };
+          video.addEventListener("canplay", onCanPlay);
+        }
+      } catch (e) {
+        console.warn("Video play failed:", e);
+      }
+    };
+
+    const handleIntersection = (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
         const idxAttr = (entry.target as HTMLElement).dataset.index;
         if (idxAttr == null) continue;
@@ -358,110 +475,77 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const video = videoRefs.current[index];
         if (!video) continue;
 
-        const startAt = Number(spliks[index]?.trim_start ?? 0);
-        const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-        const loopDuration = 3; // 3 second loop
-
-        if (entry.intersectionRatio > 0.5) {
-          if (currentPlayingVideo && currentPlayingVideo !== video) {
-            currentPlayingVideo.pause();
-            const oldHandler = timeUpdateHandlers.get(currentPlayingVideo);
-            if (oldHandler) {
-              currentPlayingVideo.removeEventListener("timeupdate", oldHandler);
-              timeUpdateHandlers.delete(currentPlayingVideo);
-            }
-            setIsPlaying((prev) => ({ ...prev, [currentPlayingIndex]: false }));
-          }
-
-          muteOtherVideos(index);
-
-          video.setAttribute("playsinline", "true");
-          video.setAttribute("webkit-playsinline", "true");
-          video.disablePictureInPicture = true;
-          video.preload = "metadata";
-          video.muted = muted[index] ?? true;
-          video.controls = false;
-
-          try {
-            if (video.readyState >= 1) {
-              video.currentTime = resetAt;
-            }
-          } catch {}
-
-          const onTimeUpdate = () => {
-            const currentTime = video.currentTime;
-            if (currentTime - startAt >= loopDuration) {
-              try {
-                video.currentTime = resetAt;
-              } catch {}
-            }
-          };
-
-          const existingHandler = timeUpdateHandlers.get(video);
-          if (existingHandler) {
-            video.removeEventListener("timeupdate", existingHandler);
-          }
-
-          video.addEventListener("timeupdate", onTimeUpdate);
-          timeUpdateHandlers.set(video, onTimeUpdate);
-
-          try {
-            const playPromise = video.play();
-            if (playPromise) await playPromise;
-            currentPlayingVideo = video;
-            currentPlayingIndex = index;
-            setIsPlaying((prev) => ({ ...prev, [index]: true }));
-          } catch {
-            // Autoplay failed
-            console.log("Autoplay prevented for video", index);
-          }
-        } else if (video === currentPlayingVideo) {
+        if (entry.intersectionRatio > 0.7) { // Higher threshold for better UX
+          playVideo(video, index);
+        } else if (video === activeVideo) {
           video.pause();
-          setIsPlaying((prev) => ({ ...prev, [index]: false }));
-
+          setCurrentPlayingIndex(-1);
+          
           const handler = timeUpdateHandlers.get(video);
           if (handler) {
             video.removeEventListener("timeupdate", handler);
             timeUpdateHandlers.delete(video);
           }
-
-          if (currentPlayingVideo === video) {
-            currentPlayingVideo = null;
-            currentPlayingIndex = -1;
+          
+          if (activeVideo === video) {
+            activeVideo = null;
           }
         }
       }
     };
 
-    const observer = new IntersectionObserver(handleVideoPlayback, {
+    const observer = new IntersectionObserver(handleIntersection, {
       root: container,
-      threshold: [0.5],
-      rootMargin: "0px",
+      threshold: [0.5, 0.7, 0.8],
+      rootMargin: "-10% 0px -10% 0px", // Only trigger when well into viewport
     });
 
+    // Observe all video sections
     const sections = Array.from(container.querySelectorAll<HTMLElement>("[data-index]"));
     sections.forEach((section) => observer.observe(section));
 
+    // Handle visibility changes
+    const handleVisibilityChange = () => {
+      if (document.hidden && activeVideo) {
+        activeVideo.pause();
+        setCurrentPlayingIndex(-1);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       observer.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
 
       timeUpdateHandlers.forEach((handler, video) => {
         video.removeEventListener("timeupdate", handler);
       });
       timeUpdateHandlers.clear();
 
-      videoRefs.current.forEach((video) => {
-        if (video && !video.paused) video.pause();
-      });
+      pauseAllVideos();
+      activeVideo = null;
+      setCurrentPlayingIndex(-1);
     };
-  }, [spliks, muted, orderEpoch]);
+  }, [spliks, videosReady, orderEpoch]);
 
   const toggleMute = (i: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const v = videoRefs.current[i];
     if (!v) return;
+    
     const newMutedState = !muted[i];
-    if (!newMutedState) muteOtherVideos(i);
+    
+    // If unmuting, mute all other videos
+    if (!newMutedState) {
+      videoRefs.current.forEach((video, index) => {
+        if (video && index !== i) {
+          video.muted = true;
+          setMuted((m) => ({ ...m, [index]: true }));
+        }
+      });
+    }
+    
     v.muted = newMutedState;
     setMuted((m) => ({ ...m, [i]: newMutedState }));
   };
@@ -523,6 +607,66 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   return (
     <>
+      <style>{`
+        /* Hide all video controls globally */
+        video::-webkit-media-controls {
+          display: none !important;
+        }
+        video::-webkit-media-controls-panel {
+          display: none !important;
+        }
+        video::-webkit-media-controls-play-button {
+          display: none !important;
+        }
+        video::-webkit-media-controls-start-playback-button {
+          display: none !important;
+        }
+        video::-webkit-media-controls-timeline {
+          display: none !important;
+        }
+        video::-webkit-media-controls-current-time-display {
+          display: none !important;
+        }
+        video::-webkit-media-controls-time-remaining-display {
+          display: none !important;
+        }
+        video::-webkit-media-controls-volume-slider {
+          display: none !important;
+        }
+        video::-webkit-media-controls-mute-button {
+          display: none !important;
+        }
+        video::-webkit-media-controls-fullscreen-button {
+          display: none !important;
+        }
+        video::-webkit-media-controls-toggle-closed-captions-button {
+          display: none !important;
+        }
+        
+        /* Hide Firefox controls */
+        video::-moz-media-controls {
+          display: none !important;
+        }
+        
+        /* Ensure no controls show */
+        video {
+          outline: none !important;
+        }
+        video:focus {
+          outline: none !important;
+        }
+        
+        /* Prevent text selection on video tap */
+        video {
+          -webkit-user-select: none;
+          -moz-user-select: none;
+          -ms-user-select: none;
+          user-select: none;
+          -webkit-touch-callout: none;
+          -webkit-tap-highlight-color: transparent;
+        }
+      `}</style>
+      
       <div
         ref={containerRef}
         className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
@@ -531,6 +675,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
           const isCreator = user?.id === s.user_id;
+          const isCurrentlyPlaying = currentPlayingIndex === i;
 
           return (
             <section
@@ -560,22 +705,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   </Button>
                 </div>
 
-                {/* video */}
+                {/* video container */}
                 <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-                  <div className="absolute inset-x-0 top-0 h-10 bg-black z-10 pointer-events-none" />
-
-                  {/* Static poster image - only show if video fails to load */}
+                  {/* Thumbnail/Poster - Show until video plays */}
                   {s.thumbnail_url && (
                     <img
                       src={s.thumbnail_url}
                       alt=""
-                      className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
-                      style={{ zIndex: 1, display: "block" }}
-                      onLoad={(e) => {
-                        const video = videoRefs.current[i];
-                        if (video && !video.paused) {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }
+                      className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none transition-opacity duration-300"
+                      style={{ 
+                        zIndex: isCurrentlyPlaying && videosReady[i] ? 1 : 3,
+                        opacity: isCurrentlyPlaying && videosReady[i] ? 0 : 1
                       }}
                     />
                   )}
@@ -583,60 +723,35 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                   <video
                     ref={(el) => {
                       videoRefs.current[i] = el;
-                      if (el) {
-                        el.setAttribute("playsinline", "true");
-                        el.setAttribute("webkit-playsinline", "true");
-                        el.disablePictureInPicture = true;
-                        el.preload = "metadata";
-                        el.muted = true;
-                        el.controls = false;
+                      if (el && !el.hasAttribute("data-setup")) {
+                        setupVideo(el, i);
                       }
                     }}
                     src={s.video_url}
                     className="w-full h-full object-cover"
-                    style={{ zIndex: 2, position: "relative", backgroundColor: "black" }}
+                    style={{ 
+                      zIndex: 2, 
+                      position: "relative", 
+                      backgroundColor: "black"
+                    }}
                     playsInline
                     preload="metadata"
                     muted
-                    controls={false}
-                    onPlay={() => {
-                      const poster = containerRef.current?.querySelector(
-                        `[data-index="${i}"] img`
-                      );
-                      if (poster) {
-                        (poster as HTMLElement).style.display = "none";
-                      }
-                    }}
-                    onLoadedMetadata={() => {
-                      const v = videoRefs.current[i];
-                      const startAt = Number(spliks[i]?.trim_start ?? 0);
-                      const resetAt = startAt ? Math.max(0.05, startAt) : 0.1;
-                      if (v) {
-                        try {
-                          v.currentTime = resetAt;
-                        } catch {}
-                      }
-                    }}
-                    onError={(e) => {
-                      console.warn("video error", s.id, e);
-                      const poster = containerRef.current?.querySelector(
-                        `[data-index="${i}"] img`
-                      );
-                      if (poster) {
-                        (poster as HTMLElement).style.display = "block";
-                      }
-                    }}
+                    disablePictureInPicture
+                    controlsList="nodownload nofullscreen noremoteplayback"
+                    onContextMenu={(e) => e.preventDefault()}
                   />
 
-                  {/* Full-frame transparent tap area for mute toggle */}
+                  {/* Full-frame tap area for mute toggle */}
                   <button
-                    className="absolute inset-0 w-full h-full bg-transparent z-10"
+                    className="absolute inset-0 w-full h-full bg-transparent z-10 outline-none"
                     onClick={(e) => toggleMute(i, e)}
                     aria-label={muted[i] ? "Unmute video" : "Mute video"}
+                    style={{ WebkitTapHighlightColor: "transparent" }}
                   />
 
-                  {/* Mute indicator in corner */}
-                  <div className="absolute bottom-3 right-3 bg-black/50 rounded-full p-2 z-20 pointer-events-none">
+                  {/* Mute indicator */}
+                  <div className="absolute bottom-3 right-3 bg-black/60 rounded-full p-2 z-20 pointer-events-none">
                     {muted[i] ? (
                       <VolumeX className="h-4 w-4 text-white" />
                     ) : (
@@ -644,10 +759,10 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     )}
                   </div>
 
-                  {/* title overlay */}
+                  {/* Title overlay */}
                   {s.title && (
                     <div className="absolute bottom-3 left-3 z-20 pointer-events-none">
-                      <div className="bg-black/50 rounded px-2 py-1 max-w-[200px]">
+                      <div className="bg-black/60 rounded px-2 py-1 max-w-[200px]">
                         <p className="text-white text-sm font-medium truncate">{s.title}</p>
                       </div>
                     </div>
