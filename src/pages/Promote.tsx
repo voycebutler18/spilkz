@@ -73,16 +73,17 @@ export default function Promote() {
     return () => { isMounted = false; };
   }, [splikId, toast]);
 
-  /** Checkout → Supabase Edge Function (redirects to Stripe) */
+  /** Checkout → redirect to your function (no fetch, no CORS) */
   const handleCheckout = () => {
     if (checkingOut) return;
 
+    // quick guards
     if (!splikId) {
       toast({ title: "Missing post", description: "We couldn't find that post.", variant: "destructive" });
       return;
     }
     if (durationDays < 1 || durationDays > 30) {
-      toast({ title: "Choose a duration", description: "Please pick between 1 and 30 days.", variant: "destructive" });
+      toast({ title: "Choose a duration", description: "Pick between 1 and 30 days.", variant: "destructive" });
       return;
     }
     if (dailyBudget < 0.5 || dailyBudget > 500) {
@@ -90,23 +91,37 @@ export default function Promote() {
       return;
     }
 
-    const supaUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
-    if (!supaUrl) {
-      toast({ title: "Setup error", description: "VITE_SUPABASE_URL is not set.", variant: "destructive" });
-      return;
+    // build target URL from envs
+    let raw = (import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined)?.trim() || "";
+    const supa = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, "") || "";
+
+    // if VITE_PROMOTE_CHECKOUT_URL isn't set, fall back to Supabase function
+    if (!raw) {
+      if (!supa) {
+        toast({ title: "Setup error", description: "Set VITE_PROMOTE_CHECKOUT_URL or VITE_SUPABASE_URL.", variant: "destructive" });
+        return;
+      }
+      raw = `${supa}/functions/v1/promotions-checkout`;
+    } else if (!/^https?:\/\//i.test(raw)) {
+      // if someone set it to a path like "/functions/v1/promotions-checkout"
+      if (!supa) {
+        toast({ title: "Setup error", description: "VITE_SUPABASE_URL is required with a relative checkout URL.", variant: "destructive" });
+        return;
+      }
+      raw = `${supa}/${raw.replace(/^\//, "")}`;
     }
 
     setCheckingOut(true);
     try {
-      const target = new URL(`${supaUrl}/functions/v1/promotions-checkout`);
-      target.searchParams.set("splikId", splikId);
-      if (userId) target.searchParams.set("userId", userId);
-      target.searchParams.set("days", String(durationDays));
-      target.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
-      target.searchParams.set("currency", "USD");
+      const url = new URL(raw);
+      url.searchParams.set("splikId", splikId);
+      if (userId) url.searchParams.set("userId", userId);
+      url.searchParams.set("days", String(durationDays));
+      url.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
+      url.searchParams.set("currency", "USD");
 
-      // Full-page nav → Edge Function → 303 to Stripe → back to your site via promotions-success
-      window.location.assign(target.toString());
+      console.info("Redirecting to checkout:", url.toString());
+      window.location.assign(url.toString());
     } catch (err: any) {
       setCheckingOut(false);
       toast({ title: "Payment error", description: err?.message || "We couldn’t start checkout.", variant: "destructive" });
