@@ -18,6 +18,7 @@ import AppLayout from "@/components/layout/AppLayout";
 // Pages
 import Splash from "./pages/Splash";
 import About from "./pages/About";
+// ⚠️ If you still use Explore elsewhere, keep it; but Home should go to Index.
 import Explore from "./pages/Explore";
 import Food from "./pages/Food";
 import ForBrands from "./pages/business/ForBrands";
@@ -68,8 +69,14 @@ import PrayersSearchPage from "./pages/PrayersSearch";
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
-// ✅ Promote page (use alias so the path resolves on Linux builds)
+// ✅ Promote page
 import Promote from "@/pages/Promote";
+
+// ✅ Home page with bell + feed
+import Index from "./pages/Index";
+
+// ✅ Notifications page
+import NotificationsPage from "./pages/Notifications";
 
 const queryClient = new QueryClient();
 
@@ -159,8 +166,10 @@ const App = () => (
 
             {/* Everything else uses the global layout */}
             <Route element={<AppLayout />}>
-              {/* Home */}
-              <Route path="/home" element={<Explore />} />
+              {/* ✅ Home now points to Index (bell + feed) */}
+              <Route path="/home" element={<Index />} />
+
+              {/* Old Explore alias (optional): keep redirect */}
               <Route path="/explore" element={<Navigate to="/home" replace />} />
 
               {/* Old links */}
@@ -206,6 +215,9 @@ const App = () => (
               <Route path="/prayers/search" element={<PrayersSearchPage />} />
               <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
               <Route path="/prayers/:id" element={<PrayerDetailPage />} />
+
+              {/* ✅ Notifications */}
+              <Route path="/notifications" element={<NotificationsPage />} />
 
               {/* 404 */}
               <Route path="*" element={<NotFound />} />
