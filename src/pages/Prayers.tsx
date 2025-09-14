@@ -602,6 +602,19 @@ export default function PrayersPage() {
     [coords]
   );
 
+  // Helper function to build Google Maps URL with proper address
+  const buildGoogleMapsUrl = (place: NearbyChurch) => {
+    // If we have a good address, use it; otherwise fall back to coordinates
+    if (place.address && place.address !== "Address not available" && place.address !== "Loading address…") {
+      // Use the full address for the search
+      const addressQuery = `${place.name}, ${place.address}`;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
+    } else {
+      // Fall back to coordinates if no good address
+      return `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`;
+    }
+  };
+
   // === Auto-scroll to results anchor when results appear ===
   useEffect(() => {
     if (!finderOpen) return;
@@ -883,7 +896,7 @@ export default function PrayersPage() {
                             </div>
                           </div>
                           <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`}
+                            href={buildGoogleMapsUrl(place)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
