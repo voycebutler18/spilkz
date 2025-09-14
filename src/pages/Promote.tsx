@@ -96,97 +96,51 @@ export default function Promote() {
     };
   }, [splikId, toast]);
 
-  /** Checkout → Stripe (server will compute total) */
-  const handleCheckout = async () => {
+  /** Checkout → Stripe via full-page redirect (no CORS / no fetch) */
+  const handleCheckout = () => {
     if (checkingOut) return;
+
+    // basic client-side guards
+    if (!splikId) {
+      toast({ title: "Missing post", description: "We couldn't find that post.", variant: "destructive" });
+      return;
+    }
+    if (durationDays < 1 || durationDays > 30) {
+      toast({ title: "Choose a duration", description: "Please pick between 1 and 30 days.", variant: "destructive" });
+      return;
+    }
+    if (dailyBudget < 0.5 || dailyBudget > 500) {
+      toast({ title: "Daily budget out of range", description: "Pick between $0.50 and $500 per day.", variant: "destructive" });
+      return;
+    }
+
     setCheckingOut(true);
 
     try {
-      const payload = {
-        splikId,
-        userId, // optional but helpful
-        durationDays,
-        dailyBudgetCents: Math.round(dailyBudget * 100),
-        currency: "USD",
-      };
+      // prefer explicit API base; fall back to same-origin
+      const rawBase =
+        (import.meta.env.VITE_PROMOTE_API_BASE as string | undefined) ||
+        (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
+        "";
 
-      // Prefer explicit API URL if set
-      const apiBase = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-      const supaUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+      const base = (rawBase || "").replace(/\/$/, "");
+      const target = base ? new URL(`${base}/pay/checkout`) : new URL(`/pay/checkout`, window.location.origin);
 
-      const endpoints = [
-        import.meta.env.VITE_PROMOTE_CHECKOUT_URL as string | undefined,
-        apiBase ? `${apiBase}/api/promotions/checkout` : undefined,
-        // Fallbacks:
-        "/api/promotions/checkout",
-        "/api/promote/checkout",
-        supaUrl ? `${supaUrl}/functions/v1/promotions/checkout` : undefined,
-      ].filter(Boolean) as string[];
+      target.searchParams.set("splikId", splikId);
+      if (userId) target.searchParams.set("userId", userId);
+      target.searchParams.set("days", String(durationDays));
+      target.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
+      target.searchParams.set("currency", "USD");
 
-      const tryEndpoint = async (url: string) => {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "omit",
-        });
-
-        if (!res.ok) {
-          const peek = (await res.text().catch(() => "")).slice(0, 200);
-          throw new Error(`HTTP ${res.status} – ${peek || res.statusText}`);
-        }
-
-        const ct = res.headers.get("content-type") || "";
-        if (ct.includes("application/json")) {
-          const j = await res.json();
-          const urlField: string | undefined = j.url || j.checkout_url || j.paymentUrl;
-          if (urlField && /^https?:\/\//i.test(urlField)) {
-            window.location.href = urlField;
-            return true;
-          }
-          if (j.client_secret) {
-            const params = new URLSearchParams({
-              cs: j.client_secret,
-              amt: String(Math.round(dailyBudget * durationDays * 100)),
-              cur: "USD",
-              splik: splikId,
-            });
-            navigate(`/pay?${params.toString()}`);
-            return true;
-          }
-          throw new Error("Unexpected response (missing checkout url).");
-        } else {
-          const text = (await res.text()).trim();
-          if (/^https?:\/\//i.test(text)) {
-            window.location.href = text;
-            return true;
-          }
-          throw new Error(`Unexpected response type: ${ct || "unknown"}`);
-        }
-      };
-
-      let ok = false;
-      let lastErr: any = null;
-      for (const ep of endpoints) {
-        try {
-          ok = await tryEndpoint(ep);
-          if (ok) break;
-        } catch (e) {
-          lastErr = e;
-        }
-      }
-      if (!ok) throw lastErr || new Error("No checkout endpoint responded.");
-    } catch (error: any) {
+      // full page navigation → your API → 303 to Stripe
+      window.location.assign(target.toString());
+    } catch (err: any) {
+      setCheckingOut(false);
       toast({
         title: "Payment error",
-        description:
-          error?.message?.includes("Failed to fetch") || error?.message?.includes("CORS")
-            ? "Could not reach the payment server. Check your API URL or CORS."
-            : error?.message || "We couldn’t start checkout.",
+        description: err?.message || "We couldn’t start checkout.",
         variant: "destructive",
       });
-    } finally {
-      setCheckingOut(false);
     }
   };
 
@@ -345,7 +299,7 @@ export default function Promote() {
             <Button
               onClick={handleCheckout}
               className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700"
-              disabled={checkingOut}
+              disabled={checkingOut || loading}
             >
               {checkingOut ? "Redirecting…" : "Continue to payment"}
             </Button>
