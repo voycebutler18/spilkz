@@ -1,35 +1,24 @@
-// server/index.js
 import express from "express";
 import compression from "compression";
 import Stripe from "stripe";
 import cors from "cors";
+import { createClient } from "@supabase/supabase-js";
 
-/* ─────────────────────────────
-   Environment + Stripe setup
-────────────────────────────── */
-const requiredEnv = ["STRIPE_SECRET_KEY", "PUBLIC_SITE_URL"];
-for (const k of requiredEnv) {
-  if (!process.env[k]) {
-    console.warn(`[warn] Missing env ${k}`);
-  }
-}
+/* ─────────────── Env + clients ─────────────── */
+const required = ["STRIPE_SECRET_KEY", "PUBLIC_SITE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE"];
+for (const k of required) if (!process.env[k]) console.warn(`[warn] Missing env ${k}`);
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
-  apiVersion: "2024-06-20",
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2024-06-20" });
+const supa = createClient(process.env.SUPABASE_URL || "", process.env.SUPABASE_SERVICE_ROLE || "", {
+  auth: { persistSession: false },
 });
 
 const app = express();
 app.set("trust proxy", 1);
 
-/* ─────────────────────────────
-   CORS
-────────────────────────────── */
+/* ─────────────── CORS ─────────────── */
 const splitList = (s) =>
-  (s || "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .map((x) => x.replace(/\/$/, ""));
+  (s || "").split(",").map((x) => x.trim()).filter(Boolean).map((x) => x.replace(/\/$/, ""));
 
 const allowedFromEnv = [
   (process.env.PUBLIC_SITE_URL || "").replace(/\/$/, ""),
@@ -43,8 +32,7 @@ const corsOptions = {
   origin(origin, cb) {
     if (!origin) return cb(null, true);
     const o = origin.replace(/\/$/, "");
-    const allowExact = allowedFromEnv.includes(o);
-    const allowByHost = (() => {
+    const sameHost = (() => {
       try {
         const host = new URL(o).hostname;
         return allowedFromEnv.some((a) => {
@@ -52,82 +40,43 @@ const corsOptions = {
         });
       } catch { return false; }
     })();
-    const allowLocalhost = /http:\/\/localhost:\d+$/i.test(o);
-    const allowRender = /https:\/\/[^.]+\.onrender\.com$/i.test(o);
-    const ok = allowExact || allowByHost || allowLocalhost || allowRender;
-
-    if (!ok) {
-      console.log(`CORS BLOCKED: ${o}. Allowed:`, allowedFromEnv);
-    } else {
-      console.log(`CORS ALLOWED: ${o}`);
-    }
+    const ok = allowedFromEnv.includes(o) || sameHost || /http:\/\/localhost:\d+$/i.test(o) || /https:\/\/[^.]+\.onrender\.com$/i.test(o);
     cb(ok ? null : new Error(`CORS blocked: ${o}`), ok);
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+  methods: ["GET","POST","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization","Accept","Origin"],
   credentials: true,
   optionsSuccessStatus: 200,
 };
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
-
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 
-/* ─────────────────────────────
-   Health
-────────────────────────────── */
+/* ─────────────── Health ─────────────── */
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
-/* ─────────────────────────────
-   Checkout (handler)
-────────────────────────────── */
-async function createPromotionCheckout(req, res) {
+/* ─────────────── Checkout ─────────────── */
+app.post("/api/promotions/checkout", async (req, res) => {
   try {
-    console.log("Received checkout request:", {
-      origin: req.get("origin"),
-      body: req.body,
-    });
-
-    // ✨ ADD userId here (optional)
-    const {
-      splikId,
-      durationDays,
-      dailyBudgetCents,
-      currency = "USD",
-      userId, // <— NEW
-    } = req.body || {};
-
+    const { splikId, userId, durationDays, dailyBudgetCents, currency = "USD" } = req.body || {};
     if (!splikId || !durationDays || !dailyBudgetCents) {
-      console.log("Missing fields:", { splikId, durationDays, dailyBudgetCents });
       return res.status(400).json({ error: "missing_fields" });
     }
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      console.log("Stripe not configured");
-      return res.status(500).json({ error: "stripe_not_configured" });
-    }
+    // Bounds
+    const minDaily = 50;     // $0.50
+    const maxDaily = 50000;  // $500.00
+    if (dailyBudgetCents < minDaily) return res.status(400).json({ error: "amount_too_small" });
+    if (dailyBudgetCents > maxDaily) return res.status(400).json({ error: "amount_too_large" });
 
-    const unitAmount = Number(durationDays) * Number(dailyBudgetCents);
-    if (!Number.isFinite(unitAmount) || unitAmount < 50) {
-      console.log("Amount too small:", unitAmount);
-      return res.status(400).json({ error: "amount_too_small" });
+    const totalCents = Math.round(Number(durationDays) * Number(dailyBudgetCents));
+    if (!Number.isFinite(totalCents) || totalCents < 50) {
+      return res.status(400).json({ error: "invalid_amount" });
     }
 
     const successBase = (process.env.PUBLIC_SITE_URL || "").replace(/\/$/, "");
-    if (!successBase) {
-      console.log("Missing PUBLIC_SITE_URL");
-      return res.status(500).json({ error: "missing_PUBLIC_SITE_URL" });
-    }
-
-    console.log("Creating Stripe session...");
-    const meta = {
-      splikId: String(splikId),
-      durationDays: String(durationDays),
-      dailyBudgetCents: String(dailyBudgetCents),
-    };
-    if (userId) meta.userId = String(userId); // ✨ include if present
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -140,53 +89,96 @@ async function createPromotionCheckout(req, res) {
               name: `Promotion for Splik #${splikId}`,
               description: `${durationDays} day(s) × ${(dailyBudgetCents / 100).toFixed(2)} per day`,
             },
-            unit_amount: Math.round(unitAmount),
+            unit_amount: totalCents,
           },
           quantity: 1,
         },
       ],
-      // ✨ helpful for correlating on Stripe side
-      client_reference_id: userId ? String(userId) : undefined,
-      success_url: `${successBase}/dashboard?promo=success&cs={CHECKOUT_SESSION_ID}`,
+      success_url: `${successBase}/promote/confirm?cs={CHECKOUT_SESSION_ID}`,
       cancel_url: `${successBase}/promote/${encodeURIComponent(splikId)}?canceled=1`,
-      metadata: meta,
+      metadata: {
+        splikId: String(splikId),
+        userId: userId ? String(userId) : "",
+        durationDays: String(durationDays),
+        dailyBudgetCents: String(dailyBudgetCents),
+        totalCents: String(totalCents),
+      },
     });
 
-    console.log("Stripe session created successfully");
-    return res.json({ url: session.url });
+    res.json({ url: session.url });
   } catch (err) {
     console.error("checkout error:", err);
-    return res.status(500).json({ error: "server_error", message: err.message });
+    res.status(500).json({ error: "server_error" });
   }
-}
-
-/* ─────────────────────────────
-   Routes
-────────────────────────────── */
-app.post("/api/promotions/checkout", createPromotionCheckout);
-app.post("/api/promote/checkout", createPromotionCheckout);
-
-app.get("/api/test", (req, res) => {
-  res.json({
-    message: "CORS test successful",
-    origin: req.get("origin"),
-    timestamp: new Date().toISOString(),
-  });
 });
 
-/* ─────────────────────────────
-   Start
-────────────────────────────── */
+/* ─────────────── Confirm (creates promotion row) ─────────────── */
+app.post("/api/promotions/confirm", async (req, res) => {
+  try {
+    const { sessionId } = req.body || {};
+    if (!sessionId) return res.status(400).json({ error: "missing_session" });
+
+    const s = await stripe.checkout.sessions.retrieve(sessionId);
+    if (!s || s.payment_status !== "paid") {
+      return res.status(400).json({ error: "not_paid" });
+    }
+
+    const md = s.metadata || {};
+    const splikId = md.splikId;
+    const userId = md.userId || null;
+    const durationDays = Number(md.durationDays || "0");
+    const dailyBudgetCents = Number(md.dailyBudgetCents || "0");
+    const totalCents = Number(md.totalCents || "0");
+
+    if (!splikId || !durationDays || !dailyBudgetCents || !totalCents) {
+      return res.status(400).json({ error: "invalid_metadata" });
+    }
+
+    const now = new Date();
+    const end = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+    // Insert promotion row
+    const { error } = await supa.from("promotions").insert({
+      splik_id: splikId,
+      user_id: userId,
+      daily_budget_cents: dailyBudgetCents,
+      duration_days: durationDays,
+      total_cents: totalCents,
+      start_at: now.toISOString(),
+      end_at: end.toISOString(),
+      status: "active",
+      checkout_session_id: sessionId,
+    });
+    if (error && !String(error.message || "").includes("duplicate key")) {
+      console.error(error);
+      return res.status(500).json({ error: "db_insert_failed" });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("confirm error:", e);
+    return res.status(500).json({ error: "server_error" });
+  }
+});
+
+/* ─────────────── Optional: expire promotions (cron-safe) ─────────────── */
+app.post("/api/promotions/expire", async (_req, res) => {
+  try {
+    const { error } = await supa
+      .from("promotions")
+      .update({ status: "expired" })
+      .lte("end_at", new Date().toISOString())
+      .neq("status", "expired");
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("expire error:", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log(`Promote API listening on :${port}`);
-  console.log("Environment check:");
-  console.log("- PUBLIC_SITE_URL:", process.env.PUBLIC_SITE_URL || "(missing)");
-  console.log("- ALLOWED_ORIGINS:", process.env.ALLOWED_ORIGINS || "(missing)");
-  console.log("- STRIPE_SECRET_KEY:", process.env.STRIPE_SECRET_KEY ? "(present)" : "(missing)");
-  if (allowedFromEnv.length) {
-    console.log("CORS allowed origins:", allowedFromEnv.join(", "));
-  } else {
-    console.log("CORS allowed origins: (none). Set PUBLIC_SITE_URL and/or ALLOWED_ORIGINS.");
-  }
+  console.log("CORS allowed:", allowedFromEnv.join(", "));
 });
