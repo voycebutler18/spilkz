@@ -1,65 +1,93 @@
-// supabase/functions/promotions-checkout/index.ts
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import Stripe from "npm:stripe@14.26.0";
+// Creates a Stripe Checkout Session and 303-redirects the browser to Stripe.
+// Call with a plain GET like:
+//   https://YOUR-PROJECT-ref.supabase.co/functions/v1/promotions-checkout
+//     ?splikId=abc123&userId=...&days=7&dailyBudgetCents=50&currency=USD
+//
+// Env (set in Supabase project settings):
+//   STRIPE_SECRET_KEY = sk_test_... (or live)
+//   PUBLIC_SITE_URL   = https://splikz.onrender.com
 
-const CORS = {
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import Stripe from "https://esm.sh/stripe@16.15.0?target=deno";
+
+const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY") ?? "";
+const PUBLIC_SITE_URL = (Deno.env.get("PUBLIC_SITE_URL") ?? "https://splikz.onrender.com").replace(/\/$/, "");
+const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" });
+
+const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,OPTIONS",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS, status: 204 });
-  if (req.method !== "GET") return new Response("Use GET", { status: 405, headers: CORS });
+serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
 
   try {
     const url = new URL(req.url);
-    const splikId = url.searchParams.get("splikId") ?? "";
-    const userId = url.searchParams.get("userId") ?? "";
+    const splikId = String(url.searchParams.get("splikId") ?? "");
+    const userId = String(url.searchParams.get("userId") ?? "");
     const days = Number(url.searchParams.get("days") ?? "0");
     const dailyBudgetCents = Math.round(Number(url.searchParams.get("dailyBudgetCents") ?? "0"));
-    const currency = (url.searchParams.get("currency") ?? "USD").toLowerCase();
+    const currency = String(url.searchParams.get("currency") ?? "USD").toLowerCase();
 
-    if (!splikId || !days || !dailyBudgetCents) {
-      return new Response("Missing fields", { status: 400, headers: CORS });
+    if (!days || !dailyBudgetCents) {
+      return new Response("Missing fields", { status: 400, headers: corsHeaders });
+    }
+    if (days < 1 || days > 30) {
+      return new Response("Invalid days", { status: 400, headers: corsHeaders });
     }
 
-    const clamp = (c: number) => Math.max(50, Math.min(50000, c)); // 50¢..$500/day
-    const dailyC = clamp(dailyBudgetCents);
-    const totalCents = Math.round(days * dailyC);
+    // clamp to 50¢ .. $500 per day
+    const daily = Math.max(50, Math.min(50000, dailyBudgetCents));
+    const totalCents = Math.round(days * daily);
     if (!Number.isFinite(totalCents) || totalCents < 50) {
-      return new Response("Invalid amount", { status: 400, headers: CORS });
+      return new Response("Invalid amount", { status: 400, headers: corsHeaders });
     }
 
-    const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, { apiVersion: "2024-06-20" });
-    const site = (Deno.env.get("PUBLIC_SITE_URL") || "").replace(/\/$/, "");
-    const funcsBase = `${new URL(req.url).origin}/functions/v1`;
+    // Stripe "Cancel and return" goes to the Referer if present, else home.
+    const referer = req.headers.get("referer");
+    const cancel_url = referer && /^https?:\/\//i.test(referer) ? referer : `${PUBLIC_SITE_URL}/`;
+    // After success, send them home.
+    const success_url = `${PUBLIC_SITE_URL}/`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency,
-          product_data: { name: `Promotion for Splik #${splikId}`, description: `${days} day(s) × ${(dailyC/100).toFixed(2)} per day` },
-          unit_amount: totalCents,
+      line_items: [
+        {
+          price_data: {
+            currency,
+            product_data: {
+              name: splikId ? `Promotion for Splik #${splikId}` : "Promotion",
+              description: `${days} day(s) × ${(daily / 100).toFixed(2)} per day`,
+            },
+            unit_amount: totalCents,
+          },
+          quantity: 1,
         },
-        quantity: 1,
-      }],
-      // after pay, we send them back to your site (skip DB for now to keep it simple)
-      success_url: `${site}/promote/success?s=${encodeURIComponent(splikId)}&cs={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${site}/promote/${encodeURIComponent(splikId)}?canceled=1`,
+      ],
+      cancel_url,
+      success_url,
+      client_reference_id: splikId || undefined,
       metadata: {
-        splikId, userId,
+        splikId,
+        userId,
         durationDays: String(days),
-        dailyBudgetCents: String(dailyC),
+        dailyBudgetCents: String(daily),
         totalCents: String(totalCents),
       },
     });
 
-    return new Response(null, { status: 303, headers: { Location: session.url!, ...CORS } });
-  } catch (e) {
-    console.error(e);
-    return new Response("Server error", { status: 500, headers: CORS });
+    // 303 → Stripe Checkout (no pretty page, straight there)
+    return new Response(null, {
+      status: 303,
+      headers: { ...corsHeaders, Location: session.url! },
+    });
+  } catch (err) {
+    console.error("promotions-checkout error:", err);
+    return new Response("Server error", { status: 500, headers: corsHeaders });
   }
 });
