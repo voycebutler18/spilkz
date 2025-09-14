@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, LogOut } from "lucide-react";
+import { Sparkles, LogOut, Home, Upload, Brain, Utensils, Heart, Building2, HelpCircle, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface MobileMenuProps {
@@ -74,16 +74,17 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
         </SheetHeader>
 
         {/* Top links */}
-        <nav className="mt-6 flex flex-col space-y-3">
+        <nav className="mt-8 flex flex-col space-y-2">
           <Link
             to="/"
             onClick={(e) => {
               e.preventDefault();
               go("/");
             }}
-            className="text-sm font-medium hover:text-primary"
+            className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
           >
-            Home
+            <Home className="h-4 w-4 text-primary" />
+            <span>Home</span>
           </Link>
 
           {isAuthed && (
@@ -93,131 +94,144 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
                 e.preventDefault();
                 go(DASHBOARD_PATH);
               }}
-              className="text-sm font-medium hover:text-primary"
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
             >
-              Creator Dashboard
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span>Creator Dashboard</span>
             </Link>
           )}
 
           {isAuthed && (
-            <Button className="mt-1" onClick={() => go("/upload")}>
+            <Button 
+              className="mt-2 rounded-xl bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]" 
+              onClick={() => go("/upload")}
+            >
+              <Upload className="h-4 w-4 mr-2" />
               Upload
             </Button>
           )}
         </nav>
 
-        {/* Browse */}
-        <div className="mt-6 text-[11px] uppercase tracking-wide text-muted-foreground">
-          Browse
-        </div>
-        <nav className="mt-2 flex flex-col space-y-2">
-          <Link
-            to="/explore"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/explore");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-          >
-            Discover
-          </Link>
-
-          {/* ✅ Thoughts (instead of Vibes) */}
-          <Link
-            to="/thoughts"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/thoughts");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-          >
-            💭 Thoughts
-          </Link>
-
-          <Link
-            to="/food"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/food");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-          >
-            Food
-          </Link>
-
-          {/* Daily Prayers */}
-          <Link
-            to="/prayers"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/prayers");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-            aria-label="Daily Prayers"
-            title="Daily Prayers"
-          >
-            🙏 Daily Prayers
-          </Link>
-
-          <div
-            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 bg-white/5 cursor-not-allowed select-none"
-            aria-disabled="true"
-            title="Splikz Dating is coming soon"
-          >
-            <span>Splikz Dating</span>
-            <Badge variant="secondary" className="text-[10px]">
-              Coming soon
-            </Badge>
+        {/* Browse Section */}
+        <div className="mt-8">
+          <div className="mb-4 text-[11px] uppercase tracking-wider text-muted-foreground/80 font-semibold px-4">
+            Browse
           </div>
+          <nav className="flex flex-col space-y-1">
+            {/* Thoughts */}
+            <Link
+              to="/thoughts"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/thoughts");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+            >
+              <Brain className="h-4 w-4 text-blue-400 group-hover:text-blue-300 transition-colors" />
+              <span>Thoughts</span>
+            </Link>
 
-          <Link
-            to="/brands"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/brands");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-          >
-            For Brands
-          </Link>
-          <Link
-            to="/help"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/help");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-          >
-            Help
-          </Link>
-          <Link
-            to="/about"
-            onClick={(e) => {
-              e.preventDefault();
-              go("/about");
-            }}
-            className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
-          >
-            About
-          </Link>
-        </nav>
+            {/* Food */}
+            <Link
+              to="/food"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/food");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+            >
+              <Utensils className="h-4 w-4 text-orange-400 group-hover:text-orange-300 transition-colors" />
+              <span>Food</span>
+            </Link>
 
-        {/* Me */}
+            {/* Daily Prayers */}
+            <Link
+              to="/prayers"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/prayers");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+              aria-label="Daily Prayers"
+              title="Daily Prayers"
+            >
+              <div className="text-amber-400 group-hover:text-amber-300 transition-colors text-base">🙏</div>
+              <span>Daily Prayers</span>
+            </Link>
+
+            {/* Dating - Coming Soon */}
+            <div
+              className="flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium text-muted-foreground/70 bg-white/5 cursor-not-allowed select-none border border-dashed border-white/20"
+              aria-disabled="true"
+              title="Splikz Dating is coming soon"
+            >
+              <div className="flex items-center gap-3">
+                <Heart className="h-4 w-4 text-pink-400/50" />
+                <span>Splikz Dating</span>
+              </div>
+              <Badge variant="secondary" className="text-[10px] bg-white/10 text-white/60">
+                Soon
+              </Badge>
+            </div>
+
+            {/* For Brands */}
+            <Link
+              to="/brands"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/brands");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+            >
+              <Building2 className="h-4 w-4 text-purple-400 group-hover:text-purple-300 transition-colors" />
+              <span>For Brands</span>
+            </Link>
+
+            {/* Help */}
+            <Link
+              to="/help"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/help");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+            >
+              <HelpCircle className="h-4 w-4 text-green-400 group-hover:text-green-300 transition-colors" />
+              <span>Help</span>
+            </Link>
+
+            {/* About */}
+            <Link
+              to="/about"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/about");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+            >
+              <Info className="h-4 w-4 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
+              <span>About</span>
+            </Link>
+          </nav>
+        </div>
+
+        {/* Me Section */}
         {isAuthed && (
-          <>
-            <div className="mt-6 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="mt-8">
+            <div className="mb-4 text-[11px] uppercase tracking-wider text-muted-foreground/80 font-semibold px-4">
               Me
             </div>
-            <nav className="mt-2 flex flex-col space-y-2">
+            <nav className="flex flex-col space-y-1">
               <Link
                 to="/dashboard/favorites"
                 onClick={(e) => {
                   e.preventDefault();
                   go("/dashboard/favorites");
                 }}
-                className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+                className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
               >
-                My Favorites
+                <Heart className="h-4 w-4 text-red-400 group-hover:text-red-300 transition-colors" />
+                <span>My Favorites</span>
               </Link>
 
               {/* Messages is hidden while SHOW_MESSAGES is false */}
@@ -228,7 +242,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
                     e.preventDefault();
                     go("/messages");
                   }}
-                  className="rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors"
+                  className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                 >
                   Messages
                 </Link>
@@ -236,30 +250,38 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
 
               <button
                 onClick={handleSignOut}
-                className="text-left rounded-lg px-3 py-2 text-sm hover:bg-white/5 transition-colors flex items-center gap-2"
+                className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-red-500/20 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] text-red-400 hover:text-red-300"
               >
                 <LogOut className="h-4 w-4" />
-                Sign out
+                <span>Sign out</span>
               </button>
             </nav>
-          </>
+          </div>
         )}
 
         {/* Auth actions / sticky bottom CTA  */}
-        <div className="fixed left-0 right-0 bottom-0 p-4 bg-background/70 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="fixed left-0 right-0 bottom-0 p-4 bg-background/80 backdrop-blur-md supports-[backdrop-filter]:bg-background/70 border-t border-white/10">
           <div className="px-2">
             {isAuthed ? (
-              <Button variant="outline" className="w-full" onClick={handleSignOut}>
+              <Button 
+                variant="outline" 
+                className="w-full rounded-xl border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-all duration-200" 
+                onClick={handleSignOut}
+              >
                 <LogOut className="h-4 w-4 mr-2" />
                 Sign out
               </Button>
             ) : (
               <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={() => go("/login")}>
+                <Button 
+                  variant="outline" 
+                  className="flex-1 rounded-xl border-white/20 hover:bg-white/10 transition-all duration-200" 
+                  onClick={() => go("/login")}
+                >
                   Log in
                 </Button>
                 <Button
-                  className="flex-1 bg-gradient-to-r from-primary to-secondary hover:opacity-90"
+                  className="flex-1 rounded-xl bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                   onClick={() => go("/signup")}
                 >
                   Sign up
