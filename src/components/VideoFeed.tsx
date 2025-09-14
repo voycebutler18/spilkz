@@ -1,4 +1,3 @@
-
 // src/components/ui/VideoFeed.tsx
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -61,42 +60,6 @@ const initialsFor = (s: Splik) =>
     .slice(0, 2)
     .toUpperCase();
 
-const normalizeSpliks = (rows: Splik[]): Splik[] =>
-  (rows ?? [])
-    .filter(Boolean)
-    .map((r) => ({
-      ...r,
-      comments_count: Number.isFinite(r?.comments_count as any) ? (r!.comments_count as number) : 0,
-      profile:
-        r.profile ?? {
-          id: r.user_id,
-          username: null,
-          display_name: null,
-          first_name: null,
-          last_name: null,
-          avatar_url: null,
-        },
-    }));
-
-const cRandom = () => {
-  if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
-    const u = new Uint32Array(1);
-    (crypto as any).getRandomValues(u);
-    return u[0] / 2 ** 32;
-  }
-  return Math.random();
-};
-
-const shuffle = <T,>(arr: T[]) => {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(cRandom() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-};
-
-// Detect touch device (mobile browsers)
 const isTouchDevice = () =>
   typeof window !== "undefined" &&
   ("ontouchstart" in window || (navigator as any).maxTouchPoints > 0);
@@ -106,6 +69,8 @@ const isTouchDevice = () =>
 export default function VideoFeed({ user }: VideoFeedProps) {
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  const { feed, status, ensureFeed } = useFeedStore() as any;
 
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,27 +86,53 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [muted, setMuted] = useState<Record<number, boolean>>({});
   const [currentPlayingIndex, setCurrentPlayingIndex] = useState<number>(-1);
 
-  // poster fade control: keep poster visible until the video is actually rendering
-  const [isRendering, setIsRendering] = useState<Record<number, boolean>>({}); // true only after "playing"
-  const [isReady, setIsReady] = useState<Record<number, boolean>>({}); // metadata/time ready
+  // poster fade control
+  const [isRendering, setIsRendering] = useState<Record<number, boolean>>({});
 
   // force-remount key to ensure DOM order changes on each shuffle
   const [orderEpoch, setOrderEpoch] = useState(0);
 
-  // prewarmed feed (if your store provides it)
-  const { feed: storeFeed } = useFeedStore() as { feed?: Splik[] };
-
   // Cleanup function for preload <link> elements
   const preloadCleanupRef = useRef<(() => void)[]>([]);
 
-  // Enhanced preload for better mobile performance
+  /* ----------------------- use store, not network ----------------------- */
   useEffect(() => {
-    if (spliks.length === 0) return;
+    // ensures data (no-op if Splash already filled the store)
+    ensureFeed().catch(() => {});
+  }, [ensureFeed]);
 
-    preloadCleanupRef.current.forEach((cleanup) => cleanup());
+  useEffect(() => {
+    const rows = Array.isArray(feed) ? (feed as Splik[]) : [];
+    setSpliks(rows);
+
+    // init per-item UI state once we have rows
+    const mutedState: Record<number, boolean> = {};
+    const renderingState: Record<number, boolean> = {};
+    rows.forEach((_, i) => {
+      mutedState[i] = true;
+      renderingState[i] = false;
+    });
+    setMuted(mutedState);
+    setIsRendering(renderingState);
+    setCurrentPlayingIndex(-1);
+    setOrderEpoch((e) => e + 1);
+    setLoading(status !== "ready" && rows.length === 0);
+
+    try {
+      containerRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    } catch {
+      containerRef.current?.scrollTo(0, 0);
+    }
+  }, [feed, status]);
+
+  /* -------------------- networking preconnect (light) ------------------- */
+  useEffect(() => {
+    if (!spliks.length) return;
+
+    preloadCleanupRef.current.forEach((fn) => fn());
     preloadCleanupRef.current = [];
 
-    const preloadCount = isTouchDevice() ? 8 : 10;
+    const preloadCount = isTouchDevice() ? 6 : 10;
     const domains = new Set<string>();
 
     spliks.slice(0, preloadCount).forEach((splik) => {
@@ -157,9 +148,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         link.rel = "preconnect";
         link.href = domain;
         document.head.appendChild(link);
-        preloadCleanupRef.current.push(() => {
-          if (link.parentNode) link.parentNode.removeChild(link);
-        });
+        preloadCleanupRef.current.push(() => link.remove());
       }
     });
 
@@ -169,146 +158,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         link.rel = "dns-prefetch";
         link.href = domain;
         document.head.appendChild(link);
-        preloadCleanupRef.current.push(() => {
-          if (link.parentNode) link.parentNode.removeChild(link);
-        });
+        preloadCleanupRef.current.push(() => link.remove());
       }
     });
 
     return () => {
-      preloadCleanupRef.current.forEach((cleanup) => cleanup());
+      preloadCleanupRef.current.forEach((fn) => fn());
       preloadCleanupRef.current = [];
     };
   }, [spliks]);
-
-  // Try store → sessionStorage → network (only if needed)
-  useEffect(() => {
-    let cancelled = false;
-
-    const primeUI = (rows: Splik[]) => {
-      const mutedState: Record<number, boolean> = {};
-      const ready: Record<number, boolean> = {};
-      const rendering: Record<number, boolean> = {};
-      rows.forEach((_, index) => {
-        mutedState[index] = true;
-        ready[index] = false;
-        rendering[index] = false;
-      });
-      setMuted(mutedState);
-      setIsReady(ready);
-      setIsRendering(rendering);
-      setCurrentPlayingIndex(-1);
-      setOrderEpoch((e) => e + 1);
-
-      try {
-        containerRef.current?.scrollTo({ top: 0, behavior: "auto" });
-      } catch {
-        containerRef.current?.scrollTo(0, 0);
-      }
-    };
-
-    const readCache = (): Splik[] | null => {
-      if (Array.isArray(storeFeed) && storeFeed.length > 0) {
-        return shuffle(normalizeSpliks(storeFeed));
-      }
-      try {
-        const raw = sessionStorage.getItem("feed:cached");
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) {
-          return shuffle(normalizeSpliks(parsed as Splik[]));
-        }
-      } catch {}
-      return null;
-    };
-
-    const writeCache = (rows: Splik[]) => {
-      try {
-        sessionStorage.setItem("feed:cached", JSON.stringify(rows.slice(0, 40)));
-      } catch {}
-    };
-
-    const backgroundRefreshFavs = async () => {
-      try {
-        if (user?.id) {
-          const { data: favs } = await supabase
-            .from("favorites")
-            .select("video_id")
-            .eq("user_id", user.id);
-          if (favs) setSavedIds(new Set(favs.map((f: any) => String(f.video_id))));
-        }
-      } catch {}
-    };
-
-    const ABORT_TIMEOUT_MS = 10000;
-
-    const load = async () => {
-      const cached = readCache();
-      if (cached && !cancelled) {
-        setSpliks(cached);
-        setLoading(false);
-        primeUI(cached);
-        backgroundRefreshFavs();
-        return;
-      }
-
-      setLoading(true);
-      try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), ABORT_TIMEOUT_MS);
-
-        const limit = isTouchDevice() ? 20 : 40;
-        const { data: base, error: baseErr } = await supabase
-          .from("spliks")
-          .select(
-            "id,user_id,title,description,video_url,thumbnail_url,trim_start,trim_end,created_at"
-          )
-          .order("created_at", { ascending: false })
-          .limit(limit)
-          .abortSignal(controller.signal);
-
-        clearTimeout(t);
-        if (baseErr) throw baseErr;
-
-        const rows = (base || []) as Splik[];
-
-        const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
-        let byId: Record<string, any> = {};
-        if (userIds.length) {
-          const { data: profs } = await supabase
-            .from("profiles")
-            .select("id,username,display_name,first_name,last_name,avatar_url")
-            .in("id", userIds);
-          (profs || []).forEach((p: any) => (byId[p.id] = p));
-        }
-
-        const stitched = rows.map((r) => ({ ...r, profile: byId[r.user_id] || null }));
-        const normalized = normalizeSpliks(stitched);
-        const shuffled = shuffle(normalized);
-
-        if (!cancelled) {
-          setSpliks(shuffled);
-          primeUI(shuffled);
-          writeCache(normalized);
-        }
-
-        backgroundRefreshFavs();
-      } catch (e: any) {
-        if (e?.name === "AbortError") {
-          console.warn("Feed request aborted (timeout).");
-        } else {
-          console.error("Feed fetch error:", e);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, storeFeed]);
 
   /* ---------- favorites realtime for this user ---------- */
   useEffect(() => {
@@ -350,56 +208,75 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     video.setAttribute("webkit-playsinline", "true");
     video.setAttribute("x5-video-player-type", "h5");
     video.setAttribute("x5-video-player-fullscreen", "false");
-    video.setAttribute("x5-video-orientation", "portrait");
+    video.setAttribute("x5-video-player-orientation", "portrait");
     video.disablePictureInPicture = true;
-    video.preload = "metadata"; // keep light; we manually prewarm the next clip
+    video.preload = "metadata";
     video.muted = true;
     video.controls = false;
-    video.loop = true; // loop whole asset; avoids seek flashes
-
+    video.loop = true; // whole-asset loop (no seek flashes)
     video.removeAttribute("controls");
     video.oncontextmenu = (e) => e.preventDefault();
 
-    // When metadata is ready, jump to start trim (if any)
-    video.onloadedmetadata = () => {
-      const startAt = Number(spliks[index]?.trim_start ?? 0);
-      const t = startAt ? Math.max(0.01, startAt) : 0.01;
-      try {
-        // @ts-ignore
-        if (typeof video.fastSeek === "function") video.fastSeek(t);
-        else video.currentTime = t;
-      } catch {}
-      setIsReady((r) => ({ ...r, [index]: true }));
-    };
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        const startAt = Number(spliks[index]?.trim_start ?? 0);
+        const t = startAt ? Math.max(0.01, startAt) : 0.01;
+        try {
+          // @ts-ignore
+          if (typeof video.fastSeek === "function") video.fastSeek(t);
+          else video.currentTime = t;
+        } catch {}
+      },
+      { once: true }
+    );
 
-    // Only hide poster overlay once frames are actually rendering
-    const onPlaying = () => {
-      setIsRendering((r) => ({ ...r, [index]: true }));
-    };
-    const onWaiting = () => {
-      // do not re-show overlay to avoid flicker yo-yo; just keep video as-is
-    };
-
-    video.addEventListener("playing", onPlaying);
-    video.addEventListener("waiting", onWaiting);
+    // Hide the poster overlay only after frames are actually rendering
+    video.addEventListener(
+      "playing",
+      () => {
+        setIsRendering((r) => ({ ...r, [index]: true }));
+      },
+      { once: true }
+    );
 
     video.setAttribute("data-setup", "true");
   };
 
+  /** Attach src if missing (for cards that were off-screen) */
+  const ensureSrc = async (index: number) => {
+    const v = videoRefs.current[index];
+    const s = spliks[index];
+    if (!v || !s) return v;
+    if (!v.src) {
+      v.src = s.video_url;
+      v.preload = "metadata";
+      try {
+        v.load();
+      } catch {}
+    }
+    return v;
+  };
+
   /** Switch playback to index: start the next one first, then pause the old one */
   const switchTo = async (index: number) => {
-    const next = videoRefs.current[index];
+    const next = await ensureSrc(index);
     if (!next) return;
     if (activeRef.current === next) return;
 
     setupVideo(next, index);
 
-    // Prewarm the following video element cheaply
+    // Prewarm the following element lightly
     const ahead = videoRefs.current[index + 1];
-    if (ahead && ahead.preload !== "metadata") ahead.preload = "metadata";
+    if (ahead && !ahead.src) {
+      const s = spliks[index + 1];
+      if (s) {
+        ahead.src = s.video_url;
+        ahead.preload = "metadata";
+      }
+    }
 
     try {
-      // ensure we start from trim start each time we activate
       const startAt = Number(spliks[index]?.trim_start ?? 0);
       const t = startAt ? Math.max(0.01, startAt) : 0.01;
       try {
@@ -408,23 +285,22 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         else next.currentTime = t;
       } catch {}
 
-      // start the new one FIRST to avoid any gap (black) while switching
+      // start the new one FIRST
       await next.play();
 
-      // now pause the previous
+      // then pause the previous one
       if (activeRef.current && activeRef.current !== next && !activeRef.current.paused) {
         activeRef.current.pause();
       }
 
       activeRef.current = next;
       setCurrentPlayingIndex(index);
-    } catch (e) {
+    } catch {
       // ignore rapid scroll races
     }
   };
 
-  // IntersectionObserver that always plays the most visible section,
-  // rather than pausing aggressively (which causes black gaps on mobile).
+  // Always play the most visible section (TikTok-style)
   useEffect(() => {
     const container = containerRef.current;
     if (!container || spliks.length === 0) return;
@@ -439,7 +315,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         if (!Number.isFinite(index)) continue;
         visibility.set(index, entry.intersectionRatio);
       }
-      // choose the most visible section
       let best = -1;
       let bestRatio = 0;
       for (const [i, r] of visibility) {
@@ -555,6 +430,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     );
   }
 
+  // Attach src only for the active card and its neighbor.
+  const shouldAttachSrc = (i: number) => {
+    const p = currentPlayingIndex;
+    return p < 0 ? i <= 1 : Math.abs(i - p) <= 1;
+  };
+
   return (
     <>
       <style>{`
@@ -574,21 +455,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           display: none !important;
           -webkit-appearance: none;
         }
-        video::-moz-media-controls {
-          display: none !important;
-        }
+        video::-moz-media-controls { display: none !important; }
         video {
           outline: none !important;
           -webkit-user-select: none;
-          -moz-user-select: none;
-          -ms-user-select: none;
           user-select: none;
           -webkit-touch-callout: none;
           -webkit-tap-highlight-color: transparent;
           background: transparent !important;
           backface-visibility: hidden;
-          transform: translateZ(0); /* keep texture on GPU */
-          will-change: transform;  /* hint for smooth scroll */
+          transform: translateZ(0);
+          will-change: transform;
         }
       `}</style>
 
@@ -600,6 +477,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
           const isCreator = user?.id === s.user_id;
+
+          const attach = shouldAttachSrc(i);
+          const preloadValue = attach ? "metadata" : "none";
 
           return (
             <section
@@ -631,7 +511,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
                 {/* video container */}
                 <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-                  {/* Poster overlay (always on top until video is PLAYING) */}
+                  {/* Poster overlay (stays until first frame is PLAYING) */}
                   {s.thumbnail_url && (
                     <img
                       src={s.thumbnail_url}
@@ -648,11 +528,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       videoRefs.current[i] = el;
                       if (el) setupVideo(el, i);
                     }}
-                    src={s.video_url}
-                    poster={undefined /* we handle poster via overlay to prevent flicker */}
+                    // Only attach src for active + neighbor to avoid extra work on mobile
+                    src={attach ? s.video_url : undefined}
+                    poster={undefined}
                     className="w-full h-full object-cover"
                     playsInline
-                    preload="metadata"
+                    preload={preloadValue as any}
                     muted
                     disablePictureInPicture
                     controlsList="nodownload nofullscreen noremoteplayback"
@@ -732,11 +613,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       aria-label={isSaved ? "Saved" : "Save"}
                       title={isSaved ? "Saved" : "Save"}
                     >
-                      {isSaved ? (
-                        <BookmarkCheck className="h-6 w-6" />
-                      ) : (
-                        <Bookmark className="h-6 w-6" />
-                      )}
+                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
                     </Button>
                   </div>
                 </div>
