@@ -16,14 +16,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/components/ui/use-toast";
 import { Badge } from "@/components/ui/badge";
-import {
-  Rocket,
-  CalendarClock,
-  DollarSign,
-  TrendingUp,
-  ShieldCheck,
-  X as XIcon,
-} from "lucide-react";
+import { Rocket, CalendarClock, DollarSign, TrendingUp, ShieldCheck, X as XIcon } from "lucide-react";
 
 const fmtUSD = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
@@ -37,7 +30,7 @@ type SplikRow = {
   user_id: string;
 };
 
-const DAY_CHOICES = Array.from({ length: 30 }, (_, i) => i + 1); // 1..30
+const DAY_CHOICES = Array.from({ length: 30 }, (_, i) => i + 1);
 const estReach = (days: number, dailyBudget: number) => Math.round(days * dailyBudget * 600);
 
 export default function Promote() {
@@ -51,56 +44,39 @@ export default function Promote() {
   const [splik, setSplik] = useState<SplikRow | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // Controls
   const [durationDays, setDurationDays] = useState<number>(7);
-  const [dailyBudget, setDailyBudget] = useState<number>(5); // dollars, can be decimal 0.5–500
+  const [dailyBudget, setDailyBudget] = useState<number>(5);
 
-  const total = useMemo(
-    () => Number((durationDays * dailyBudget).toFixed(2)),
-    [durationDays, dailyBudget]
-  );
+  const total = useMemo(() => Number((durationDays * dailyBudget).toFixed(2)), [durationDays, dailyBudget]);
   const reach = useMemo(() => estReach(durationDays, dailyBudget), [durationDays, dailyBudget]);
 
-  /** Load post + user */
   useEffect(() => {
     let isMounted = true;
     (async () => {
       try {
         setLoading(true);
         const [{ data, error }, session] = await Promise.all([
-          supabase
-            .from("spliks")
-            .select("id,title,thumbnail_url,description,created_at,user_id")
-            .eq("id", splikId)
-            .maybeSingle(),
+          supabase.from("spliks").select("id,title,thumbnail_url,description,created_at,user_id").eq("id", splikId).maybeSingle(),
           supabase.auth.getUser(),
         ]);
-
         if (error) throw error;
         if (isMounted) {
           setSplik((data as any) ?? null);
           setUserId(session.data.user?.id ?? null);
         }
       } catch (e: any) {
-        toast({
-          title: "Couldn't load your post",
-          description: e.message || "Please try again.",
-          variant: "destructive",
-        });
+        toast({ title: "Couldn't load your post", description: e.message || "Please try again.", variant: "destructive" });
       } finally {
         if (isMounted) setLoading(false);
       }
     })();
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, [splikId, toast]);
 
-  /** Checkout → Stripe via full-page redirect (no CORS / no fetch) */
+  /** Checkout → Supabase Edge Function (redirects to Stripe) */
   const handleCheckout = () => {
     if (checkingOut) return;
 
-    // basic client-side guards
     if (!splikId) {
       toast({ title: "Missing post", description: "We couldn't find that post.", variant: "destructive" });
       return;
@@ -114,32 +90,26 @@ export default function Promote() {
       return;
     }
 
+    const supaUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+    if (!supaUrl) {
+      toast({ title: "Setup error", description: "VITE_SUPABASE_URL is not set.", variant: "destructive" });
+      return;
+    }
+
     setCheckingOut(true);
-
     try {
-      // Force API host so we never hit the frontend by accident
-      const API_BASE =
-        ((import.meta.env.VITE_PROMOTE_API_BASE as string | undefined) ||
-          (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
-          "https://splikz-promote-api.onrender.com") // correct domain
-          .replace(/\/$/, "");
-
-      const target = new URL(`${API_BASE}/pay/checkout`);
+      const target = new URL(`${supaUrl}/functions/v1/promotions-checkout`);
       target.searchParams.set("splikId", splikId);
       if (userId) target.searchParams.set("userId", userId);
       target.searchParams.set("days", String(durationDays));
       target.searchParams.set("dailyBudgetCents", String(Math.round(dailyBudget * 100)));
       target.searchParams.set("currency", "USD");
 
-      // full page navigation → your API → 303 to Stripe
+      // Full-page nav → Edge Function → 303 to Stripe → back to your site via promotions-success
       window.location.assign(target.toString());
     } catch (err: any) {
       setCheckingOut(false);
-      toast({
-        title: "Payment error",
-        description: err?.message || "We couldn’t start checkout.",
-        variant: "destructive",
-      });
+      toast({ title: "Payment error", description: err?.message || "We couldn’t start checkout.", variant: "destructive" });
     }
   };
 
@@ -150,15 +120,7 @@ export default function Promote() {
 
   return (
     <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : onClose())}>
-      <DialogContent
-        className="
-          max-w-3xl w-[min(96vw,850px)]
-          max-h-[90vh] p-0 overflow-hidden rounded-2xl
-          bg-slate-900/95 backdrop-blur-2xl border border-white/15 shadow-2xl
-          flex flex-col
-        "
-      >
-        {/* Header */}
+      <DialogContent className="max-w-3xl w-[min(96vw,850px)] max-h-[90vh] p-0 overflow-hidden rounded-2xl bg-slate-900/95 backdrop-blur-2xl border border-white/15 shadow-2xl flex flex-col">
         <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 border-b border-white/10 bg-slate-900/80">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -170,21 +132,16 @@ export default function Promote() {
               </div>
               <div>
                 <DialogTitle className="text-xl sm:text-2xl font-bold text-white">Promote your post</DialogTitle>
-                <DialogDescription className="text-gray-300">
-                  Choose your duration and daily budget. Pay securely; we'll handle delivery.
-                </DialogDescription>
+                <DialogDescription className="text-gray-300">Choose your duration and daily budget. Pay securely; we'll handle delivery.</DialogDescription>
               </div>
             </div>
-
             <Button variant="ghost" className="h-9 w-9 rounded-full" onClick={onClose} aria-label="Close">
               <XIcon className="h-5 w-5" />
             </Button>
           </div>
         </DialogHeader>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-5 space-y-6">
-          {/* Preview */}
           <div className="rounded-xl border border-white/10 bg-white/5 p-3 flex items-center gap-3">
             <div className="relative w-20 h-14 overflow-hidden rounded-lg bg-black/30 flex-shrink-0">
               {splik?.thumbnail_url ? (
@@ -200,9 +157,7 @@ export default function Promote() {
             <Badge className="ml-auto bg-purple-600 text-white">Splik #{splikId}</Badge>
           </div>
 
-          {/* Controls */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Duration */}
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
               <div className="flex items-center gap-2 text-white">
                 <CalendarClock className="h-4 w-4 text-purple-300" />
@@ -220,27 +175,16 @@ export default function Promote() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-white/70">
-                Starts immediately and runs for <strong className="text-white">{durationDays}</strong>{" "}
-                {durationDays === 1 ? "day" : "days"}.
-              </p>
+              <p className="text-xs text-white/70">Starts immediately and runs for <strong className="text-white">{durationDays}</strong> {durationDays === 1 ? "day" : "days"}.</p>
             </div>
 
-            {/* Daily budget (decimal-friendly) */}
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
               <div className="flex items-center gap-2 text-white">
                 <DollarSign className="h-4 w-4 text-green-300" />
                 <Label className="text-white">Daily budget</Label>
               </div>
               <div className="flex items-center gap-3">
-                <Slider
-                  value={[dailyBudget]}
-                  min={0.5}
-                  max={500}
-                  step={0.5}
-                  onValueChange={(v) => setDailyBudget(v[0] ?? 5)}
-                  className="flex-1"
-                />
+                <Slider value={[dailyBudget]} min={0.5} max={500} step={0.5} onValueChange={(v) => setDailyBudget(v[0] ?? 5)} className="flex-1" />
                 <div className="w-28">
                   <Input
                     type="number"
@@ -256,13 +200,10 @@ export default function Promote() {
                   />
                 </div>
               </div>
-              <p className="text-xs text-white/70">
-                We optimize for real people. Increase this for more reach each day.
-              </p>
+              <p className="text-xs text-white/70">We optimize for real people. Increase this for more reach each day.</p>
             </div>
           </div>
 
-          {/* Summary */}
           <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/5 to-purple-500/10 p-4 sm:p-5">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex-1">
@@ -280,26 +221,17 @@ export default function Promote() {
                   <span className="font-semibold">Total</span>
                 </div>
                 <div className="text-white text-2xl font-bold mt-1">{fmtUSD(total)}</div>
-                <div className="text-white/70 text-xs">
-                  {fmtUSD(dailyBudget)} / day × {durationDays} {durationDays === 1 ? "day" : "days"}.
-                </div>
+                <div className="text-white/70 text-xs">{fmtUSD(dailyBudget)} / day × {durationDays} {durationDays === 1 ? "day" : "days"}.</div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-5 sm:px-6 py-4 border-t border-white/10 bg-slate-900/80 flex items-center justify-between">
           <div className="text-xs sm:text-sm text-white/70">You'll review and pay securely on the next screen.</div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose} className="rounded-xl" disabled={checkingOut}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCheckout}
-              className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700"
-              disabled={checkingOut || loading}
-            >
+            <Button variant="outline" onClick={onClose} className="rounded-xl" disabled={checkingOut}>Cancel</Button>
+            <Button onClick={handleCheckout} className="rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 text-white hover:from-purple-700 hover:via-pink-700 hover:to-red-700" disabled={checkingOut || loading}>
               {checkingOut ? "Redirecting…" : "Continue to payment"}
             </Button>
           </div>
