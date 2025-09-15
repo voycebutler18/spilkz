@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
-import VideoFeed from "@/components/ui/VideoFeed";
+import VideoFeed from "@/components/VideoFeed";
 import { useToast } from "@/components/ui/use-toast";
 import NotificationBell from "@/components/notifications/NotificationBell";
 
