@@ -1,7 +1,7 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Home, MessageSquare, Upload } from "lucide-react";
+import { Sparkles, LogOut, Home, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import RightProfileMenu from "@/components/layout/RightProfileMenu";
 import SearchOmni from "@/components/search/SearchOmni";
-import NotificationBell from "@/components/notifications/NotificationBell"; // ✅ added
 
 type Profile = {
   id: string;
@@ -95,11 +94,6 @@ const Header: React.FC = () => {
           </span>
         </Link>
 
-        {/* ✅ Mobile bell next to logo */}
-        <div className="md:hidden">
-          <NotificationBell user={user} />
-        </div>
-
         {/* Universal Search */}
         <div className="relative hidden w/full max-w-xl flex-1 md:block">
           <SearchOmni />
@@ -141,18 +135,6 @@ const Header: React.FC = () => {
             </Button>
           )}
 
-          {user && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn("gap-2", isActive("/messages") && "font-semibold")}
-              onClick={() => navigate("/messages")}
-              aria-label="Messages"
-            >
-              <MessageSquare className="h-4 w-4" /> Messages
-            </Button>
-          )}
-
           <Button
             size="sm"
             className="gap-2"
@@ -162,9 +144,6 @@ const Header: React.FC = () => {
           >
             <Upload className="h-4 w-4" /> Upload
           </Button>
-
-          {/* ✅ Desktop bell before account menu */}
-          <NotificationBell user={user} />
 
           {/* Account area */}
           {user ? (
