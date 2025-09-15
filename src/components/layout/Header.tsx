@@ -1,7 +1,7 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Home, Upload } from "lucide-react";
+import { Sparkles, LogOut, Home, Upload, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -95,7 +95,7 @@ const Header: React.FC = () => {
         </Link>
 
         {/* Universal Search */}
-        <div className="relative hidden w/full max-w-xl flex-1 md:block">
+        <div className="relative hidden w-full max-w-xl flex-1 md:block">
           <SearchOmni />
         </div>
 
@@ -132,6 +132,20 @@ const Header: React.FC = () => {
               aria-label="Creator Dashboard"
             >
               Creator Dashboard
+            </Button>
+          )}
+
+          {/* ✅ New: NoteBox (routes to /notes) */}
+          {user && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn("gap-2", isActive("/notes") && "font-semibold")}
+              onClick={() => navigate("/notes")}
+              aria-label="NoteBox"
+              title="Your ephemeral notes"
+            >
+              <Mail className="h-4 w-4" /> NoteBox
             </Button>
           )}
 
