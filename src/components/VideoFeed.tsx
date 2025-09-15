@@ -170,7 +170,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
   }, [spliks]);
 
-  /* ---------- favorites/hypes: initial fetch (fixes persistence) ---------- */
+  /* ---------- favorites/hypes: initial fetch (PERSISTENT & CORRECT COLS) ---------- */
   useEffect(() => {
     if (!user?.id || spliks.length === 0) {
       setSavedIds(new Set());
@@ -185,9 +185,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const [{ data: favs }, { data: hypes }] = await Promise.all([
           supabase
             .from("favorites")
-            .select("video_id")
+            .select("splik_id")
             .eq("user_id", user.id)
-            .in("video_id", ids),
+            .in("splik_id", ids),
           supabase
             .from("hype_reactions")
             .select("splik_id")
@@ -195,7 +195,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
             .in("splik_id", ids),
         ]);
 
-        setSavedIds(new Set((favs || []).map((r: any) => String(r.video_id))));
+        setSavedIds(new Set((favs || []).map((r: any) => String(r.splik_id))));
         setHypedIds(new Set((hypes || []).map((r: any) => String(r.splik_id))));
       } catch {
         // non-blocking
@@ -213,19 +213,19 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "favorites", filter: `user_id=eq.${user.id}` },
         (payload) => {
-          const vid = (payload.new as any)?.video_id;
-          if (vid) setSavedIds((prev) => new Set(prev).add(String(vid)));
+          const sid = (payload.new as any)?.splik_id;
+          if (sid) setSavedIds((prev) => new Set(prev).add(String(sid)));
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "favorites", filter: `user_id=eq.${user.id}` },
         (payload) => {
-          const vid = (payload.old as any)?.video_id;
-          if (vid)
+          const sid = (payload.old as any)?.splik_id;
+          if (sid)
             setSavedIds((prev) => {
               const ns = new Set(prev);
-              ns.delete(String(vid));
+              ns.delete(String(sid));
               return ns;
             });
         }
@@ -455,8 +455,8 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     }
   };
 
-  /* ---------------- actions: Save + Hype ---------------- */
-  const toggleFavorite = async (videoId: string) => {
+  /* ---------------- actions: Save + Hype (use splik_id) ---------------- */
+  const toggleFavorite = async (splikId: string) => {
     if (!user?.id) {
       toast({
         title: "Sign in required",
@@ -465,37 +465,42 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       });
       return;
     }
-    if (savingIds.has(videoId)) return;
+    if (savingIds.has(splikId)) return;
 
-    setSavingIds((s) => new Set(s).add(videoId));
+    setSavingIds((s) => new Set(s).add(splikId));
 
-    const currentlySaved = savedIds.has(videoId);
+    const currentlySaved = savedIds.has(splikId);
     setSavedIds((prev) => {
       const ns = new Set(prev);
-      currentlySaved ? ns.delete(videoId) : ns.add(videoId);
+      currentlySaved ? ns.delete(splikId) : ns.add(splikId);
       return ns;
     });
 
     try {
       if (currentlySaved) {
-        await supabase.from("favorites").delete().eq("user_id", user.id).eq("video_id", videoId);
+        await supabase.from("favorites").delete().eq("user_id", user.id).eq("splik_id", splikId);
         toast({ title: "Removed from favorites" });
       } else {
-        await supabase.from("favorites").insert({ user_id: user.id, video_id: videoId });
+        await supabase
+          .from("favorites")
+          .insert([{ user_id: user.id, splik_id: splikId }], {
+            onConflict: "user_id,splik_id",
+            ignoreDuplicates: true,
+          });
         toast({ title: "Added to favorites" });
       }
     } catch {
       // revert
       setSavedIds((prev) => {
         const ns = new Set(prev);
-        currentlySaved ? ns.add(videoId) : ns.delete(videoId);
+        currentlySaved ? ns.add(splikId) : ns.delete(splikId);
         return ns;
       });
       toast({ title: "Error", description: "Failed to update favorites", variant: "destructive" });
     } finally {
       setSavingIds((s) => {
         const ns = new Set(s);
-        ns.delete(videoId);
+        ns.delete(splikId);
         return ns;
       });
     }
@@ -523,11 +528,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
     try {
       if (currentlyHyped) {
-        await supabase
-          .from("hype_reactions")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("splik_id", splikId);
+        await supabase.from("hype_reactions").delete().eq("user_id", user.id).eq("splik_id", splikId);
       } else {
         await supabase.from("hype_reactions").insert({ user_id: user.id, splik_id: splikId, amount: 1 });
       }
@@ -675,11 +676,15 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     style={{ WebkitTapHighlightColor: "transparent" }}
                   />
 
-                  {/* MOBILE share chip in the top-right (replaces bottom share) */}
+                  {/* MOBILE share chip in the top-right — always visible, safe-area aware */}
                   <button
                     onClick={() => handleShare(s)}
-                    className="md:hidden absolute top-3 right-3 z-40 rounded-full px-3 py-1.5 bg-black/70 text-white text-sm font-medium
+                    className="sm:hidden fixed z-50 rounded-full px-3 py-1.5 bg-black/75 text-white text-sm font-medium
                                border border-white/20 shadow-lg active:scale-95"
+                    style={{
+                      top: "calc(env(safe-area-inset-top, 0px) + 12px)",
+                      right: "calc(env(safe-area-inset-right, 0px) + 12px)",
+                    }}
                     aria-label="Share"
                   >
                     Share
@@ -740,7 +745,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         size="icon"
                         variant="ghost"
                         onClick={() => handleShare(s)}
-                        className="hidden md:inline-flex hover:text-green-500"
+                        className="hidden sm:inline-flex hover:text-green-500"
                         title="Share"
                       >
                         <Share2 className="h-6 w-6" />
