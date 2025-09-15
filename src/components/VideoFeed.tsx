@@ -472,6 +472,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       <div
         ref={containerRef}
         className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
+                   pb-[calc(88px+env(safe-area-inset-bottom))] md:pb-0"
       >
         {spliks.map((s, i) => {
           const isSaved = savedIds.has(s.id);
