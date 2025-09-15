@@ -471,6 +471,20 @@ export default function SplikCard({
             )}
           </Button>
 
+          {/* Send a note */}
+          <Button asChild variant="outline" size="sm" className="gap-2">
+            <Link
+              to={`/notes?to=${encodeURIComponent(
+                splik.user_id
+              )}&msg=${encodeURIComponent(
+                `About your post "${splik.title || ""}": `
+              )}`}
+              title="Send a note to the creator"
+            >
+              Send a note
+            </Link>
+          </Button>
+
           <div className="ml-auto">
             <Button
               variant="outline"
