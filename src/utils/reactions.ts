@@ -1,6 +1,7 @@
 // src/utils/reactions.ts
 import { SupabaseClient } from "@supabase/supabase-js";
 import { Database } from "@/types/supabase";
+import { supabase } from "@/integrations/supabase/client";
 
 type Supabase = Database;
 
@@ -229,6 +230,6 @@ export class ReactionsManager {
 }
 
 // React hook for using the reactions manager
-export function useReactions(supabase: SupabaseClient<Supabase>) {
+export function useReactions() {
   return new ReactionsManager(supabase);
 }
