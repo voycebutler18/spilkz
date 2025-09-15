@@ -1,161 +1,176 @@
-import { useState, useEffect } from 'react';
+// FollowButton.tsx
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { UserPlus, UserMinus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+type Size = "sm" | "default" | "lg";
+type Variant = "default" | "outline" | "ghost";
+
 interface FollowButtonProps {
+  /** May be a UUID or a slug/username */
   profileId: string;
   username?: string;
-  size?: "sm" | "default" | "lg";
-  variant?: "default" | "outline" | "ghost";
+  size?: Size;
+  variant?: Variant;
   className?: string;
 }
 
-export function FollowButton({ 
-  profileId, 
+const isUUID = (v: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+
+export function FollowButton({
+  profileId,
   username,
-  size = "default", 
+  size = "default",
   variant,
-  className 
+  className,
 }: FollowButtonProps) {
+  const [targetId, setTargetId] = useState<string | null>(null); // resolved UUID
   const [isFollowing, setIsFollowing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isOwnProfile, setIsOwnProfile] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
+  // Resolve UUID from slug/username if needed
   useEffect(() => {
-    console.log('FollowButton: Initializing for profileId:', profileId);
-    checkFollowStatus();
+    let cancelled = false;
 
-    // Subscribe to real-time updates for follower changes
-    const channel = supabase
-      .channel(`follow-${profileId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'followers',
-          filter: `following_id=eq.${profileId}`
-        },
-        () => {
-          checkFollowStatus();
+    (async () => {
+      if (!profileId) return;
+      if (isUUID(profileId)) {
+        setTargetId(profileId);
+        return;
+      }
+      // Treat as slug/username -> look up profiles.id
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id")
+        .or(`username.eq.${profileId},slug.eq.${profileId}`)
+        .maybeSingle();
+
+      if (!cancelled) {
+        if (error || !data?.id) {
+          console.error("FollowButton: could not resolve UUID from", profileId, error);
+          setTargetId(null);
+        } else {
+          setTargetId(data.id);
         }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId]);
+
+  // Subscribe + initial status once we know the UUID
+  useEffect(() => {
+    if (!targetId) return;
+
+    const check = async () => {
+      const { data: { user } = { user: null } } = await supabase.auth.getUser();
+      setCurrentUser(user);
+      setIsInitialized(true);
+
+      if (!user) {
+        setIsFollowing(false);
+        setIsOwnProfile(false);
+        return;
+      }
+
+      setIsOwnProfile(user.id === targetId);
+      if (user.id === targetId) {
+        setIsFollowing(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("followers")
+        .select("id")
+        .eq("follower_id", user.id)
+        .eq("following_id", targetId)
+        .maybeSingle();
+
+      setIsFollowing(!!data && !error);
+    };
+
+    check();
+
+    const channel = supabase
+      .channel(`follow-${targetId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "followers", filter: `following_id=eq.${targetId}` },
+        check
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [profileId]);
-
-  const checkFollowStatus = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    console.log('FollowButton: Current user:', user?.id, 'Profile ID:', profileId);
-    setCurrentUser(user);
-    setIsInitialized(true);
-    
-    if (!user) {
-      setIsFollowing(false);
-      setIsOwnProfile(false);
-      return;
-    }
-
-    // Check if this is the user's own profile
-    setIsOwnProfile(user.id === profileId);
-
-    // Don't check follow status for own profile
-    if (user.id === profileId) {
-      setIsFollowing(false);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from('followers')
-      .select('id')
-      .eq('follower_id', user.id)
-      .eq('following_id', profileId)
-      .maybeSingle();
-
-    setIsFollowing(!!data && !error);
-  };
+  }, [targetId]);
 
   const handleFollow = async () => {
     if (!currentUser) {
-      toast.error('Please sign in to follow creators');
+      toast.error("Please sign in to follow creators");
       return;
     }
-
-    // Don't allow following yourself
-    if (currentUser.id === profileId) {
-      return;
-    }
+    if (!targetId) return;
+    if (currentUser.id === targetId) return;
 
     setLoading(true);
-
     try {
       if (isFollowing) {
         const { error } = await supabase
-          .from('followers')
+          .from("followers")
           .delete()
-          .eq('follower_id', currentUser.id)
-          .eq('following_id', profileId);
+          .eq("follower_id", currentUser.id)
+          .eq("following_id", targetId);
 
-        if (!error) {
-          setIsFollowing(false);
-          toast.success(username ? `Unfollowed @${username}` : 'Unfollowed successfully');
-        } else {
-          toast.error('Failed to unfollow');
-        }
+        if (error) throw error;
+        setIsFollowing(false);
+        toast.success(username ? `Unfollowed @${username}` : "Unfollowed");
       } else {
+        // upsert avoids duplicate constraint errors
         const { error } = await supabase
-          .from('followers')
-          .insert({
-            follower_id: currentUser.id,
-            following_id: profileId
-          });
+          .from("followers")
+          .upsert(
+            { follower_id: currentUser.id, following_id: targetId },
+            { onConflict: "follower_id,following_id" }
+          );
 
-        if (!error) {
-          setIsFollowing(true);
-          toast.success(username ? `Following @${username}` : 'Following successfully');
-        } else {
-          toast.error('Failed to follow');
-        }
+        if (error) throw error;
+        setIsFollowing(true);
+        toast.success(username ? `Following @${username}` : "Following");
       }
-    } catch (error) {
-      console.error('Follow error:', error);
-      toast.error('An error occurred');
+    } catch (err) {
+      console.error("Follow error:", err);
+      toast.error("Could not update follow state");
     } finally {
       setLoading(false);
     }
   };
 
-  // Don't render until initialized
-  if (!isInitialized) {
-    return null;
-  }
+  // Wait until we’ve resolved the target id at least once
+  if (!isInitialized || (!targetId && currentUser)) return null;
 
-  // Don't show button if user is viewing their own profile
-  if (isOwnProfile) {
-    console.log('FollowButton: Hiding - own profile');
-    return null;
-  }
+  // Hide on own profile
+  if (isOwnProfile) return null;
 
-  // Show follow button for non-logged in users
+  // Show for logged-out users (CTA)
   if (!currentUser) {
     return (
       <Button
         size={size}
         variant={variant || "default"}
         className={className}
-        onClick={() => {
-          toast.error('Please sign in to follow creators');
-        }}
+        onClick={() => toast.error("Please sign in to follow creators")}
       >
-        <UserPlus className={`${size === 'sm' ? 'h-3 w-3' : 'h-4 w-4'} ${size !== 'sm' ? 'mr-1' : ''}`} />
-        {size !== 'sm' ? 'Follow' : ''}
+        <UserPlus className={`${size === "sm" ? "h-3 w-3" : "h-4 w-4"} ${size !== "sm" ? "mr-1" : ""}`} />
+        {size !== "sm" ? "Follow" : ""}
       </Button>
     );
   }
@@ -172,13 +187,13 @@ export function FollowButton({
         <span className="animate-spin">⏳</span>
       ) : isFollowing ? (
         <>
-          <UserMinus className={`${size === 'sm' ? 'h-3 w-3' : 'h-4 w-4'} ${size !== 'sm' ? 'mr-1' : ''}`} />
-          {size !== 'sm' ? 'Following' : ''}
+          <UserMinus className={`${size === "sm" ? "h-3 w-3" : "h-4 w-4"} ${size !== "sm" ? "mr-1" : ""}`} />
+          {size !== "sm" ? "Following" : ""}
         </>
       ) : (
         <>
-          <UserPlus className={`${size === 'sm' ? 'h-3 w-3' : 'h-4 w-4'} ${size !== 'sm' ? 'mr-1' : ''}`} />
-          {size !== 'sm' ? 'Follow' : ''}
+          <UserPlus className={`${size === "sm" ? "h-3 w-3" : "h-4 w-4"} ${size !== "sm" ? "mr-1" : ""}`} />
+          {size !== "sm" ? "Follow" : ""}
         </>
       )}
     </Button>
