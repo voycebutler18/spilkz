@@ -47,7 +47,9 @@ import Admin from "./pages/admin/admin";
 
 // Dashboard
 import CreatorDashboard from "./pages/Dashboard/CreatorDashboard";
-import Favorites from "./pages/Dashboard/Favorites";
+import Favorites from "./pages/Dashboard/Favorites"; // ⚠️ Legacy - consider removing
+import Bookmarks from "./pages/Dashboard/Bookmarks"; // ✅ New bookmarks page
+import Boosts from "./pages/Dashboard/Boosts"; // ✅ New boosts page
 
 // Profiles & videos
 import Profile from "./pages/Profile";
@@ -186,6 +188,12 @@ const App = () => (
 
               {/* Dashboard */}
               <Route path="/dashboard" element={<CreatorDashboard />} />
+              
+              {/* ✅ New Reactions System Routes */}
+              <Route path="/dashboard/bookmarks" element={<Bookmarks />} />
+              <Route path="/dashboard/boosts" element={<Boosts />} />
+              
+              {/* ⚠️ Legacy route - consider removing after migration */}
               <Route path="/dashboard/favorites" element={<Favorites />} />
 
               {/* Profiles & videos */}
