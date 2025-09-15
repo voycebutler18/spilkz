@@ -12,6 +12,7 @@ import {
   Volume2,
   VolumeX,
   TrendingUp,
+  Flame,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
@@ -30,7 +31,7 @@ interface Splik {
   created_at: string;
   trim_start?: number | null;
   trim_end?: number | null;
-  hype_count?: number;
+  hype_count?: number | null;
   profile?: {
     id?: string;
     username?: string | null;
@@ -75,9 +76,11 @@ export default function VideoFeed({ user }: VideoFeedProps) {
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // favorites UI
+  // favorites & hypes UI (persist across refresh)
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [hypedIds, setHypedIds] = useState<Set<string>>(new Set());
+  const [hypingIds, setHypingIds] = useState<Set<string>>(new Set());
 
   // autoplay state
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -97,7 +100,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
   /* ----------------------- use store, not network ----------------------- */
   useEffect(() => {
-    // ensures data (no-op if Splash already filled the store)
     ensureFeed().catch(() => {});
   }, [ensureFeed]);
 
@@ -168,10 +170,44 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     };
   }, [spliks]);
 
-  /* ---------- favorites realtime for this user ---------- */
+  /* ---------- favorites/hypes: initial fetch (fixes persistence) ---------- */
+  useEffect(() => {
+    if (!user?.id || spliks.length === 0) {
+      setSavedIds(new Set());
+      setHypedIds(new Set());
+      return;
+    }
+
+    const ids = spliks.map((s) => s.id);
+
+    (async () => {
+      try {
+        const [{ data: favs }, { data: hypes }] = await Promise.all([
+          supabase
+            .from("favorites")
+            .select("video_id")
+            .eq("user_id", user.id)
+            .in("video_id", ids),
+          supabase
+            .from("hype_reactions")
+            .select("splik_id")
+            .eq("user_id", user.id)
+            .in("splik_id", ids),
+        ]);
+
+        setSavedIds(new Set((favs || []).map((r: any) => String(r.video_id))));
+        setHypedIds(new Set((hypes || []).map((r: any) => String(r.splik_id))));
+      } catch {
+        // non-blocking
+      }
+    })();
+  }, [user?.id, spliks]);
+
+  /* ---------- realtime sync for this user ---------- */
   useEffect(() => {
     if (!user?.id) return;
-    const ch = supabase
+
+    const favCh = supabase
       .channel(`favorites-user-${user.id}`)
       .on(
         "postgres_changes",
@@ -195,8 +231,35 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         }
       )
       .subscribe();
+
+    const hypeCh = supabase
+      .channel(`hype-user-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "hype_reactions", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const sid = (payload.new as any)?.splik_id;
+          if (sid) setHypedIds((prev) => new Set(prev).add(String(sid)));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "hype_reactions", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const sid = (payload.old as any)?.splik_id;
+          if (sid)
+            setHypedIds((prev) => {
+              const ns = new Set(prev);
+              ns.delete(String(sid));
+              return ns;
+            });
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(ch);
+      supabase.removeChannel(favCh);
+      supabase.removeChannel(hypeCh);
     };
   }, [user?.id]);
 
@@ -213,7 +276,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     video.preload = "metadata";
     video.muted = true;
     video.controls = false;
-    video.loop = true; // whole-asset loop (no seek flashes)
+    video.loop = true;
     video.removeAttribute("controls");
     video.oncontextmenu = (e) => e.preventDefault();
 
@@ -224,14 +287,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         const t = startAt ? Math.max(0.01, startAt) : 0.01;
         try {
           // @ts-ignore
-          if (typeof video.fastSeek === "function") video.fastSeek(t);
+          if (typeof (video as any).fastSeek === "function") (video as any).fastSeek(t);
           else video.currentTime = t;
         } catch {}
       },
       { once: true }
     );
 
-    // Hide the poster overlay only after frames are actually rendering
     video.addEventListener(
       "playing",
       () => {
@@ -281,14 +343,12 @@ export default function VideoFeed({ user }: VideoFeedProps) {
       const t = startAt ? Math.max(0.01, startAt) : 0.01;
       try {
         // @ts-ignore
-        if (typeof next.fastSeek === "function") next.fastSeek(t);
+        if (typeof (next as any).fastSeek === "function") (next as any).fastSeek(t);
         else next.currentTime = t;
       } catch {}
 
-      // start the new one FIRST
       await next.play();
 
-      // then pause the previous one
       if (activeRef.current && activeRef.current !== next && !activeRef.current.paused) {
         activeRef.current.pause();
       }
@@ -375,7 +435,27 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     setMuted((m) => ({ ...m, [i]: newMutedState }));
   };
 
-  // favorites: optimistic + realtime-backed
+  /* ---------------- Share handler (Web Share API w/ fallback) ---------------- */
+  const handleShare = async (s: Splik) => {
+    const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
+    const navAny = navigator as any;
+    try {
+      if (navAny.share) {
+        await navAny.share({
+          title: s.title || "Splikz",
+          text: s.description || "Check this video on Splikz",
+          url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast({ title: "Link copied!" });
+      }
+    } catch {
+      // user canceled or not available — no toast needed
+    }
+  };
+
+  /* ---------------- actions: Save + Hype ---------------- */
   const toggleFavorite = async (videoId: string) => {
     if (!user?.id) {
       toast({
@@ -421,6 +501,53 @@ export default function VideoFeed({ user }: VideoFeedProps) {
     }
   };
 
+  const toggleHype = async (splikId: string) => {
+    if (!user?.id) {
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to hype videos",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (hypingIds.has(splikId)) return;
+
+    setHypingIds((s) => new Set(s).add(splikId));
+    const currentlyHyped = hypedIds.has(splikId);
+
+    setHypedIds((prev) => {
+      const ns = new Set(prev);
+      currentlyHyped ? ns.delete(splikId) : ns.add(splikId);
+      return ns;
+    });
+
+    try {
+      if (currentlyHyped) {
+        await supabase
+          .from("hype_reactions")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("splik_id", splikId);
+      } else {
+        await supabase.from("hype_reactions").insert({ user_id: user.id, splik_id: splikId, amount: 1 });
+      }
+    } catch {
+      // revert on error
+      setHypedIds((prev) => {
+        const ns = new Set(prev);
+        currentlyHyped ? ns.add(splikId) : ns.delete(splikId);
+        return ns;
+      });
+      toast({ title: "Error", description: "Failed to update hype", variant: "destructive" });
+    } finally {
+      setHypingIds((s) => {
+        const ns = new Set(s);
+        ns.delete(splikId);
+        return ns;
+      });
+    }
+  };
+
   /* ------------------------------ UI ------------------------------ */
   if (loading && spliks.length === 0) {
     return (
@@ -428,7 +555,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
       </div>
     );
-    }
+  }
 
   // Attach src only for the active card and its neighbor.
   const shouldAttachSrc = (i: number) => {
@@ -471,11 +598,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
       <div
         ref={containerRef}
-        className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background pb-[calc(env(safe-area-inset-bottom)+88px)]"
+        className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
       >
         {spliks.map((s, i) => {
           const isSaved = savedIds.has(s.id);
           const saving = savingIds.has(s.id);
+          const isHyped = hypedIds.has(s.id);
+          const hyping = hypingIds.has(s.id);
           const isCreator = user?.id === s.user_id;
 
           const attach = shouldAttachSrc(i);
@@ -487,7 +616,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
               data-index={i}
               className="snap-start min-h-[100svh] w-full flex items-center justify-center"
             >
-              <Card className="border-0 shadow-lg w-full max-w-lg mx-auto overflow-visible md:overflow-hidden">
+              <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
                 {/* header */}
                 <div className="flex items-center justify-between p-3 border-b">
                   <Link
@@ -511,7 +640,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
                 {/* video container */}
                 <div className="relative bg-black aspect-[9/16] max-h-[600px]">
-                  {/* Poster overlay (stays until first frame is PLAYING) */}
                   {s.thumbnail_url && (
                     <img
                       src={s.thumbnail_url}
@@ -528,7 +656,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                       videoRefs.current[i] = el;
                       if (el) setupVideo(el, i);
                     }}
-                    // Only attach src for active + neighbor to avoid extra work on mobile
                     src={attach ? s.video_url : undefined}
                     poster={undefined}
                     className="w-full h-full object-cover"
@@ -548,7 +675,17 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                     style={{ WebkitTapHighlightColor: "transparent" }}
                   />
 
-                  {/* Mute indicator */}
+                  {/* MOBILE share chip in the top-right (replaces bottom share) */}
+                  <button
+                    onClick={() => handleShare(s)}
+                    className="md:hidden absolute top-3 right-3 z-40 rounded-full px-3 py-1.5 bg-black/70 text-white text-sm font-medium
+                               border border-white/20 shadow-lg active:scale-95"
+                    aria-label="Share"
+                  >
+                    Share
+                  </button>
+
+                  {/* Mute indicator (bottom-right) */}
                   <div className="absolute bottom-3 right-3 bg-black/60 rounded-full p-2 z-40 pointer-events-none">
                     {muted[i] ? (
                       <VolumeX className="h-4 w-4 text-white" />
@@ -568,44 +705,68 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 </div>
 
                 {/* actions */}
-                <div className="p-3 pr-[calc(env(safe-area-inset-right)+8px)] space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                    {/* Promote — only creator sees it */}
-                    {isCreator && (
+                <div className="p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Promote — only creator sees it */}
+                      {isCreator && (
+                        <Button
+                          size="sm"
+                          className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                          onClick={() => navigate(`/promote/${s.id}`)}
+                          title="Promote this video"
+                        >
+                          <TrendingUp className="h-4 w-4" />
+                          Promote
+                        </Button>
+                      )}
+
+                      {/* Hype */}
                       <Button
                         size="sm"
-                        className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shrink-0"
-                        onClick={() => navigate(`/promote/${s.id}`)}
-                        title="Promote this video"
+                        variant={isHyped ? "default" : "outline"}
+                        onClick={() => toggleHype(s.id)}
+                        disabled={hyping}
+                        className={isHyped ? "bg-orange-500 hover:bg-orange-600 text-white gap-1" : "gap-1"}
+                        aria-pressed={isHyped}
+                        title="Hype"
                       >
-                        <TrendingUp className="h-4 w-4" />
-                        Promote
+                        <Flame className={isHyped ? "h-4 w-4 text-white" : "h-4 w-4"} />
+                        <span>{s.hype_count ?? 0}</span>
                       </Button>
-                    )}
 
-                    {/* Share (icon) */}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
-                        navigator.clipboard.writeText(url);
-                        toast({ title: "Link copied!" });
-                      }}
-                      className="hover:text-green-500 shrink-0"
-                      title="Share"
-                    >
-                      <Share2 className="h-6 w-6" />
-                    </Button>
+                      {/* Desktop/Tablet Share button (hidden on mobile) */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => handleShare(s)}
+                        className="hidden md:inline-flex hover:text-green-500"
+                        title="Share"
+                      >
+                        <Share2 className="h-6 w-6" />
+                      </Button>
+                    </div>
 
-                    {/* Send a note */}
-                    <Button
-                      asChild
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      title="Send a note to the creator"
-                    >
+                    {/* Save / Saved */}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => toggleFavorite(s.id)}
+                        disabled={saving}
+                        className={isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"}
+                        aria-pressed={isSaved}
+                        aria-label={isSaved ? "Saved" : "Save"}
+                        title={isSaved ? "Saved" : "Save"}
+                      >
+                        {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Send a note */}
+                  <div className="pt-1">
+                    <Button asChild variant="outline" size="sm" className="gap-2">
                       <Link
                         to={`/notes?to=${s.user_id}&msg=${encodeURIComponent(
                           `About your video "${s.title || ""}": `
@@ -614,26 +775,6 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                         Send a note
                       </Link>
                     </Button>
-
-                    {/* Save / Saved (moves to the right on wide screens) */}
-                    <div className="ml-auto w-full sm:w-auto flex justify-end">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => toggleFavorite(s.id)}
-                        disabled={saving}
-                        className={
-                          isSaved
-                            ? "text-yellow-400 hover:text-yellow-500 shrink-0"
-                            : "hover:text-yellow-500 shrink-0"
-                        }
-                        aria-pressed={isSaved}
-                        aria-label={isSaved ? "Saved" : "Save"}
-                        title={isSaved ? "Saved" : "Save"}
-                      >
-                        {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
-                      </Button>
-                    </div>
                   </div>
                 </div>
               </Card>
