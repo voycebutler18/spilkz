@@ -633,7 +633,7 @@ export default function Food() {
 
   /* ======================= LUXURY UI ======================= */
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-visible">
       {/* Luxury Background Elements */}
       <div className="absolute inset-0">
         <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-300 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
@@ -649,9 +649,10 @@ export default function Food() {
 
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-white/5 border-b border-white/10 shadow-2xl">
-        <div className="mx-auto max-w-4xl px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+        <div className="mx-auto max-w-4xl px-6 py-4 pr-[calc(env(safe-area-inset-right)+8px)]">
+          {/* FIX: allow wrapping so the pill never gets clipped on mobile */}
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-4 min-w-0">
               <div className="relative">
                 <div className="absolute inset-0 bg-gradient-to-r from-yellow-400 via-yellow-500 to-orange-500 rounded-2xl blur-lg opacity-60"></div>
                 <div className="relative rounded-2xl bg-gradient-to-r from-yellow-400 via-yellow-500 to-orange-500 p-3 shadow-2xl transform hover:scale-105 transition-all duration-300">
@@ -673,16 +674,19 @@ export default function Food() {
               </div>
             </div>
 
-            <Button
-              onClick={openNearby}
-              className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold px-6 py-3 rounded-xl shadow-2xl transform hover:scale-105 transition-all duration-300"
-            >
-              <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-              <div className="relative flex items-center gap-2">
-                <MapPin className="h-4 w-4" />
-                <span>Find Local Restaurants</span>
-              </div>
-            </Button>
+            {/* FIX: separate wrapper with safe-area padding to prevent right-edge clipping on iOS */}
+            <div className="shrink-0">
+              <Button
+                onClick={openNearby}
+                className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold px-6 py-3 rounded-xl shadow-2xl transform hover:scale-105 transition-all duration-300"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                <div className="relative flex items-center gap-2">
+                  <MapPin className="h-4 w-4" />
+                  <span className="whitespace-nowrap">Find Local Restaurants</span>
+                </div>
+              </Button>
+            </div>
           </div>
         </div>
       </div>
