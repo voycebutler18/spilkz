@@ -428,7 +428,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
       </div>
     );
-  }
+    }
 
   // Attach src only for the active card and its neighbor.
   const shouldAttachSrc = (i: number) => {
@@ -471,8 +471,7 @@ export default function VideoFeed({ user }: VideoFeedProps) {
 
       <div
         ref={containerRef}
-        className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background"
-                   pb-[calc(88px+env(safe-area-inset-bottom))] md:pb-0"
+        className="h-[100svh] overflow-y-auto snap-y snap-mandatory scroll-smooth bg-background pb-[calc(env(safe-area-inset-bottom)+88px)]"
       >
         {spliks.map((s, i) => {
           const isSaved = savedIds.has(s.id);
@@ -482,16 +481,13 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const attach = shouldAttachSrc(i);
           const preloadValue = attach ? "metadata" : "none";
 
-          // creator id for notes link
-          const creatorId = s.profile?.id || s.user_id;
-
           return (
             <section
               key={`${orderEpoch}-${i}-${s.id}`}
               data-index={i}
               className="snap-start min-h-[100svh] w-full flex items-center justify-center"
             >
-              <Card className="overflow-hidden border-0 shadow-lg w-full max-w-lg mx-auto">
+              <Card className="border-0 shadow-lg w-full max-w-lg mx-auto overflow-visible md:overflow-hidden">
                 {/* header */}
                 <div className="flex items-center justify-between p-3 border-b">
                   <Link
@@ -572,67 +568,72 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                 </div>
 
                 {/* actions */}
-                <div className="p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {/* Promote — only creator sees it */}
-                      {isCreator && (
-                        <Button
-                          size="sm"
-                          className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
-                          onClick={() => navigate(`/promote/${s.id}`)}
-                          title="Promote this video"
-                        >
-                          <TrendingUp className="h-4 w-4" />
-                          Promote
-                        </Button>
-                      )}
-
-                      {/* Send a note */}
-                      <Button asChild variant="outline" size="sm">
-                        <Link
-                          to={`/notes?to=${encodeURIComponent(
-                            String(creatorId)
-                          )}&msg=${encodeURIComponent(
-                            `About your video "${s.title || ""}": `
-                          )}`}
-                          title="Send a note to the creator"
-                        >
-                          Send a note
-                        </Link>
-                      </Button>
-
-                      {/* Share */}
+                <div className="p-3 pr-[calc(env(safe-area-inset-right)+8px)] space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                    {/* Promote — only creator sees it */}
+                    {isCreator && (
                       <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => {
-                          const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
-                          navigator.clipboard.writeText(url);
-                          toast({ title: "Link copied!" });
-                        }}
-                        className="hover:text-green-500"
-                        title="Share"
+                        size="sm"
+                        className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white shrink-0"
+                        onClick={() => navigate(`/promote/${s.id}`)}
+                        title="Promote this video"
                       >
-                        <Share2 className="h-6 w-6" />
+                        <TrendingUp className="h-4 w-4" />
+                        Promote
                       </Button>
-                    </div>
+                    )}
 
-                    {/* Save / Saved */}
+                    {/* Share (icon) */}
                     <Button
                       size="icon"
                       variant="ghost"
-                      onClick={() => toggleFavorite(s.id)}
-                      disabled={saving}
-                      className={
-                        isSaved ? "text-yellow-400 hover:text-yellow-500" : "hover:text-yellow-500"
-                      }
-                      aria-pressed={isSaved}
-                      aria-label={isSaved ? "Saved" : "Save"}
-                      title={isSaved ? "Saved" : "Save"}
+                      onClick={() => {
+                        const url = `${window.location.origin.replace(/\/$/, "")}/splik/${s.id}`;
+                        navigator.clipboard.writeText(url);
+                        toast({ title: "Link copied!" });
+                      }}
+                      className="hover:text-green-500 shrink-0"
+                      title="Share"
                     >
-                      {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                      <Share2 className="h-6 w-6" />
                     </Button>
+
+                    {/* Send a note */}
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      title="Send a note to the creator"
+                    >
+                      <Link
+                        to={`/notes?to=${s.user_id}&msg=${encodeURIComponent(
+                          `About your video "${s.title || ""}": `
+                        )}`}
+                      >
+                        Send a note
+                      </Link>
+                    </Button>
+
+                    {/* Save / Saved (moves to the right on wide screens) */}
+                    <div className="ml-auto w-full sm:w-auto flex justify-end">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => toggleFavorite(s.id)}
+                        disabled={saving}
+                        className={
+                          isSaved
+                            ? "text-yellow-400 hover:text-yellow-500 shrink-0"
+                            : "hover:text-yellow-500 shrink-0"
+                        }
+                        aria-pressed={isSaved}
+                        aria-label={isSaved ? "Saved" : "Save"}
+                        title={isSaved ? "Saved" : "Save"}
+                      >
+                        {isSaved ? <BookmarkCheck className="h-6 w-6" /> : <Bookmark className="h-6 w-6" />}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </Card>
