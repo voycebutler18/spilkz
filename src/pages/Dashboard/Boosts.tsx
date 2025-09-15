@@ -1,6 +1,6 @@
 // src/pages/Dashboard/Boosts.tsx
 import { useState, useEffect } from "react";
-import { useSupabaseClient, useUser } from "@supabase/auth-helpers-react";
+import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/types/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,13 +33,28 @@ type BoostedSplik = {
 };
 
 export default function BoostsPage() {
-  const supabase = useSupabaseClient<Supabase>();
-  const user = useUser();
+  const [user, setUser] = useState<any>(null);
   const [boosts, setBoosts] = useState<BoostedSplik[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredBoosts, setFilteredBoosts] = useState<BoostedSplik[]>([]);
   const [activeTab, setActiveTab] = useState("recent");
+
+  // Get current user
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    getCurrentUser();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (user) {
