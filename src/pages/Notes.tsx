@@ -9,14 +9,14 @@ import { toast } from "sonner";
 import { Send, Trash2 } from "lucide-react";
 
 /**
- * This page assumes you have:
- *   - table public.notes(id, sender_id, recipient_id, body, in_reply_to, read_at, deleted_at, created_at)
- *   - view  public.notes_enriched with sender_* fields from profiles
- * RLS should allow:
- *   - SELECT:   sender_id = auth.uid() OR recipient_id = auth.uid()
- *   - INSERT:   sender_id = auth.uid()
- *   - UPDATE:   recipient can set read_at for their notes
- *   - DELETE:   recipient can DELETE notes they’ve read
+ * Requires:
+ * - table public.notes(id, sender_id, recipient_id, body, in_reply_to, read_at, deleted_at, created_at)
+ * - view  public.notes_enriched with sender_* fields from profiles
+ * RLS idea:
+ *   SELECT: sender_id = auth.uid() OR recipient_id = auth.uid()
+ *   INSERT: sender_id = auth.uid()
+ *   UPDATE: recipient can set read_at for their notes
+ *   DELETE: recipient can delete their read notes (we hard-delete on leaving page)
  */
 
 type Profile = {
@@ -58,7 +58,7 @@ export default function NotesPage() {
   const [replying, setReplying] = useState<Record<string, boolean>>({});
   const [replyText, setReplyText] = useState<Record<string, string>>({});
 
-  // keep track of notes we marked read this session (to hard-delete on leave)
+  // track notes that were unread -> we marked read this session
   const readThisSession = useRef<Set<string>>(new Set());
 
   // ---------- auth ----------
@@ -76,23 +76,24 @@ export default function NotesPage() {
       setMe(data.user?.id ?? null);
     })();
 
-    const sub = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setMe(session?.user?.id ?? null);
     });
 
     return () => {
       mounted = false;
-      sub.data.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, []);
 
-  // ---------- search creators to send a note ----------
+  // ---------- search creators ----------
   useEffect(() => {
     if (!query.trim()) {
       setOptions([]);
       return;
     }
     const controller = new AbortController();
+
     const run = async () => {
       setSearching(true);
       const { data, error } = await supabase
@@ -100,12 +101,14 @@ export default function NotesPage() {
         .select("id, username, display_name, avatar_url")
         .ilike("username", `%${query.trim()}%`)
         .limit(8);
+
       if (!controller.signal.aborted) {
         if (error) console.error(error);
         setOptions((data as Profile[]) ?? []);
         setSearching(false);
       }
     };
+
     const t = setTimeout(run, 250);
     return () => {
       controller.abort();
@@ -130,6 +133,7 @@ export default function NotesPage() {
       toast.error("You can’t send a note to yourself");
       return;
     }
+
     setSending(true);
     const { error } = await supabase.from("notes").insert({
       sender_id: me,
@@ -138,6 +142,7 @@ export default function NotesPage() {
       in_reply_to: null,
     });
     setSending(false);
+
     if (error) {
       console.error(error);
       toast.error("Failed to send note");
@@ -153,23 +158,26 @@ export default function NotesPage() {
   const fetchInbox = useCallback(async () => {
     if (!me) return;
     setLoadingInbox(true);
+
+    // The view 'notes_enriched' does not include deleted_at, so do not filter on it here
     const { data, error } = await supabase
       .from("notes_enriched")
       .select("*")
       .eq("recipient_id", me)
-      .is("deleted_at", null)
       .order("created_at", { ascending: false });
 
     setLoadingInbox(false);
+
     if (error) {
       console.error(error);
       toast.error("Failed to load notes");
       return;
     }
+
     const rows = (data as NoteRow[]) ?? [];
     setInbox(rows);
 
-    // mark unread as read immediately (so they will disappear on leave)
+    // Mark unread as read immediately (so they get hard-deleted when leaving)
     const unread = rows.filter((n) => !n.read_at);
     if (unread.length) {
       const ids = unread.map((n) => n.id);
@@ -177,15 +185,13 @@ export default function NotesPage() {
         .from("notes")
         .update({ read_at: new Date().toISOString() })
         .in("id", ids)
-        .eq("recipient_id", me)
-        .is("deleted_at", null);
+        .eq("recipient_id", me);
 
       if (!updErr) {
         unread.forEach((n) => readThisSession.current.add(n.id));
         // reflect read_at in UI immediately
-        setInbox((cur) =>
-          cur.map((n) => (ids.includes(n.id) ? { ...n, read_at: new Date().toISOString() } : n)),
-        );
+        const now = new Date().toISOString();
+        setInbox((cur) => cur.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)));
       }
     }
   }, [me]);
@@ -202,7 +208,7 @@ export default function NotesPage() {
       .on(
         "postgres_changes",
         { schema: "public", table: "notes", event: "*" },
-        () => fetchInbox(),
+        () => fetchInbox()
       )
       .subscribe();
 
@@ -217,32 +223,31 @@ export default function NotesPage() {
     const ids = Array.from(readThisSession.current);
     if (!ids.length) return;
 
-    // hard delete the notes we read this session
     await supabase.from("notes").delete().in("id", ids).eq("recipient_id", me);
     readThisSession.current.clear();
   }, [me]);
 
   useEffect(() => {
-    const onHide = () => deleteReadNow();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        // user navigated away / switched tab — purge read notes from this session
+        deleteReadNow();
+      }
+    };
     const onUnload = () => deleteReadNow();
 
-    document.addEventListener("visibilitychange", onHide);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("beforeunload", onUnload);
 
     return () => {
-      document.removeEventListener("visibilitychange", onHide);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("beforeunload", onUnload);
     };
   }, [deleteReadNow]);
 
   // UI helpers
   const initial = useCallback((p?: Profile | null, emailFallback?: string | null) => {
-    return (
-      p?.display_name?.[0] ||
-      p?.username?.[0] ||
-      emailFallback?.[0] ||
-      "U"
-    ).toUpperCase();
+    return (p?.display_name?.[0] || p?.username?.[0] || emailFallback?.[0] || "U").toUpperCase();
   }, []);
 
   const hasInbox = inbox.length > 0;
@@ -250,11 +255,11 @@ export default function NotesPage() {
   const disclaimer = useMemo(
     () => (
       <div className="rounded-md border border-yellow-300/40 bg-yellow-500/10 p-3 text-sm">
-        <strong>Heads up:</strong> Notes disappear after you read them. We
-        permanently delete any notes you’ve read when you leave this page.
+        <strong>Heads up:</strong> Notes disappear after you read them. We permanently
+        delete any notes you’ve read as soon as you leave this page.
       </div>
     ),
-    [],
+    []
   );
 
   if (!me) {
@@ -262,7 +267,11 @@ export default function NotesPage() {
       <div className="mx-auto max-w-3xl p-4">
         {disclaimer}
         <div className="mt-6 text-sm">
-          Please <a className="underline" href="/login">log in</a> to send and read notes.
+          Please{" "}
+          <a className="underline" href="/login">
+            log in
+          </a>{" "}
+          to send and read notes.
         </div>
       </div>
     );
@@ -270,12 +279,14 @@ export default function NotesPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-4 space-y-8">
+      {/* Composer */}
       <div>
         <h1 className="text-xl font-semibold">Send a Note</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Pick a creator and send a short, one-off note. When they open it, it’s marked read and will
           be deleted once they leave their notes page. They can reply directly below your note.
         </p>
+
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(260px,320px)_1fr_auto]">
           <div className="relative">
             <Input
@@ -327,7 +338,11 @@ export default function NotesPage() {
           <Textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder={toUser ? `Write a note to ${(toUser.display_name || toUser.username || "creator")}…` : "Choose a creator first…"}
+            placeholder={
+              toUser
+                ? `Write a note to ${toUser.display_name || toUser.username || "creator"}…`
+                : "Choose a creator first…"
+            }
             className="min-h-[44px]"
           />
 
@@ -340,16 +355,12 @@ export default function NotesPage() {
         <div className="mt-4">{disclaimer}</div>
       </div>
 
+      {/* Inbox */}
       <div>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Your Note Inbox</h2>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchInbox()}
-              disabled={loadingInbox}
-            >
+            <Button variant="outline" size="sm" onClick={fetchInbox} disabled={loadingInbox}>
               Refresh
             </Button>
             <Button variant="destructive" size="sm" onClick={deleteReadNow}>
@@ -372,8 +383,11 @@ export default function NotesPage() {
                 <div className="flex items-start gap-3">
                   <Avatar className="h-9 w-9">
                     {n.sender_avatar_url ? <AvatarImage src={n.sender_avatar_url} /> : null}
-                    <AvatarFallback>{(n.sender_display_name || n.sender_username || "U")[0]}</AvatarFallback>
+                    <AvatarFallback>
+                      {(n.sender_display_name || n.sender_username || "U")[0].toUpperCase()}
+                    </AvatarFallback>
                   </Avatar>
+
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <a
@@ -390,6 +404,7 @@ export default function NotesPage() {
                         {new Date(n.created_at).toLocaleString()}
                       </span>
                     </div>
+
                     <div className="mt-1 whitespace-pre-wrap text-sm">{n.body}</div>
 
                     {/* Reply box */}
@@ -398,9 +413,7 @@ export default function NotesPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() =>
-                            setReplying((s) => ({ ...s, [n.id]: true }))
-                          }
+                          onClick={() => setReplying((s) => ({ ...s, [n.id]: true }))}
                         >
                           Reply
                         </Button>
@@ -441,9 +454,7 @@ export default function NotesPage() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() =>
-                              setReplying((s) => ({ ...s, [n.id]: false }))
-                            }
+                            onClick={() => setReplying((s) => ({ ...s, [n.id]: false }))}
                           >
                             Cancel
                           </Button>
@@ -452,14 +463,17 @@ export default function NotesPage() {
                     </div>
                   </div>
                 </div>
-                {/* subtle “read” badge, helpful for debugging */}
+
+                {/* subtle “read” badge */}
                 <div
                   className={cn(
                     "mt-2 text-xs",
-                    n.read_at ? "text-emerald-600" : "text-muted-foreground",
+                    n.read_at ? "text-emerald-600" : "text-muted-foreground"
                   )}
                 >
-                  {n.read_at ? "Read (will be deleted when you leave this page)" : "Unread"}
+                  {n.read_at
+                    ? "Read (will be deleted when you leave this page)"
+                    : "Unread"}
                 </div>
               </li>
             ))}
