@@ -32,7 +32,7 @@ type Splik = {
   video_url: string | null;
   thumbnail_url?: string | null;
   created_at?: string;
-  hype_count?: number | null; // use precomputed count if present
+  hype_count?: number | null; // optional precomputed count
   mime_type?: string | null;
   profile?: Profile | null;
 };
@@ -46,7 +46,7 @@ type Props = {
   onReact?: () => void;
   onShare?: () => void;
 
-  /** Optional pre-batched user state (recommended to pass from parent) */
+  /** Optional pre-batched state from the parent */
   initialIsSaved?: boolean;
   initialHasHyped?: boolean;
   initialHypeCount?: number;
@@ -60,7 +60,6 @@ export default function SplikCard({
   shouldLoad = true,
   onPrimaryVisible,
   onShare,
-
   initialIsSaved,
   initialHasHyped,
   initialHypeCount,
@@ -74,7 +73,7 @@ export default function SplikCard({
   const [isMuted, setIsMuted] = React.useState(true);
   const [isPlaying, setIsPlaying] = React.useState(false);
 
-  // 🚀 Instant UI: seed from props or splik row; no queries on mount
+  // Seed UI from props/db row
   const [hypeCount, setHypeCount] = React.useState<number>(
     initialHypeCount ?? splik.hype_count ?? 0
   );
@@ -85,14 +84,14 @@ export default function SplikCard({
     initialIsSaved ?? false
   );
 
-  // Keep in sync if parent updates (e.g., after batch fetch)
+  // Keep in sync if parent updates
   React.useEffect(() => {
     setHypeCount(initialHypeCount ?? splik.hype_count ?? 0);
   }, [initialHypeCount, splik.hype_count]);
   React.useEffect(() => setHasHyped(initialHasHyped ?? false), [initialHasHyped]);
   React.useEffect(() => setIsSaved(initialIsSaved ?? false), [initialIsSaved]);
 
-  // Local profile fallback (fetch only creator profile if missing)
+  // Local profile fallback (fetch only if missing)
   const [loadedProfile, setLoadedProfile] = React.useState<Profile | null>(null);
 
   const hasVideo =
@@ -117,7 +116,7 @@ export default function SplikCard({
     };
   }, []);
 
-  /* ---------- profile hydrate if missing ---------- */
+  /* ---------- hydrate profile if missing ---------- */
   React.useEffect(() => {
     if (splik.profile?.username || splik.profile?.display_name) return;
     let cancelled = false;
@@ -134,7 +133,57 @@ export default function SplikCard({
     };
   }, [splik.user_id, splik.profile?.username, splik.profile?.display_name]);
 
-  /* ---------- autoplay/visibility for video posts ---------- */
+  /* ---------- ensure saved/hype state (if parent didn't pass it) ---------- */
+  React.useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!user?.id) return;
+
+      try {
+        if (initialIsSaved === undefined) {
+          const { count } = await supabase
+            .from("favorites")
+            .select("id", { head: true, count: "exact" })
+            .eq("user_id", user.id)
+            .eq("splik_id", splik.id);
+          if (!cancelled) setIsSaved((count ?? 0) > 0);
+        }
+
+        if (initialHasHyped === undefined) {
+          const { data: hypeRow } = await supabase
+            .from("hype_reactions")
+            .select("id")
+            .eq("user_id", user.id)
+            .eq("splik_id", splik.id)
+            .maybeSingle();
+          if (!cancelled) setHasHyped(!!hypeRow);
+        }
+
+        if (initialHypeCount === undefined && splik.hype_count == null) {
+          const { count } = await supabase
+            .from("hype_reactions")
+            .select("id", { head: true, count: "exact" })
+            .eq("splik_id", splik.id);
+          if (!cancelled) setHypeCount(count ?? 0);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    user?.id,
+    splik.id,
+    initialIsSaved,
+    initialHasHyped,
+    initialHypeCount,
+    splik.hype_count,
+  ]);
+
+  /* ---------- autoplay / visibility for video posts ---------- */
   React.useEffect(() => {
     if (!hasVideo) return;
     const el = cardRef.current;
@@ -229,7 +278,7 @@ export default function SplikCard({
     throw new Error("auth_required");
   };
 
-  /* ---------- actions (optimistic, single request) ---------- */
+  /* ---------- actions (optimistic) ---------- */
   const toggleHype = async () => {
     try {
       const u = await ensureAuth();
@@ -263,13 +312,16 @@ export default function SplikCard({
         await supabase
           .from("favorites")
           .delete()
-          .eq("video_id", splik.id)
+          .eq("splik_id", splik.id)
           .eq("user_id", u.id);
       } else {
         setIsSaved(true);
         await supabase
           .from("favorites")
-          .insert({ video_id: splik.id, user_id: u.id });
+          .insert([{ splik_id: splik.id, user_id: u.id }], {
+            onConflict: "user_id,splik_id",
+            ignoreDuplicates: true,
+          });
       }
     } catch {
       /* ignore */
@@ -361,6 +413,7 @@ export default function SplikCard({
             </button>
           </>
         ) : (
+          // Photo-only
           <img
             src={splik.thumbnail_url || ""}
             alt={splik.title || "Photo"}
@@ -397,9 +450,10 @@ export default function SplikCard({
         </div>
       </div>
 
-      {/* Actions (instant, no initial fetch) */}
+      {/* Actions */}
       <div className="px-4 pb-4 pt-3">
         <div className="flex items-center gap-2">
+          {/* Follow only if NOT creator */}
           {!isCreator && (
             <FollowButton
               profileId={splik.user_id}
@@ -409,6 +463,7 @@ export default function SplikCard({
             />
           )}
 
+          {/* Hype */}
           <Button
             variant={hasHyped ? "default" : "outline"}
             size="sm"
@@ -423,6 +478,7 @@ export default function SplikCard({
             {hypeCount}
           </Button>
 
+          {/* Save */}
           <Button
             variant="outline"
             size="sm"
