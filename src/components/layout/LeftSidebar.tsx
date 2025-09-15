@@ -29,7 +29,6 @@ const LeftSidebar: React.FC = () => {
     };
   }, []);
 
-  // helper for active highlight
   const isActive = (path: string) =>
     location.pathname === path || location.pathname.startsWith(path + "/");
 
@@ -53,7 +52,6 @@ const LeftSidebar: React.FC = () => {
         </div>
 
         <nav className="mt-3 space-y-1">
-          {/* Home */}
           <Link
             to="/home"
             className={cn(
@@ -63,8 +61,6 @@ const LeftSidebar: React.FC = () => {
           >
             Home
           </Link>
-
-          {/* Thoughts link removed */}
 
           <Link
             to="/food"
@@ -76,7 +72,6 @@ const LeftSidebar: React.FC = () => {
             Food
           </Link>
 
-          {/* Daily Prayers */}
           <Link
             to="/prayers"
             className={cn(
@@ -87,7 +82,7 @@ const LeftSidebar: React.FC = () => {
             🙏 Daily Prayers
           </Link>
 
-          {/* Splikz Dating (coming soon) — desktop/tablet only */}
+          {/* Splikz Dating (coming soon) */}
           <div
             className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 hover:bg-white/5 cursor-not-allowed select-none"
             aria-disabled="true"
@@ -144,15 +139,7 @@ const LeftSidebar: React.FC = () => {
               >
                 My Favorites
               </Link>
-              <Link
-                to="/messages"
-                className={cn(
-                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-                  isActive("/messages") && "bg-white/10 font-medium"
-                )}
-              >
-                Messages
-              </Link>
+              {/* Messages link removed */}
             </nav>
           </>
         )}
