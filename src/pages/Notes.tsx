@@ -1,4 +1,6 @@
+// src/pages/Notes.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,14 +11,15 @@ import { toast } from "sonner";
 import { Send, Trash2 } from "lucide-react";
 
 /**
- * Requires:
- * - table public.notes(id, sender_id, recipient_id, body, in_reply_to, read_at, deleted_at, created_at)
- * - view  public.notes_enriched with sender_* fields from profiles
+ * Requires (DB):
+ *  - table public.notes(id, sender_id, recipient_id, body, in_reply_to, read_at, deleted_at, created_at)
+ *  - view  public.notes_enriched with sender_* fields from profiles
+ *
  * RLS idea:
- *   SELECT: sender_id = auth.uid() OR recipient_id = auth.uid()
- *   INSERT: sender_id = auth.uid()
- *   UPDATE: recipient can set read_at for their notes
- *   DELETE: recipient can delete their read notes (we hard-delete on leaving page)
+ *  SELECT: sender_id = auth.uid() OR recipient_id = auth.uid()
+ *  INSERT: sender_id = auth.uid()
+ *  UPDATE: recipient can set read_at for their notes
+ *  DELETE: recipient can delete their read notes (we hard-delete on leaving page)
  */
 
 type Profile = {
@@ -42,6 +45,8 @@ type NoteRow = {
 };
 
 export default function NotesPage() {
+  const [searchParams] = useSearchParams();
+
   const [me, setMe] = useState<string | null>(null);
 
   // composer state
@@ -76,15 +81,44 @@ export default function NotesPage() {
       setMe(data.user?.id ?? null);
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_e, session) => {
       setMe(session?.user?.id ?? null);
     });
 
     return () => {
       mounted = false;
-      sub?.subscription?.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
+
+  // ---------- preselect recipient from query string ----------
+  useEffect(() => {
+    const to = searchParams.get("to");
+    const msg = searchParams.get("msg");
+    if (!to) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .eq("id", to)
+        .maybeSingle();
+
+      if (!cancelled && !error && data) {
+        setToUser(data as Profile);
+        if (msg && !body) setBody(msg);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // ---------- search creators ----------
   useEffect(() => {
@@ -159,7 +193,7 @@ export default function NotesPage() {
     if (!me) return;
     setLoadingInbox(true);
 
-    // The view 'notes_enriched' does not include deleted_at, so do not filter on it here
+    // notes_enriched returns joined sender info; do not filter on deleted_at here
     const { data, error } = await supabase
       .from("notes_enriched")
       .select("*")
@@ -189,9 +223,10 @@ export default function NotesPage() {
 
       if (!updErr) {
         unread.forEach((n) => readThisSession.current.add(n.id));
-        // reflect read_at in UI immediately
         const now = new Date().toISOString();
-        setInbox((cur) => cur.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)));
+        setInbox((cur) =>
+          cur.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)),
+        );
       }
     }
   }, [me]);
@@ -208,7 +243,7 @@ export default function NotesPage() {
       .on(
         "postgres_changes",
         { schema: "public", table: "notes", event: "*" },
-        () => fetchInbox()
+        () => fetchInbox(),
       )
       .subscribe();
 
@@ -230,7 +265,6 @@ export default function NotesPage() {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        // user navigated away / switched tab — purge read notes from this session
         deleteReadNow();
       }
     };
@@ -259,7 +293,7 @@ export default function NotesPage() {
         delete any notes you’ve read as soon as you leave this page.
       </div>
     ),
-    []
+    [],
   );
 
   if (!me) {
@@ -468,7 +502,7 @@ export default function NotesPage() {
                 <div
                   className={cn(
                     "mt-2 text-xs",
-                    n.read_at ? "text-emerald-600" : "text-muted-foreground"
+                    n.read_at ? "text-emerald-600" : "text-muted-foreground",
                   )}
                 >
                   {n.read_at
