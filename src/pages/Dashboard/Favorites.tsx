@@ -1,7 +1,7 @@
 // src/pages/Dashboard/Favorites.tsx
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client"; // ✅ correct client
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Header from "@/components/layout/Header";
@@ -10,39 +10,32 @@ import VideoContainer from "@/components/VideoContainer";
 import { Bookmark, Grid3x3, List, ArrowLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-interface FavoriteRow {
+type Profile = {
+  id: string;
+  username?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+};
+
+type SplikRow = {
   id: string;
   user_id: string;
-  splik_id: string | null; // be defensive in case of legacy rows
-  created_at: string;
-}
-
-interface ProfileLite {
-  id: string;
-  username: string | null;
-  display_name: string | null;
-  avatar_url: string | null;
-}
-
-interface SplikLite {
-  id: string;
-  user_id: string;
-  video_url: string | null;
-  thumbnail_url: string | null;
   title: string | null;
   description: string | null;
-  likes_count?: number | null;
-  views?: number | null;
+  video_url: string | null;
+  thumbnail_url: string | null;
   created_at: string;
-  profile?: ProfileLite;
-}
+  hype_count?: number | null; // cache column we maintain via trigger
+  // optional profile we’ll hydrate
+  profile?: Profile | null;
+};
 
-interface Favorite {
+type Favorite = {
   id: string;
   splik_id: string;
   created_at: string;
-  splik: SplikLite;
-}
+  splik: SplikRow;
+};
 
 const Favorites = () => {
   const navigate = useNavigate();
@@ -52,8 +45,8 @@ const Favorites = () => {
 
   useEffect(() => {
     (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) {
         navigate("/login");
         return;
       }
@@ -66,66 +59,65 @@ const Favorites = () => {
     try {
       setLoading(true);
 
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) return;
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const user = authData.user;
+      if (!user) {
+        setFavorites([]);
+        return;
+      }
 
-      // 1) Get favorites rows for this user
+      // 1) Grab favorites (user_id, splik_id)
       const { data: favRows, error: favErr } = await supabase
         .from("favorites")
-        .select("id,user_id,splik_id,created_at")
-        .eq("user_id", auth.user.id)
+        .select("id, splik_id, created_at")
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
       if (favErr) throw favErr;
-
-      const cleanFavs: FavoriteRow[] = (favRows || []) as FavoriteRow[];
-
-      if (!cleanFavs.length) {
+      const favs = favRows ?? [];
+      if (favs.length === 0) {
         setFavorites([]);
         return;
       }
 
-      // 2) Collect only valid UUIDs (avoid 'undefined' -> 400 error)
-      const splikIds = cleanFavs
-        .map((f) => f.splik_id)
-        .filter((v): v is string => Boolean(v));
-
-      if (splikIds.length === 0) {
-        setFavorites([]);
-        return;
-      }
-
-      // 3) Fetch spliks for those IDs
-      const { data: spliksData, error: spliksErr } = await supabase
+      // 2) Fetch those spliks
+      const splikIds = favs.map((f) => f.splik_id);
+      const { data: spliks, error: spliksErr } = await supabase
         .from("spliks")
-        .select("id,user_id,video_url,thumbnail_url,title,description,likes_count,created_at,views")
+        .select(
+          "id,user_id,title,description,video_url,thumbnail_url,created_at,hype_count"
+        )
         .in("id", splikIds);
 
       if (spliksErr) throw spliksErr;
+      const spliksById: Record<string, SplikRow> = {};
+      (spliks ?? []).forEach((s: any) => (spliksById[s.id] = s));
 
-      // 4) Hydrate creator profiles for display
-      const creatorIds = Array.from(new Set((spliksData || []).map((s: any) => s.user_id)));
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("id,username,display_name,avatar_url")
-        .in("id", creatorIds);
+      // 3) Hydrate minimal profiles for creator badges
+      const creatorIds = Array.from(
+        new Set((spliks ?? []).map((s: any) => s.user_id))
+      );
+      if (creatorIds.length) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("id,username,display_name,avatar_url")
+          .in("id", creatorIds);
+        const byId: Record<string, Profile> = {};
+        (profs ?? []).forEach((p: any) => (byId[p.id] = p));
+        (spliks ?? []).forEach((s: any) => {
+          if (spliksById[s.id]) spliksById[s.id].profile = byId[s.user_id] ?? null;
+        });
+      }
 
-      const byCreator: Record<string, ProfileLite> = {};
-      (profs || []).forEach((p: any) => (byCreator[p.id] = p));
-
-      const bySplik: Record<string, SplikLite> = {};
-      (spliksData || []).forEach((s: any) => {
-        bySplik[s.id] = { ...s, profile: byCreator[s.user_id] || undefined };
-      });
-
-      // 5) Build view models in the same order as favorites list
-      const transformed: Favorite[] = cleanFavs
+      // 4) Build Favorites[]
+      const transformed: Favorite[] = favs
         .map((f) => {
-          const s = f.splik_id ? bySplik[f.splik_id] : undefined;
+          const s = spliksById[f.splik_id];
           if (!s) return null;
           return {
             id: f.id,
-            splik_id: f.splik_id!,
+            splik_id: f.splik_id,
             created_at: f.created_at,
             splik: s,
           };
@@ -133,28 +125,30 @@ const Favorites = () => {
         .filter(Boolean) as Favorite[];
 
       setFavorites(transformed);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error fetching favorites:", err);
       toast.error("Failed to load favorites");
+      setFavorites([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const removeFavorite = async (favoriteId: string) => {
+  const removeFavorite = async (favoriteId: string, splikId: string) => {
     try {
-      const { error } = await supabase.from("favorites").delete().eq("id", favoriteId);
+      const { error } = await supabase
+        .from("favorites")
+        .delete()
+        .match({ id: favoriteId, splik_id: splikId });
       if (error) throw error;
-      // Optimistic UI
-      setFavorites((cur) => cur.filter((f) => f.id !== favoriteId));
       toast.success("Removed from favorites");
+      setFavorites((prev) => prev.filter((f) => f.id !== favoriteId));
     } catch (err) {
       console.error("Error removing from favorites:", err);
       toast.error("Failed to remove from favorites");
     }
   };
 
-  // Open the creator page focused on this video
   const openOnCreator = (fav: Favorite) => {
     const slug = fav.splik.profile?.username || fav.splik.user_id;
     navigate(`/creator/${slug}?video=${fav.splik.id}`);
@@ -215,7 +209,9 @@ const Favorites = () => {
           <Card className="p-12 text-center">
             <Bookmark className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-muted-foreground mb-4">No favorites yet</p>
-            <p className="text-sm text-muted-foreground">Videos you bookmark will appear here</p>
+            <p className="text-sm text-muted-foreground">
+              Videos you bookmark will appear here
+            </p>
             <Button className="mt-4" onClick={() => navigate("/")}>
               Explore Videos
             </Button>
@@ -230,8 +226,8 @@ const Favorites = () => {
               >
                 <div className="relative aspect-[9/16] bg-black">
                   <VideoContainer
-                    src={fav.splik.video_url || ""}
-                    poster={fav.splik.thumbnail_url || undefined}
+                    src={fav.splik.video_url ?? ""}
+                    poster={fav.splik.thumbnail_url ?? ""}
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/60 pointer-events-none" />
@@ -240,22 +236,24 @@ const Favorites = () => {
                       {fav.splik.title || "Untitled"}
                     </p>
                     <p className="text-xs opacity-80">
-                      {(fav.splik.views || 0).toLocaleString()} views
+                      {fav.splik.hype_count ?? 0} hype
                     </p>
                   </div>
                 </div>
                 <CardContent className="p-3">
                   <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {fav.splik.profile?.avatar_url && (
+                    <div className="flex items-center gap-2">
+                      {!!fav.splik.profile?.avatar_url && (
                         <img
                           src={fav.splik.profile.avatar_url}
-                          alt={fav.splik.profile.display_name || "Creator"}
+                          alt={fav.splik.profile.display_name ?? "Creator"}
                           className="w-6 h-6 rounded-full"
                         />
                       )}
                       <span className="text-sm text-muted-foreground truncate">
-                        {fav.splik.profile?.display_name || fav.splik.profile?.username || "Unknown"}
+                        {fav.splik.profile?.display_name ||
+                          fav.splik.profile?.username ||
+                          "Creator"}
                       </span>
                     </div>
                     <Button
@@ -263,8 +261,9 @@ const Favorites = () => {
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
-                        removeFavorite(fav.id);
+                        removeFavorite(fav.id, fav.splik_id);
                       }}
+                      title="Remove from favorites"
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
@@ -284,8 +283,8 @@ const Favorites = () => {
                       onClick={() => openOnCreator(fav)}
                     >
                       <VideoContainer
-                        src={fav.splik.video_url || ""}
-                        poster={fav.splik.thumbnail_url || undefined}
+                        src={fav.splik.video_url ?? ""}
+                        poster={fav.splik.thumbnail_url ?? ""}
                         className="w-full h-full object-cover"
                       />
                     </div>
@@ -300,43 +299,43 @@ const Favorites = () => {
                         {fav.splik.description || "No description"}
                       </p>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>{(fav.splik.views || 0).toLocaleString()} views</span>
-                        <span>{(fav.splik.likes_count || 0).toLocaleString()} likes</span>
+                        <span>{fav.splik.hype_count ?? 0} hype</span>
                         <span>Saved {new Date(fav.created_at).toLocaleDateString()}</span>
                       </div>
                       <div className="flex items-center justify-between mt-3">
                         <div className="flex items-center gap-2">
-                          {fav.splik.profile?.avatar_url && (
+                          {!!fav.splik.profile?.avatar_url && (
                             <img
                               src={fav.splik.profile.avatar_url}
-                              alt={fav.splik.profile.display_name || "Creator"}
+                              alt={fav.splik.profile.display_name ?? "Creator"}
                               className="w-8 h-8 rounded-full"
                             />
                           )}
                           <span className="text-sm">
-                            {fav.splik.profile?.display_name || fav.splik.profile?.username || "Unknown Creator"}
+                            {fav.splik.profile?.display_name ||
+                              fav.splik.profile?.username ||
+                              "Creator"}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openOnCreator(fav)}
-                            className="mr-2"
-                          >
-                            Watch on creator page
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeFavorite(fav.id);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openOnCreator(fav)}
+                          className="mr-2"
+                        >
+                          Watch on creator page
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFavorite(fav.id, fav.splik_id);
+                          }}
+                          title="Remove from favorites"
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       </div>
                     </div>
                   </div>
