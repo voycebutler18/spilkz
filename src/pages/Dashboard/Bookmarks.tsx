@@ -1,6 +1,6 @@
 // src/pages/Dashboard/Bookmarks.tsx
 import { useState, useEffect } from "react";
-import { useSupabaseClient, useUser } from "@supabase/auth-helpers-react";
+import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/types/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,12 +31,27 @@ type BookmarkedSplik = {
 };
 
 export default function BookmarksPage() {
-  const supabase = useSupabaseClient<Supabase>();
-  const user = useUser();
+  const [user, setUser] = useState<any>(null);
   const [bookmarks, setBookmarks] = useState<BookmarkedSplik[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredBookmarks, setFilteredBookmarks] = useState<BookmarkedSplik[]>([]);
+
+  // Get current user
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    getCurrentUser();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (user) {
