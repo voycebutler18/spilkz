@@ -1,4 +1,3 @@
-
 // src/App.tsx
 import NotesPage from "@/pages/Notes";
 import { Toaster } from "@/components/ui/toaster";
@@ -16,7 +15,6 @@ import {
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
-<Route path="/notes" element={<NotesPage />} />
 
 // Pages
 import Splash from "./pages/Splash";
@@ -199,6 +197,9 @@ const App = () => (
 
               {/* ✅ Promote */}
               <Route path="/promote/:splikId" element={<Promote />} />
+
+              {/* ✅ Notes (NoteBox) */}
+              <Route path="/notes" element={<NotesPage />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
