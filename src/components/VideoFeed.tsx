@@ -481,6 +481,9 @@ export default function VideoFeed({ user }: VideoFeedProps) {
           const attach = shouldAttachSrc(i);
           const preloadValue = attach ? "metadata" : "none";
 
+          // creator id for notes link
+          const creatorId = s.profile?.id || s.user_id;
+
           return (
             <section
               key={`${orderEpoch}-${i}-${s.id}`}
@@ -583,6 +586,20 @@ export default function VideoFeed({ user }: VideoFeedProps) {
                           Promote
                         </Button>
                       )}
+
+                      {/* Send a note */}
+                      <Button asChild variant="outline" size="sm">
+                        <Link
+                          to={`/notes?to=${encodeURIComponent(
+                            String(creatorId)
+                          )}&msg=${encodeURIComponent(
+                            `About your video "${s.title || ""}": `
+                          )}`}
+                          title="Send a note to the creator"
+                        >
+                          Send a note
+                        </Link>
+                      </Button>
 
                       {/* Share */}
                       <Button
