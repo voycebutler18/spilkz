@@ -1,5 +1,6 @@
 
 // src/App.tsx
+import NotesPage from "@/pages/Notes";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -15,6 +16,7 @@ import {
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
+<Route path="/notes" element={<NotesPage />} />
 
 // Pages
 import Splash from "./pages/Splash";
