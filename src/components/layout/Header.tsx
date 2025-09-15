@@ -1,13 +1,14 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Home, Upload, Mail } from "lucide-react";
+import { Sparkles, LogOut, Home, Upload, Mail, Heart, Bookmark } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -177,16 +178,47 @@ const Header: React.FC = () => {
                   </Avatar>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuItem asChild>
-                  <Link to={`/profile/${user.id}`}>Profile</Link>
+                  <Link to={`/profile/${user.id}`} className="flex items-center">
+                    Profile
+                  </Link>
                 </DropdownMenuItem>
+                
+                <DropdownMenuSeparator />
+                
+                {/* ✅ New Reactions System Links */}
                 <DropdownMenuItem asChild>
-                  <Link to="/dashboard/favorites">Favorites</Link>
+                  <Link to="/dashboard/bookmarks" className="flex items-center gap-2">
+                    <Bookmark className="h-4 w-4" />
+                    My Bookmarks
+                  </Link>
                 </DropdownMenuItem>
+                
                 <DropdownMenuItem asChild>
-                  <Link to="/dashboard">Creator Dashboard</Link>
+                  <Link to="/dashboard/boosts" className="flex items-center gap-2">
+                    <Heart className="h-4 w-4" />
+                    My Boosts
+                  </Link>
                 </DropdownMenuItem>
+                
+                <DropdownMenuSeparator />
+                
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard" className="flex items-center">
+                    Creator Dashboard
+                  </Link>
+                </DropdownMenuItem>
+                
+                {/* ⚠️ Legacy Favorites Link - Remove after migration */}
+                {/* <DropdownMenuItem asChild>
+                  <Link to="/dashboard/favorites" className="flex items-center text-muted-foreground">
+                    Legacy Favorites
+                  </Link>
+                </DropdownMenuItem> */}
+                
+                <DropdownMenuSeparator />
+                
                 <DropdownMenuItem onClick={handleSignOut}>
                   <LogOut className="mr-2 h-4 w-4" />
                   Sign out
