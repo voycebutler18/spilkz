@@ -11,7 +11,7 @@
     <link rel="canonical" href="https://www.splikz.com/" />
     <meta name="theme-color" content="#7c3aed" />
 
-    <!-- Open Graph (Facebook, iMessage, Discord, etc.) -->
+    <!-- Open Graph -->
     <meta property="og:site_name" content="Splikz" />
     <meta property="og:title" content="Splikz — Share your perfect 3-second moment" />
     <meta property="og:description" content="The fastest way to capture &amp; share 3-second videos. Join Splikz today." />
@@ -34,12 +34,21 @@
     <link rel="icon" type="image/png" href="https://izeheflwfguwinizihmx.supabase.co/storage/v1/object/public/spliks/ChatGPT%20Image%20Sep%205,%202025,%2003_42_11%20AM.png" />
     <link rel="apple-touch-icon" href="https://izeheflwfguwinizihmx.supabase.co/storage/v1/object/public/spliks/ChatGPT%20Image%20Sep%205,%202025,%2003_42_11%20AM.png" />
     <meta name="robots" content="index,follow" />
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=AW-17533845178"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag('js', new Date());
+      gtag('config', 'AW-17533845178');
+    </script>
   </head>
 
   <body>
     <div id="root"></div>
 
-    <!-- IMPORTANT: use the dev entry; Vite will rewrite this to /assets/... in dist -->
+    <!-- Vite entry -->
     <script type="module" src="/src/main.tsx"></script>
     <noscript>You need JavaScript enabled to run Splikz.</noscript>
   </body>
