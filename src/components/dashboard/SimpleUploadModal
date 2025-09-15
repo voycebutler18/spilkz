@@ -1,22 +1,34 @@
 // src/components/dashboard/SimpleUploadModal.tsx
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  Upload, X, Loader2, Film, Image as ImageIcon, Video as VideoIcon,
-  AlertCircle, Info, Utensils,
+  Upload,
+  X,
+  Loader2,
+  Image as ImageIcon,
+  Video as VideoIcon,
+  AlertCircle,
+  Utensils,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
 import { Progress } from "@/components/ui/progress";
 import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
 } from "@/components/ui/select";
 
 interface SimpleUploadModalProps {
@@ -61,41 +73,35 @@ const formatBytes = (bytes: number) => {
 const inferMimeType = (filename: string): string => {
   const ext = filename.split(".").pop()?.toLowerCase();
   switch (ext) {
-    case "mp4": return "video/mp4";
-    case "mov": return "video/quicktime";
-    case "webm": return "video/webm";
-    case "avi": return "video/x-msvideo";
-    case "mkv": return "video/x-matroska";
+    case "mp4":
+      return "video/mp4";
+    case "mov":
+      return "video/quicktime";
+    case "webm":
+      return "video/webm";
+    case "avi":
+      return "video/x-msvideo";
+    case "mkv":
+      return "video/x-matroska";
     case "jpg":
-    case "jpeg": return "image/jpeg";
-    case "png": return "image/png";
-    case "webp": return "image/webp";
-    case "gif": return "image/gif";
-    default: return "application/octet-stream";
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return "application/octet-stream";
   }
 };
 
-const uploadBlob = async (bucket: string, path: string, blob: Blob): Promise<{ publicUrl: string }> => {
-  const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(path);
-  if (error || !data?.signedUrl) {
-    throw error || new Error("Failed to create signed upload URL");
-  }
-
-  await fetch(data.signedUrl, {
-    method: "PUT",
-    headers: {
-      "content-type": blob.type || "application/octet-stream",
-      "cache-control": "31536000, immutable",
-    },
-    body: blob,
-  });
-
-  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(path);
-  return { publicUrl: pub.publicUrl };
-};
-
-export default function SimpleUploadModal({ open, onClose, onUploadComplete }: SimpleUploadModalProps) {
-  const navigate = useNavigate();
+export default function SimpleUploadModal({
+  open,
+  onClose,
+  onUploadComplete,
+}: SimpleUploadModalProps) {
   const { toast } = useToast();
 
   const [mediaType, setMediaType] = useState<MediaType>("video");
@@ -103,10 +109,10 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
   const [description, setDescription] = useState("");
   const [mood, setMood] = useState<string>("");
   const [isFood, setIsFood] = useState(false);
-  
+
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  
+
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -135,82 +141,101 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
     };
   }, [preview]);
 
-  const handleFileSelect = useCallback((selectedFile: File) => {
-    setError(null);
-    
-    // Validate file type
-    const isVideo = selectedFile.type.startsWith("video/") || 
-                   /\.(mp4|mov|webm|avi|mkv)$/i.test(selectedFile.name);
-    const isImage = selectedFile.type.startsWith("image/") || 
-                   /\.(jpg|jpeg|png|webp|gif)$/i.test(selectedFile.name);
-    
-    if (mediaType === "video" && !isVideo) {
-      toast({
-        title: "Invalid file type",
-        description: "Please select a video file (MP4, MOV, WebM, AVI, MKV)",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    if (mediaType === "photo" && !isImage) {
-      toast({
-        title: "Invalid file type", 
-        description: "Please select an image file (JPG, PNG, WEBP, GIF)",
-        variant: "destructive"
-      });
-      return;
-    }
+  const handleFileSelect = useCallback(
+    (selectedFile: File) => {
+      setError(null);
 
-    // Validate file size
-    if (selectedFile.size > MAX_FILE_SIZE) {
-      toast({
-        title: "File too large",
-        description: `Maximum file size is ${formatBytes(MAX_FILE_SIZE)}`,
-        variant: "destructive"
-      });
-      return;
-    }
+      const isVideo =
+        selectedFile.type.startsWith("video/") ||
+        /\.(mp4|mov|webm|avi|mkv)$/i.test(selectedFile.name);
+      const isImage =
+        selectedFile.type.startsWith("image/") ||
+        /\.(jpg|jpeg|png|webp|gif)$/i.test(selectedFile.name);
 
-    // Set file and create preview
-    setFile(selectedFile);
-    
-    // Auto-fill title from filename
-    const filename = selectedFile.name.replace(/\.[^/.]+$/, "");
-    if (!title) {
-      setTitle(filename);
-    }
+      if (mediaType === "video" && !isVideo) {
+        toast({
+          title: "Invalid file type",
+          description: "Please select a video file (MP4, MOV, WebM, AVI, MKV)",
+          variant: "destructive",
+        });
+        return;
+      }
 
-    // Create preview URL
-    if (preview) {
-      URL.revokeObjectURL(preview);
-    }
-    setPreview(URL.createObjectURL(selectedFile));
-  }, [mediaType, title, toast, preview]);
+      if (mediaType === "photo" && !isImage) {
+        toast({
+          title: "Invalid file type",
+          description: "Please select an image file (JPG, PNG, WEBP, GIF)",
+          variant: "destructive",
+        });
+        return;
+      }
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) {
-      handleFileSelect(droppedFile);
-    }
-  }, [handleFileSelect]);
+      if (selectedFile.size > MAX_FILE_SIZE) {
+        toast({
+          title: "File too large",
+          description: `Maximum file size is ${formatBytes(MAX_FILE_SIZE)}`,
+          variant: "destructive",
+        });
+        return;
+      }
 
-  const uploadFile = async (): Promise<string> => {
+      setFile(selectedFile);
+
+      const filename = selectedFile.name.replace(/\.[^/.]+$/, "");
+      if (!title) setTitle(filename);
+
+      if (preview) URL.revokeObjectURL(preview);
+      setPreview(URL.createObjectURL(selectedFile));
+    },
+    [mediaType, title, toast, preview]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const droppedFile = e.dataTransfer.files[0];
+      if (droppedFile) handleFileSelect(droppedFile);
+    },
+    [handleFileSelect]
+  );
+
+  /**
+   * Upload using authenticated Storage API (reliable & works with your RLS).
+   * Returns both the public URL (to show) and the storage filePath (to store).
+   */
+  const uploadFile = async (): Promise<{
+    publicUrl: string;
+    filePath: string;
+    bucket: string;
+  }> => {
     if (!file) throw new Error("No file selected");
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      throw new Error("Please log in to upload files");
-    }
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) throw new Error("Please log in to upload files");
 
     const extension = file.name.split(".").pop()?.toLowerCase() || "bin";
     const timestamp = Date.now();
     const bucket = mediaType === "photo" ? PHOTOS_BUCKET : "spliks";
+    // IMPORTANT: first folder must be the user's id (matches your Storage RLS)
     const filePath = `${user.id}/${timestamp}.${extension}`;
 
-    const { publicUrl } = await uploadBlob(bucket, filePath, file);
-    return publicUrl;
+    // Progress UI checkpoints (coarse-grained, since Storage.upload doesn't expose per-byte progress)
+    setUploadProgress(20);
+
+    const { error: upErr } = await supabase.storage.from(bucket).upload(filePath, file, {
+      cacheControl: "31536000",
+      contentType: file.type || inferMimeType(file.name),
+      upsert: false,
+    });
+    if (upErr) throw upErr;
+
+    setUploadProgress(60);
+
+    const { data: pub } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    return { publicUrl: pub.publicUrl, filePath, bucket };
   };
 
   const handleUpload = async () => {
@@ -218,7 +243,7 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
       toast({
         title: "Missing information",
         description: "Please provide a file and title",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
@@ -228,38 +253,48 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
     setError(null);
 
     try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        throw new Error("Please log in to upload");
-      }
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError || !user) throw new Error("Please log in to upload");
 
-      setUploadProgress(30);
-      const fileUrl = await uploadFile();
-      
-      setUploadProgress(70);
+      // 1) Upload to Storage
+      const { publicUrl, filePath } = await uploadFile();
 
-      // Create description with mood tag
+      setUploadProgress(80);
+
+      // 2) Prepare DB payload
       const moodTag = mood ? ` #mood=${mood}` : "";
       const finalDescription = (description.trim() + " " + moodTag).trim();
 
-      // Insert into database
-      const payload = {
+      const payload: any = {
         user_id: user.id,
         title: title.trim(),
         description: finalDescription || null,
-        duration: mediaType === "video" ? 0 : null, // We'll handle video processing later
         file_size: file.size,
         mime_type: file.type || inferMimeType(file.name),
         status: "active",
         is_food: isFood,
-        video_path: mediaType === "video" ? fileUrl : null,
-        video_url: mediaType === "video" ? fileUrl : null,
-        thumbnail_url: mediaType === "photo" ? fileUrl : null,
+        // defaults
         trim_start: null,
         trim_end: null,
         cover_time: null,
       };
 
+      if (mediaType === "video") {
+        payload.duration = 0; // you can compute later if needed
+        payload.video_path = filePath; // storage path
+        payload.video_url = publicUrl; // public URL
+        payload.thumbnail_url = null;
+      } else {
+        payload.duration = null;
+        payload.video_path = null;
+        payload.video_url = null;
+        payload.thumbnail_url = publicUrl; // photo uses thumbnail_url field
+      }
+
+      // 3) Insert into spliks
       const { data: newRecord, error: dbError } = await supabase
         .from("spliks")
         .insert(payload)
@@ -270,38 +305,37 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
 
       setUploadProgress(90);
 
-      // Add to photos table if it's a photo
+      // 4) If photo, also mirror to vibe_photos (best-effort)
       if (mediaType === "photo") {
         try {
           await supabase.from("vibe_photos").insert({
             user_id: user.id,
-            photo_url: fileUrl,
+            photo_url: publicUrl,
             description: finalDescription || null,
             location: null,
           });
 
-          // Dispatch event for real-time updates
           window.dispatchEvent(
             new CustomEvent("vibe-photo-uploaded", {
-              detail: { 
-                user_id: user.id, 
-                photo_url: fileUrl, 
-                description: finalDescription || null, 
-                location: null 
-              }
+              detail: {
+                user_id: user.id,
+                photo_url: publicUrl,
+                description: finalDescription || null,
+                location: null,
+              },
             })
           );
-        } catch (photoError) {
-          console.warn("Failed to add to photos table:", photoError);
+        } catch {
+          /* non-fatal */
         }
       }
 
-      // Add to activity feed
+      // 5) Add to right_rail_feed (best-effort)
       try {
         await supabase.from("right_rail_feed").insert({
           user_id: user.id,
           type: mediaType,
-          media_url: fileUrl,
+          media_url: publicUrl,
           created_at: newRecord?.created_at || new Date().toISOString(),
         });
 
@@ -315,33 +349,26 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
             },
           })
         );
-      } catch (activityError) {
-        console.warn("Failed to add to activity feed:", activityError);
+      } catch {
+        /* non-fatal */
       }
 
       setUploadProgress(100);
-      
+
       toast({
         title: "Upload successful!",
-        description: `Your ${mediaType} has been uploaded successfully.`
+        description: `Your ${mediaType} has been uploaded successfully.`,
       });
 
       resetForm();
       onUploadComplete();
-      
-      // Navigate to dashboard after a brief delay
-      setTimeout(() => {
-        onClose();
-        navigate("/dashboard");
-      }, 1000);
-
-    } catch (error: any) {
-      console.error("Upload error:", error);
-      setError(error.message || "Upload failed");
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      setError(err.message || "Upload failed");
       toast({
         title: "Upload failed",
-        description: error.message || "An error occurred during upload",
-        variant: "destructive"
+        description: err.message || "An error occurred during upload",
+        variant: "destructive",
       });
     } finally {
       setUploading(false);
@@ -356,7 +383,9 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
           type="button"
           onClick={() => setMediaType("video")}
           className={`px-3 py-1.5 text-sm flex items-center gap-1 transition-colors ${
-            mediaType === "video" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"
+            mediaType === "video"
+              ? "bg-primary text-primary-foreground"
+              : "bg-background hover:bg-muted"
           }`}
         >
           <VideoIcon className="h-4 w-4" />
@@ -366,7 +395,9 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
           type="button"
           onClick={() => setMediaType("photo")}
           className={`px-3 py-1.5 text-sm flex items-center gap-1 transition-colors ${
-            mediaType === "photo" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"
+            mediaType === "photo"
+              ? "bg-primary text-primary-foreground"
+              : "bg-background hover:bg-muted"
           }`}
         >
           <ImageIcon className="h-4 w-4" />
@@ -391,9 +422,12 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div>
-              <DialogTitle>Upload {mediaType === "photo" ? "Photo" : "Video"}</DialogTitle>
+              <DialogTitle>
+                Upload {mediaType === "photo" ? "Photo" : "Video"}
+              </DialogTitle>
               <DialogDescription>
-                Share your {mediaType === "photo" ? "photos" : "videos"} with the community
+                Share your {mediaType === "photo" ? "photos" : "videos"} with
+                the community
               </DialogDescription>
             </div>
             {mediaTypeSelector}
@@ -432,9 +466,7 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
                 accept={mediaType === "video" ? "video/*" : "image/*"}
                 onChange={(e) => {
                   const selectedFile = e.target.files?.[0];
-                  if (selectedFile) {
-                    handleFileSelect(selectedFile);
-                  }
+                  if (selectedFile) handleFileSelect(selectedFile);
                 }}
                 className="hidden"
               />
@@ -566,17 +598,10 @@ export default function SimpleUploadModal({ open, onClose, onUploadComplete }: S
 
           {/* Actions */}
           <div className="flex gap-3 justify-end">
-            <Button
-              variant="outline"
-              onClick={resetForm}
-              disabled={uploading}
-            >
+            <Button variant="outline" onClick={resetForm} disabled={uploading}>
               Reset
             </Button>
-            <Button
-              onClick={handleUpload}
-              disabled={!file || !title.trim() || uploading}
-            >
+            <Button onClick={handleUpload} disabled={!file || !title.trim() || uploading}>
               {uploading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
