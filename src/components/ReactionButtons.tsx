@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Heart, Bookmark, HeartOff, BookmarkX } from "lucide-react";
-import { useSupabaseClient, useUser } from "@supabase/auth-helpers-react";
+import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/types/supabase";
 import { useReactions } from "@/utils/reactions";
 import { cn } from "@/lib/utils";
@@ -29,14 +29,29 @@ export default function ReactionButtons({
   showLabels = false,
   vertical = false
 }: ReactionButtonsProps) {
-  const supabase = useSupabaseClient<Supabase>();
-  const user = useUser();
-  const reactions = useReactions(supabase);
+  const [user, setUser] = useState<any>(null);
+  const reactions = useReactions();
 
   const [isBoosted, setIsBoosted] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [hypeCount, setHypeCount] = useState(initialHypeCount);
   const [loading, setLoading] = useState(false);
+
+  // Get current user
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    getCurrentUser();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   // Load initial reaction status
   useEffect(() => {
@@ -249,11 +264,26 @@ export function BookmarkButton({
   splikId: string;
   size?: "sm" | "default" | "lg";
 }) {
-  const supabase = useSupabaseClient<Supabase>();
-  const user = useUser();
-  const reactions = useReactions(supabase);
+  const reactions = useReactions();
+  const [user, setUser] = useState<any>(null);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Get current user
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    getCurrentUser();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (user && splikId) {
