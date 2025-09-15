@@ -1,9 +1,8 @@
 // src/components/layout/MobileTabBar.tsx
+import { useLocation, useNavigate, NavLink } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { Home, PlusCircle, User, Heart } from "lucide-react";
+import { Home, PlusCircle, User, Heart, Inbox } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import NotificationBellDropdown from "@/components/notifications/NotificationBellDropdown";
 
 interface MobileTabBarProps {
   onUploadClick: () => void;    // opens your existing Upload modal
@@ -28,8 +27,8 @@ export default function MobileTabBar({
   const nav = useNavigate();
   const { pathname } = useLocation();
 
+  // (kept tiny auth state only if you need it later; safe to remove)
   const [user, setUser] = useState<any>(null);
-
   useEffect(() => {
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => mounted && setUser(data.user ?? null));
@@ -48,6 +47,7 @@ export default function MobileTabBar({
     pathname.startsWith("/dashboard");
 
   const isPrayers = pathname === "/prayers";
+  const isNotes = pathname === "/notes";
 
   return (
     <nav
@@ -60,68 +60,64 @@ export default function MobileTabBar({
       "
       aria-label="Primary"
     >
-      {/* Subtle gradient overlay */}
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
 
-      {/* ⬇️ now 5 columns to include Notifications */}
+      {/* 5 tabs: Home, NoteBox, Prayers, Upload, Profile */}
       <div className="mx-auto max-w-[520px] grid grid-cols-5 px-2">
         {/* Home */}
         <NavLink to="/" className={item}>
           {({ isActive }) => (
             <div className="relative">
-              {isActive && (
-                <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />
-              )}
+              {isActive && <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />}
               <div className="relative flex flex-col items-center">
                 <Home className={icon(isActive || pathname === "/")} />
-                <span className={label(isActive || pathname === "/")}>
-                  Home
-                </span>
+                <span className={label(isActive || pathname === "/")}>Home</span>
               </div>
             </div>
           )}
         </NavLink>
 
-        {/* Notifications (dropdown bell with live badge) */}
-        <div className={item} aria-label="Notifications">
-          <div className="relative flex flex-col items-center">
-            <NotificationBellDropdown user={user} />
-            <span className="mt-1 font-medium text-muted-foreground">Alerts</span>
-          </div>
-        </div>
+        {/* NoteBox */}
+        <NavLink to="/notes" className={item}>
+          {({ isActive }) => (
+            <div className="relative">
+              {(isActive || isNotes) && (
+                <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />
+              )}
+              <div className="relative flex flex-col items-center">
+                <Inbox className={`${icon(isActive || isNotes)} ${(isActive || isNotes) ? "fill-current" : ""}`} />
+                <span className={label(isActive || isNotes)}>NoteBox</span>
+              </div>
+            </div>
+          )}
+        </NavLink>
 
         {/* Daily Prayers */}
         <NavLink to="/prayers" className={item}>
           {({ isActive }) => (
             <div className="relative">
-              {isActive && (
-                <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />
-              )}
+              {isActive && <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />}
               <div className="relative flex flex-col items-center">
                 <div className="relative">
-                  <Heart className={`${icon(isActive || isPrayers)} ${isActive || isPrayers ? 'fill-current' : ''}`} />
+                  <Heart className={`${icon(isActive || isPrayers)} ${(isActive || isPrayers) ? "fill-current" : ""}`} />
                   {(isActive || isPrayers) && (
                     <div className="absolute inset-0 bg-primary/20 rounded-full blur-lg animate-pulse" />
                   )}
                 </div>
-                <span className={label(isActive || isPrayers)}>
-                  Prayers
-                </span>
+                <span className={label(isActive || isPrayers)}>Prayers</span>
               </div>
             </div>
           )}
         </NavLink>
 
-        {/* Upload - Enhanced button */}
+        {/* Upload */}
         <button
           className={`${item} text-primary relative group`}
           onClick={onUploadClick}
           aria-label="Upload"
         >
           <div className="relative">
-            {/* Glow effect */}
             <div className="absolute -inset-3 bg-gradient-to-r from-primary/20 via-primary/30 to-primary/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 group-active:opacity-75 transition-all duration-300" />
-            {/* Main button */}
             <div className="relative bg-gradient-to-r from-primary via-primary to-primary rounded-2xl p-2 shadow-lg group-hover:shadow-xl group-hover:shadow-primary/25 transition-all duration-200">
               <PlusCircle className="h-7 w-7 text-primary-foreground" />
             </div>
@@ -129,16 +125,14 @@ export default function MobileTabBar({
           <span className="mt-1 font-semibold text-primary">Upload</span>
         </button>
 
-        {/* Profile */}
+        {/* Profile / Login */}
         <button
           className={item}
           onClick={() => nav(isAuthed ? profilePath : "/login")}
           aria-label="Profile"
         >
           <div className="relative">
-            {isProfile && (
-              <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />
-            )}
+            {isProfile && <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />}
             <div className="relative flex flex-col items-center">
               <div className="relative">
                 <User className={icon(isProfile)} />
@@ -146,9 +140,7 @@ export default function MobileTabBar({
                   <div className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-pulse" />
                 )}
               </div>
-              <span className={label(isProfile)}>
-                {isAuthed ? "Profile" : "Login"}
-              </span>
+              <span className={label(isProfile)}>{isAuthed ? "Profile" : "Login"}</span>
             </div>
           </div>
         </button>
