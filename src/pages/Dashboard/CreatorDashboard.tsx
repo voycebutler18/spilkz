@@ -22,7 +22,7 @@ import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
   Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield, Trash2, Plus,
-  Volume2, VolumeX,
+  Volume2, VolumeX, BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -49,7 +49,7 @@ interface SplikRow {
   video_url: string | null;      // null for photos
   thumbnail_url: string | null;  // for photos this is the image itself
   created_at: string;
-  likes_count?: number | null;
+  boosts_count?: number | null;  // Changed from likes_count
   comments_count?: number | null;
   trim_start?: number | null;    // videos only
   trim_end?: number | null;      // videos only
@@ -64,8 +64,8 @@ interface SplikRow {
 interface DashboardStats {
   totalSpliks: number;
   followers: number;
-  totalReactions: number;
-  avgReactionsPerVideo: number;
+  totalBoosts: number;      // Changed from totalReactions
+  avgBoostsPerPost: number; // Changed from avgReactionsPerVideo
 }
 
 interface CommentRow {
@@ -80,11 +80,12 @@ interface CommentRow {
 }
 
 /* ----------------------------- Helpers for counts ----------------------------- */
-async function fetchHypeCountsFor(ids: string[]) {
+async function fetchBoostCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
   try {
+    // Update this table name to match your boost system
     const { data } = await supabase
-      .from("hype_reactions")
+      .from("boost_reactions") // Replace with your actual boost table name
       .select("splik_id")
       .in("splik_id", ids);
 
@@ -95,6 +96,7 @@ async function fetchHypeCountsFor(ids: string[]) {
   } catch {}
   return counts;
 }
+
 async function fetchCommentCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
   try {
@@ -248,13 +250,13 @@ function CreatorFeedItem({
   const [isMuted, setIsMuted] = useState(true);
   const [showComments, setShowComments] = useState(false);
 
-  const isPhoto = !splik.video_url && !!splik.thumbnail_url; // <-- key fix
+  const isPhoto = !splik.video_url && !!splik.thumbnail_url;
   const start = Math.max(0, Number(splik.trim_start ?? 0));
   const loopEnd = start + 3;
 
   /* Video-only lifecycle */
   useEffect(() => {
-    if (isPhoto) return; // nothing to wire for photos
+    if (isPhoto) return;
 
     const v = videoRef.current;
     if (!v) return;
@@ -290,7 +292,7 @@ function CreatorFeedItem({
   }, [isPhoto, start, loopEnd]);
 
   const togglePlayPause = async () => {
-    if (isPhoto) return; // no-op for photos
+    if (isPhoto) return;
     const v = videoRef.current;
     if (!v) return;
 
@@ -353,8 +355,8 @@ function CreatorFeedItem({
                 <div className="flex items-center justify-between text-white text-sm">
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-1">
-                      <Heart className="h-4 w-4" />
-                      <span>{splik.likes_count || 0}</span>
+                      <TrendingUp className="h-4 w-4" />
+                      <span>{splik.boosts_count || 0}</span>
                     </div>
                     <button
                       onClick={(e) => {
@@ -436,8 +438,8 @@ function CreatorFeedItem({
                 <div className="flex items-center justify-between text-white text-sm">
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-1">
-                      <Heart className="h-4 w-4" />
-                      <span>{splik.likes_count || 0}</span>
+                      <TrendingUp className="h-4 w-4" />
+                      <span>{splik.boosts_count || 0}</span>
                     </div>
                     <button
                       onClick={(e) => {
@@ -535,8 +537,8 @@ const CreatorDashboard = () => {
   const [stats, setStats] = useState<DashboardStats>({
     totalSpliks: 0,
     followers: 0,
-    totalReactions: 0,
-    avgReactionsPerVideo: 0,
+    totalBoosts: 0,
+    avgBoostsPerPost: 0,
   });
 
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -653,16 +655,16 @@ const CreatorDashboard = () => {
           recomputeStatsFromList((prev) => prev);
         }
       )
-      // 🔥 hype live updates
+      // boost live updates (updated from hype_reactions)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "hype_reactions" },
+        { event: "INSERT", schema: "public", table: "boost_reactions" }, // Update table name
         (payload) => {
           const sid = (payload.new as any).splik_id as string;
           setSpliks((prev) => {
             if (!prev.find((s) => s.id === sid)) return prev;
             return prev.map((s) =>
-              s.id === sid ? { ...s, likes_count: (s.likes_count ?? 0) + 1 } : s
+              s.id === sid ? { ...s, boosts_count: (s.boosts_count ?? 0) + 1 } : s
             );
           });
           recomputeStatsFromList((prev) => prev);
@@ -670,14 +672,14 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "hype_reactions" },
+        { event: "DELETE", schema: "public", table: "boost_reactions" }, // Update table name
         (payload) => {
           const sid = (payload.old as any).splik_id as string;
           setSpliks((prev) => {
             if (!prev.find((s) => s.id === sid)) return prev;
             return prev.map((s) =>
               s.id === sid
-                ? { ...s, likes_count: Math.max(0, (s.likes_count ?? 0) - 1) }
+                ? { ...s, boosts_count: Math.max(0, (s.boosts_count ?? 0) - 1) }
                 : s
             );
           });
@@ -728,8 +730,8 @@ const CreatorDashboard = () => {
       if (error) throw error;
 
       const ids = (rows || []).map((r: any) => r.id as string);
-      const [hypeCounts, commentCounts] = await Promise.all([
-        fetchHypeCountsFor(ids),
+      const [boostCounts, commentCounts] = await Promise.all([
+        fetchBoostCountsFor(ids),
         fetchCommentCountsFor(ids),
       ]);
 
@@ -746,7 +748,7 @@ const CreatorDashboard = () => {
       const merged: SplikRow[] = (rows || []).map((r: any) => ({
         ...(r as SplikRow),
         profile: prof,
-        likes_count: hypeCounts[r.id] ?? 0,
+        boosts_count: boostCounts[r.id] ?? 0,
         comments_count: commentCounts[r.id] ?? 0,
       }));
 
@@ -771,16 +773,15 @@ const CreatorDashboard = () => {
   ) => {
     setSpliks((prev) => {
       const list = typeof listOrUpdater === "function" ? (listOrUpdater as any)(prev) : listOrUpdater;
-      const totalReactions =
-        list.reduce((acc, s) => acc + (s.likes_count || 0) + (s.comments_count || 0), 0) || 0;
+      const totalBoosts = list.reduce((acc, s) => acc + (s.boosts_count || 0), 0) || 0;
       const totalSpliks = list.length;
-      const avgReactionsPerVideo = totalSpliks > 0 ? Math.round(totalReactions / totalSpliks) : 0;
+      const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
 
       setStats((st) => ({
         ...st,
         totalSpliks,
-        totalReactions,
-        avgReactionsPerVideo,
+        totalBoosts,
+        avgBoostsPerPost,
       }));
       return list;
     });
@@ -909,65 +910,105 @@ const CreatorDashboard = () => {
 
       {/* Body */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats */}
+        {/* Modern Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card className="bg-gray-900 border-gray-800">
+          {/* Total Posts - Enhanced */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Total Posts</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <Video className="h-4 w-4" />
+                Total Posts
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
                 <div className="text-3xl font-bold text-white">{stats.totalSpliks}</div>
-                <div className="p-3 bg-blue-500/10 rounded-full">
+                <div className="p-3 bg-blue-500/20 rounded-xl border border-blue-500/30">
                   <Video className="h-6 w-6 text-blue-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Videos & photos uploaded</p>
+              <p className="text-xs text-gray-500 mt-2">Videos & photos shared</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.totalSpliks / 50) * 100)}%` }}
+                />
+              </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gray-900 border-gray-800">
+          {/* Total Boosts - New */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Total Reactions</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" />
+                Total Boosts
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.totalReactions}</div>
-                <div className="flex items-center gap-2 p-3 bg-pink-500/10 rounded-full">
-                  <Heart className="h-6 w-6 text-pink-400" />
+                <div className="text-3xl font-bold text-white">{stats.totalBoosts}</div>
+                <div className="p-3 bg-orange-500/20 rounded-xl border border-orange-500/30">
+                  <TrendingUp className="h-6 w-6 text-orange-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Likes (🔥) + comments</p>
+              <p className="text-xs text-gray-500 mt-2">Content amplification</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-orange-500 to-yellow-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.totalBoosts / 100) * 100)}%` }}
+                />
+              </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gray-900 border-gray-800">
+          {/* Followers - Enhanced */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Followers</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Followers
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
                 <div className="text-3xl font-bold text-white">{stats.followers}</div>
-                <div className="p-3 bg-green-500/10 rounded-full">
+                <div className="p-3 bg-green-500/20 rounded-xl border border-green-500/30">
                   <Users className="h-6 w-6 text-green-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Your community</p>
+              <p className="text-xs text-gray-500 mt-2">Community members</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.followers / 1000) * 100)}%` }}
+                />
+              </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-gray-900 border-gray-800">
+          {/* Avg Boosts Per Post - New */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400">Avg Reactions</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Avg Boosts
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.avgReactionsPerVideo}</div>
-                <div className="p-3 bg-purple-500/10 rounded-full">
-                  <TrendingUp className="h-6 w-6 text-purple-400" />
+                <div className="text-3xl font-bold text-white">{stats.avgBoostsPerPost}</div>
+                <div className="p-3 bg-purple-500/20 rounded-xl border border-purple-500/30">
+                  <BarChart3 className="h-6 w-6 text-purple-400" />
                 </div>
               </div>
-              <p className="text-xs text-gray-500 mt-2">Per post</p>
+              <p className="text-xs text-gray-500 mt-2">Per post engagement</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.avgBoostsPerPost / 20) * 100)}%` }}
+                />
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -1017,8 +1058,8 @@ const CreatorDashboard = () => {
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
                   <div>
-                    <p className="text-sm text-gray-400">This Week's Reactions</p>
-                    <p className="text-2xl font-bold text-white">{stats.totalReactions}</p>
+                    <p className="text-sm text-gray-400">This Week's Boosts</p>
+                    <p className="text-2xl font-bold text-white">{stats.totalBoosts}</p>
                   </div>
                   <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
                 </div>
