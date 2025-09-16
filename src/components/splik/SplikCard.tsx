@@ -165,7 +165,7 @@ export default function SplikCard({
           // ✅ Updated to count from boosts table
           const { count } = await supabase
             .from("boosts")
-            .select("id", { head: true, count: "exact" })
+            .select("*", { head: true, count: "exact" })
             .eq("splik_id", splik.id);
           if (!cancelled) setHypeCount(count ?? 0);
         }
@@ -302,7 +302,11 @@ export default function SplikCard({
         // ✅ Updated to use new boosts table
         await supabase
           .from("boosts")
-          .insert({ splik_id: splik.id, user_id: u.id });
+          .insert({ 
+            splik_id: splik.id, 
+            user_id: u.id,
+            created_at: new Date().toISOString()
+          });
       }
     } catch {
       /* ignore; UI already rolled */
