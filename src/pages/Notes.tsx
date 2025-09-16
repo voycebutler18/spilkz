@@ -10,18 +10,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Send, Trash2 } from "lucide-react";
 
-/**
- * Requires (DB):
- *  - table public.notes(id, sender_id, recipient_id, body, in_reply_to, read_at, deleted_at, created_at)
- *  - view  public.notes_enriched with sender_* fields from profiles
- *
- * RLS idea:
- *  SELECT: sender_id = auth.uid() OR recipient_id = auth.uid()
- *  INSERT: sender_id = auth.uid()
- *  UPDATE: recipient can set read_at for their notes
- *  DELETE: recipient can delete their read notes (we hard-delete on leaving page)
- */
-
 type Profile = {
   id: string;
   username: string | null;
@@ -65,6 +53,7 @@ export default function NotesPage() {
 
   // track notes that were unread -> we marked read this session
   const readThisSession = useRef<Set<string>>(new Set());
+  const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // ---------- auth ----------
   useEffect(() => {
@@ -164,7 +153,7 @@ export default function NotesPage() {
       return;
     }
     if (toUser.id === me) {
-      toast.error("You can’t send a note to yourself");
+      toast.error("You can't send a note to yourself");
       return;
     }
 
@@ -188,48 +177,110 @@ export default function NotesPage() {
     toast.success("Note sent!");
   };
 
-  // ---------- inbox ----------
+  // ---------- enhanced deletion function ----------
+  const deleteReadNow = useCallback(async () => {
+    if (!me) return;
+    const ids = Array.from(readThisSession.current);
+    if (!ids.length) return;
+
+    console.log("Deleting read notes:", ids);
+    
+    try {
+      const { error } = await supabase
+        .from("notes")
+        .delete()
+        .in("id", ids)
+        .eq("recipient_id", me);
+      
+      if (error) {
+        console.error("Failed to delete notes:", error);
+        return;
+      }
+      
+      console.log("Successfully deleted notes");
+      readThisSession.current.clear();
+      
+      // Update local state to remove deleted notes
+      setInbox(prev => prev.filter(note => !ids.includes(note.id)));
+      toast.success(`Deleted ${ids.length} read note(s)`);
+    } catch (error) {
+      console.error("Error deleting notes:", error);
+    }
+  }, [me]);
+
+  // ---------- inbox with immediate deletion after read ----------
   const fetchInbox = useCallback(async () => {
     if (!me) return;
     setLoadingInbox(true);
 
-    // notes_enriched returns joined sender info; do not filter on deleted_at here
-    const { data, error } = await supabase
-      .from("notes_enriched")
-      .select("*")
-      .eq("recipient_id", me)
-      .order("created_at", { ascending: false });
-
-    setLoadingInbox(false);
-
-    if (error) {
-      console.error(error);
-      toast.error("Failed to load notes");
-      return;
-    }
-
-    const rows = (data as NoteRow[]) ?? [];
-    setInbox(rows);
-
-    // Mark unread as read immediately (so they get hard-deleted when leaving)
-    const unread = rows.filter((n) => !n.read_at);
-    if (unread.length) {
-      const ids = unread.map((n) => n.id);
-      const { error: updErr } = await supabase
+    try {
+      // Query directly from notes table with manual join to avoid view issues
+      const { data: notesData, error: notesError } = await supabase
         .from("notes")
-        .update({ read_at: new Date().toISOString() })
-        .in("id", ids)
-        .eq("recipient_id", me);
+        .select("*")
+        .eq("recipient_id", me)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false });
 
-      if (!updErr) {
-        unread.forEach((n) => readThisSession.current.add(n.id));
+      if (notesError) throw notesError;
+
+      // Get sender profiles separately
+      const senderIds = [...new Set(notesData?.map(n => n.sender_id) || [])];
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .in("id", senderIds);
+
+      // Combine data manually
+      const enrichedNotes = (notesData || []).map(note => {
+        const profile = profilesData?.find(p => p.id === note.sender_id);
+        return {
+          ...note,
+          sender_username: profile?.username,
+          sender_display_name: profile?.display_name,
+          sender_avatar_url: profile?.avatar_url,
+        };
+      });
+
+      setInbox(enrichedNotes);
+
+      // Mark unread as read and schedule for deletion
+      const unread = enrichedNotes.filter((n) => !n.read_at);
+      if (unread.length) {
+        const ids = unread.map((n) => n.id);
         const now = new Date().toISOString();
-        setInbox((cur) =>
-          cur.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)),
-        );
+        
+        const { error: updErr } = await supabase
+          .from("notes")
+          .update({ read_at: now })
+          .in("id", ids)
+          .eq("recipient_id", me);
+
+        if (!updErr) {
+          // Add to deletion queue
+          unread.forEach((n) => readThisSession.current.add(n.id));
+          
+          // Update local state
+          setInbox(prev =>
+            prev.map(n => ids.includes(n.id) ? { ...n, read_at: now } : n)
+          );
+
+          // Schedule deletion after 5 seconds
+          if (deleteTimeoutRef.current) {
+            clearTimeout(deleteTimeoutRef.current);
+          }
+          deleteTimeoutRef.current = setTimeout(() => {
+            deleteReadNow();
+          }, 5000);
+        }
       }
+    } catch (error) {
+      console.error("Error fetching inbox:", error);
+      toast.error("Failed to load notes");
+    } finally {
+      setLoadingInbox(false);
     }
-  }, [me]);
+  }, [me, deleteReadNow]);
 
   useEffect(() => {
     fetchInbox();
@@ -252,30 +303,37 @@ export default function NotesPage() {
     };
   }, [me, fetchInbox]);
 
-  // ---------- ephemeral deletion on leave ----------
-  const deleteReadNow = useCallback(async () => {
-    if (!me) return;
-    const ids = Array.from(readThisSession.current);
-    if (!ids.length) return;
-
-    await supabase.from("notes").delete().in("id", ids).eq("recipient_id", me);
-    readThisSession.current.clear();
-  }, [me]);
-
+  // ---------- enhanced cleanup on leave ----------
   useEffect(() => {
+    const cleanup = () => {
+      if (deleteTimeoutRef.current) {
+        clearTimeout(deleteTimeoutRef.current);
+      }
+      deleteReadNow();
+    };
+
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        deleteReadNow();
+        cleanup();
       }
     };
-    const onUnload = () => deleteReadNow();
 
+    const onBeforeUnload = () => cleanup();
+    const onUnload = () => cleanup();
+    const onPopState = () => cleanup();
+
+    // Multiple event listeners for better coverage
     document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("beforeunload", onUnload);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("unload", onUnload);
+    window.addEventListener("popstate", onPopState);
 
     return () => {
+      cleanup();
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("beforeunload", onUnload);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("unload", onUnload);
+      window.removeEventListener("popstate", onPopState);
     };
   }, [deleteReadNow]);
 
@@ -289,8 +347,8 @@ export default function NotesPage() {
   const disclaimer = useMemo(
     () => (
       <div className="rounded-md border border-yellow-300/40 bg-yellow-500/10 p-3 text-sm">
-        <strong>Heads up:</strong> Notes disappear after you read them. We permanently
-        delete any notes you’ve read as soon as you leave this page.
+        <strong>Heads up:</strong> Notes disappear after you read them. We automatically
+        delete read notes after 5 seconds, and also when you leave this page.
       </div>
     ),
     [],
@@ -317,8 +375,8 @@ export default function NotesPage() {
       <div>
         <h1 className="text-xl font-semibold">Send a Note</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Pick a creator and send a short, one-off note. When they open it, it’s marked read and will
-          be deleted once they leave their notes page. They can reply directly below your note.
+          Pick a creator and send a short, one-off note. When they read it, it gets automatically 
+          deleted after 5 seconds. They can reply before it disappears.
         </p>
 
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(260px,320px)_1fr_auto]">
@@ -399,7 +457,7 @@ export default function NotesPage() {
             </Button>
             <Button variant="destructive" size="sm" onClick={deleteReadNow}>
               <Trash2 className="mr-2 h-4 w-4" />
-              Clear read now
+              Clear read now ({readThisSession.current.size})
             </Button>
           </div>
         </div>
@@ -408,7 +466,7 @@ export default function NotesPage() {
           <div className="text-sm text-muted-foreground">Loading…</div>
         ) : !hasInbox ? (
           <div className="rounded-md border p-4 text-sm text-muted-foreground">
-            No notes yet. When someone sends you a note, it’ll appear here.
+            No notes yet. When someone sends you a note, it'll appear here.
           </div>
         ) : (
           <ul className="space-y-3">
@@ -498,15 +556,21 @@ export default function NotesPage() {
                   </div>
                 </div>
 
-                {/* subtle “read” badge */}
+                {/* Status indicator */}
                 <div
                   className={cn(
                     "mt-2 text-xs",
-                    n.read_at ? "text-emerald-600" : "text-muted-foreground",
+                    n.read_at 
+                      ? readThisSession.current.has(n.id)
+                        ? "text-red-600" 
+                        : "text-emerald-600"
+                      : "text-muted-foreground",
                   )}
                 >
                   {n.read_at
-                    ? "Read (will be deleted when you leave this page)"
+                    ? readThisSession.current.has(n.id)
+                      ? "Read (will be deleted in 5 seconds)"
+                      : "Read (from previous session)"
                     : "Unread"}
                 </div>
               </li>
