@@ -6,6 +6,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+
+// Mock supabase - replace with real import
+const supabase = {
+  auth: {
+    getUser: () => Promise.resolve({ data: { user: null } }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
+  },
+  from: () => ({
+    select: () => ({
+      eq: () => ({
+        maybeSingle: () => Promise.resolve({ data: null })
+      })
+    })
+  })
+};
 import { 
   Heart, 
   Play, 
@@ -34,25 +49,81 @@ import {
   Volume2
 } from "lucide-react";
 
-// Mock data - replace with real Supabase calls
-const mockProfile = {
-  id: "123",
-  username: "johndoe",
-  display_name: "John Doe",
-  first_name: "John",
-  last_name: "Doe",
-  avatar_url: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face"
-};
-
-const mockUser = { id: "123", email: "john@example.com" };
-
 const SplikzDatingHome = () => {
-  const [user, setUser] = useState(mockUser); // Set to null for signed-out state
-  const [profile, setProfile] = useState(mockProfile);
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [showQuickStart, setShowQuickStart] = useState(false);
-  const [previewName, setPreviewName] = useState("John Doe");
+  const [showVideoUpload, setShowVideoUpload] = useState(false);
+  const [previewName, setPreviewName] = useState("");
   const [previewBio, setPreviewBio] = useState("");
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
+  const [loading, setLoading] = useState(true);
+
+  // Load real auth + profile data
+  useEffect(() => {
+    let mounted = true;
+
+    const loadUserData = async () => {
+      try {
+        // Get authenticated user
+        const { data: authData } = await supabase.auth.getUser();
+        if (!mounted) return;
+        
+        const currentUser = authData.user;
+        setUser(currentUser);
+
+        if (currentUser) {
+          // Get profile data
+          const { data: profileData } = await supabase
+            .from("profiles")
+            .select("id, username, display_name, first_name, last_name, avatar_url, city")
+            .eq("id", currentUser.id)
+            .maybeSingle();
+
+          if (mounted && profileData) {
+            setProfile(profileData);
+            setPreviewName(nameFor(profileData));
+          }
+        }
+      } catch (error) {
+        console.error("Error loading user data:", error);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    loadUserData();
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+      
+      const currentUser = session?.user || null;
+      setUser(currentUser);
+      
+      if (currentUser) {
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("id, username, display_name, first_name, last_name, avatar_url, city")
+          .eq("id", currentUser.id)
+          .maybeSingle();
+
+        if (mounted && profileData) {
+          setProfile(profileData);
+          setPreviewName(nameFor(profileData));
+        }
+      } else {
+        setProfile(null);
+        setPreviewName("");
+        setPreviewBio("");
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   const nameFor = (p) => {
     if (!p) return "Friend";
@@ -188,6 +259,110 @@ const SplikzDatingHome = () => {
                     <Sparkles className="ml-2 h-5 w-5" />
                   </Button>
                 )}
+
+      {/* Dating Video Upload Modal */}
+      {showVideoUpload && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <Card className="w-full max-w-lg bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
+            <CardHeader className="border-b border-zinc-800 pb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-xl text-white flex items-center gap-2">
+                    <Camera className="h-5 w-5 text-fuchsia-500" />
+                    Add your 3-second intro
+                  </CardTitle>
+                  <p className="text-zinc-400 mt-1">Show your personality in 3 seconds</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowVideoUpload(false)}
+                  className="text-zinc-400 hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </CardHeader>
+            
+            <CardContent className="p-6">
+              <div className="space-y-6">
+                {/* Upload Area */}
+                <div className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center bg-gradient-to-br from-fuchsia-500/5 to-purple-500/5">
+                  <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Camera className="h-8 w-8 text-white" />
+                  </div>
+                  <h3 className="text-white font-medium mb-2">Upload your 3-second intro</h3>
+                  <p className="text-zinc-400 text-sm mb-4">
+                    MP4, MOV, WebM supported. We'll automatically trim to 3 seconds.
+                  </p>
+                  
+                  <div className="flex flex-col gap-3">
+                    <Button 
+                      className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Choose video file
+                    </Button>
+                    
+                    <div className="text-zinc-500 text-xs">or</div>
+                    
+                    <Button 
+                      variant="outline" 
+                      className="border-zinc-600 text-zinc-300 hover:bg-zinc-800"
+                    >
+                      <Video className="h-4 w-4 mr-2" />
+                      Record with camera
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Tips */}
+                <div className="bg-zinc-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-3 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-yellow-400" />
+                    Tips for a great intro
+                  </h4>
+                  <ul className="space-y-2 text-sm text-zinc-300">
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 flex-shrink-0" />
+                      <span>Smile and say hi - let your personality shine</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 flex-shrink-0" />
+                      <span>Good lighting makes all the difference</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 flex-shrink-0" />
+                      <span>Keep it natural - authenticity beats perfection</span>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                    onClick={() => setShowVideoUpload(false)}
+                  >
+                    Skip for now
+                  </Button>
+                  <Button
+                    className="flex-1 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
+                    onClick={() => {
+                      // After video upload, continue to full onboarding
+                      setShowVideoUpload(false);
+                      handleNavigateToOnboarding();
+                    }}
+                  >
+                    Continue
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
               </div>
 
               {/* Trust Indicators */}
@@ -450,20 +625,34 @@ const SplikzDatingHome = () => {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex gap-4 pt-4">
+                <div className="space-y-3">
                   <Button
                     size="lg"
-                    className="flex-1 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 h-12"
-                    onClick={handleNavigateToOnboarding}
+                    className="w-full bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 h-12"
+                    onClick={() => {
+                      setShowQuickStart(false);
+                      setShowVideoUpload(true);
+                    }}
                   >
-                    Continue to full setup
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    <Camera className="mr-2 h-4 w-4" />
+                    Add 3-second intro first
                   </Button>
+                  
                   <Button
                     variant="outline"
                     size="lg"
+                    className="w-full border-zinc-700 text-zinc-300 hover:bg-zinc-800 h-12"
+                    onClick={handleNavigateToOnboarding}
+                  >
+                    Skip video, continue setup
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                  
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setShowQuickStart(false)}
-                    className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 h-12"
+                    className="w-full text-zinc-500 hover:text-zinc-300"
                   >
                     Maybe later
                   </Button>
