@@ -3,6 +3,7 @@ import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
+import { Heart, Bookmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const LeftSidebar: React.FC = () => {
@@ -123,23 +124,69 @@ const LeftSidebar: React.FC = () => {
           </Link>
         </nav>
 
-        {/* Me */}
+        {/* Me Section - Only show if user is logged in */}
         {user && (
           <>
-            <div className="mt-5 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="mt-5 border-b border-border/60 pb-3 text-[11px] uppercase tracking-wide text-muted-foreground">
               Me
             </div>
-            <nav className="mt-1 space-y-1">
+            <nav className="mt-3 space-y-1">
+              {/* ✅ New Reactions System Links */}
               <Link
-                to="/dashboard/favorites"
+                to="/dashboard/bookmarks"
                 className={cn(
-                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-                  isActive("/dashboard/favorites") && "bg-white/10 font-medium"
+                  "flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                  isActive("/dashboard/bookmarks") && "bg-white/10 font-medium"
                 )}
               >
-                My Favorites
+                <Bookmark className="h-4 w-4" />
+                My Bookmarks
               </Link>
-              {/* Messages link removed */}
+
+              <Link
+                to="/dashboard/boosts"
+                className={cn(
+                  "flex items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                  isActive("/dashboard/boosts") && "bg-white/10 font-medium"
+                )}
+              >
+                <Heart className="h-4 w-4" />
+                My Boosts
+              </Link>
+
+              {/* Dashboard link */}
+              <Link
+                to="/dashboard"
+                className={cn(
+                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                  isActive("/dashboard") && "bg-white/10 font-medium"
+                )}
+              >
+                Creator Dashboard
+              </Link>
+
+              {/* Notes link */}
+              <Link
+                to="/notes"
+                className={cn(
+                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+                  isActive("/notes") && "bg-white/10 font-medium"
+                )}
+              >
+                📝 NoteBox
+              </Link>
+
+              {/* ⚠️ Legacy Favorites - Remove after migration */}
+              {/* <Link
+                to="/dashboard/favorites"
+                className={cn(
+                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5 text-muted-foreground",
+                  isActive("/dashboard/favorites") && "bg-white/10 font-medium"
+                )}
+                title="Legacy favorites - migrating to new system"
+              >
+                Legacy Favorites
+              </Link> */}
             </nav>
           </>
         )}
