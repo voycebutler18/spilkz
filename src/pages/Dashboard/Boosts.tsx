@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Database } from "@/types/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Heart, HeartOff, Search, TrendingUp } from "lucide-react";
+import { TrendingUp, TrendingDown, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
@@ -16,20 +16,22 @@ type BoostedSplik = {
   id: string;
   splik_id: string;
   created_at: string;
-  splik: {
+  spliks: {
     id: string;
     title: string | null;
     description: string | null;
     thumbnail_url: string | null;
-    hype_count: number;
+    video_url: string | null;
     created_at: string;
-    creator: {
+    user_id: string;
+    profiles: {
       id: string;
       username: string | null;
       display_name: string | null;
       avatar_url: string | null;
-    };
-  };
+    } | null;
+  } | null;
+  boost_count?: number;
 };
 
 export default function BoostsPage() {
@@ -69,10 +71,10 @@ export default function BoostsPage() {
     // Apply search filter
     if (searchQuery.trim()) {
       filtered = boosts.filter(boost =>
-        boost.splik.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        boost.splik.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        boost.splik.creator.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        boost.splik.creator.display_name?.toLowerCase().includes(searchQuery.toLowerCase())
+        boost.spliks?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        boost.spliks?.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        boost.spliks?.profiles?.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        boost.spliks?.profiles?.display_name?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
@@ -83,7 +85,7 @@ export default function BoostsPage() {
       );
     } else if (activeTab === "popular") {
       filtered = [...filtered].sort((a, b) => 
-        b.splik.hype_count - a.splik.hype_count
+        (b.boost_count || 0) - (a.boost_count || 0)
       );
     } else if (activeTab === "oldest") {
       filtered = [...filtered].sort((a, b) => 
@@ -96,20 +98,22 @@ export default function BoostsPage() {
 
   const fetchBoosts = async () => {
     try {
-      const { data, error } = await supabase
+      // First, get the user's boosts with splik details
+      const { data: boostData, error: boostError } = await supabase
         .from("boosts")
         .select(`
           id,
           splik_id,
           created_at,
-          splik:spliks(
+          spliks (
             id,
             title,
             description,
             thumbnail_url,
-            hype_count,
+            video_url,
             created_at,
-            creator:profiles(
+            user_id,
+            profiles (
               id,
               username,
               display_name,
@@ -117,10 +121,26 @@ export default function BoostsPage() {
             )
           )
         `)
-        .eq("user_id", user?.id);
+        .eq("user_id", user?.id)
+        .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setBoosts(data || []);
+      if (boostError) throw boostError;
+
+      // Get boost counts for each splik
+      const boostDataWithCounts = await Promise.all(
+        (boostData || []).map(async (boost) => {
+          if (!boost.spliks?.id) return { ...boost, boost_count: 0 };
+          
+          const { count } = await supabase
+            .from("boosts")
+            .select("*", { head: true, count: "exact" })
+            .eq("splik_id", boost.spliks.id);
+          
+          return { ...boost, boost_count: count || 0 };
+        })
+      );
+
+      setBoosts(boostDataWithCounts);
     } catch (error) {
       console.error("Error fetching boosts:", error);
     } finally {
@@ -179,7 +199,7 @@ export default function BoostsPage() {
           />
         </div>
         <Badge variant="secondary" className="flex items-center gap-1">
-          <Heart className="h-3 w-3" />
+          <TrendingUp className="h-3 w-3" />
           {boosts.length} boosted
         </Badge>
       </div>
@@ -196,7 +216,7 @@ export default function BoostsPage() {
           {filteredBoosts.length === 0 ? (
             <Card className="text-center py-12">
               <CardContent>
-                <Heart className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-semibold mb-2">
                   {searchQuery ? "No boosts found" : "No boosts yet"}
                 </h3>
@@ -215,91 +235,95 @@ export default function BoostsPage() {
             </Card>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {filteredBoosts.map((boost) => (
-                <Card key={boost.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-                  <div className="aspect-video relative bg-muted">
-                    {boost.splik.thumbnail_url ? (
-                      <img
-                        src={boost.splik.thumbnail_url}
-                        alt={boost.splik.title || "Splik thumbnail"}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-full">
-                        <div className="text-4xl text-muted-foreground">📹</div>
-                      </div>
-                    )}
-                    
-                    {/* Hype count badge */}
-                    <Badge className="absolute top-2 left-2 bg-red-500 text-white">
-                      <Heart className="h-3 w-3 mr-1" />
-                      {boost.splik.hype_count}
-                    </Badge>
-
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm"
-                      onClick={() => removeBoost(boost.splik_id)}
-                    >
-                      <HeartOff className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base line-clamp-2">
-                      <Link
-                        to={`/splik/${boost.splik_id}`}
-                        className="hover:text-primary transition-colors"
-                      >
-                        {boost.splik.title || "Untitled Splik"}
-                      </Link>
-                    </CardTitle>
-                  </CardHeader>
-
-                  <CardContent className="space-y-3">
-                    {boost.splik.description && (
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {boost.splik.description}
-                      </p>
-                    )}
-
-                    {/* Creator Info */}
-                    <div className="flex items-center gap-2">
-                      {boost.splik.creator.avatar_url ? (
+              {filteredBoosts.map((boost) => {
+                if (!boost.spliks) return null;
+                
+                return (
+                  <Card key={boost.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+                    <div className="aspect-video relative bg-muted">
+                      {boost.spliks.thumbnail_url ? (
                         <img
-                          src={boost.splik.creator.avatar_url}
-                          alt={boost.splik.creator.display_name || "Creator"}
-                          className="w-6 h-6 rounded-full"
+                          src={boost.spliks.thumbnail_url}
+                          alt={boost.spliks.title || "Splik thumbnail"}
+                          className="w-full h-full object-cover"
                         />
                       ) : (
-                        <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
-                          {(boost.splik.creator.display_name || boost.splik.creator.username || "?")[0].toUpperCase()}
+                        <div className="flex items-center justify-center h-full">
+                          <div className="text-4xl text-muted-foreground">📹</div>
                         </div>
                       )}
-                      <Link
-                        to={`/creator/${boost.splik.creator.username}`}
-                        className="text-sm font-medium hover:text-primary transition-colors"
+                      
+                      {/* Boost count badge */}
+                      <Badge className="absolute top-2 left-2 bg-orange-500 text-white">
+                        <TrendingUp className="h-3 w-3 mr-1" />
+                        {boost.boost_count || 0}
+                      </Badge>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm"
+                        onClick={() => removeBoost(boost.splik_id)}
                       >
-                        {boost.splik.creator.display_name || boost.splik.creator.username}
-                      </Link>
+                        <TrendingDown className="h-4 w-4" />
+                      </Button>
                     </div>
 
-                    {/* Stats and timestamps */}
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base line-clamp-2">
+                        <Link
+                          to={`/splik/${boost.splik_id}`}
+                          className="hover:text-primary transition-colors"
+                        >
+                          {boost.spliks.title || "Untitled Splik"}
+                        </Link>
+                      </CardTitle>
+                    </CardHeader>
+
+                    <CardContent className="space-y-3">
+                      {boost.spliks.description && (
+                        <p className="text-sm text-muted-foreground line-clamp-2">
+                          {boost.spliks.description}
+                        </p>
+                      )}
+
+                      {/* Creator Info */}
                       <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1">
-                          <TrendingUp className="h-3 w-3" />
-                          {boost.splik.hype_count} boosts
+                        {boost.spliks.profiles?.avatar_url ? (
+                          <img
+                            src={boost.spliks.profiles.avatar_url}
+                            alt={boost.spliks.profiles.display_name || "Creator"}
+                            className="w-6 h-6 rounded-full"
+                          />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
+                            {(boost.spliks.profiles?.display_name || boost.spliks.profiles?.username || "?")[0].toUpperCase()}
+                          </div>
+                        )}
+                        <Link
+                          to={`/creator/${boost.spliks.profiles?.username || boost.spliks.user_id}`}
+                          className="text-sm font-medium hover:text-primary transition-colors"
+                        >
+                          {boost.spliks.profiles?.display_name || boost.spliks.profiles?.username || "Unknown User"}
+                        </Link>
+                      </div>
+
+                      {/* Stats and timestamps */}
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center gap-1">
+                            <TrendingUp className="h-3 w-3" />
+                            {boost.boost_count || 0} boosts
+                          </span>
+                        </div>
+                        <span>
+                          Boosted {formatDistanceToNow(new Date(boost.created_at), { addSuffix: true })}
                         </span>
                       </div>
-                      <span>
-                        Boosted {formatDistanceToNow(new Date(boost.created_at), { addSuffix: true })}
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
