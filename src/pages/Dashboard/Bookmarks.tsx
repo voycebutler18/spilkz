@@ -97,35 +97,60 @@ export default function BookmarksPage() {
     try {
       console.log("Fetching bookmarks for user:", user?.id);
       
-      const { data: bookmarkData, error: bookmarkError } = await supabase
+      // Step 1: Get user's bookmarks
+      const { data: userBookmarks, error: bookmarksError } = await supabase
         .from("bookmarks")
-        .select(`
-          id,
-          splik_id,
-          created_at,
-          spliks (
-            id,
-            title,
-            description,
-            thumbnail_url,
-            video_url,
-            created_at,
-            user_id,
-            profiles (
-              id,
-              username,
-              display_name,
-              avatar_url
-            )
-          )
-        `)
+        .select("id, splik_id, created_at")
         .eq("user_id", user?.id)
         .order('created_at', { ascending: false });
 
-      console.log("Bookmark query result:", { data: bookmarkData, error: bookmarkError });
+      console.log("User bookmarks:", userBookmarks, "Error:", bookmarksError);
 
-      if (bookmarkError) throw bookmarkError;
-      setBookmarks(bookmarkData || []);
+      if (bookmarksError) throw bookmarksError;
+      if (!userBookmarks || userBookmarks.length === 0) {
+        console.log("No bookmarks found for user");
+        setBookmarks([]);
+        return;
+      }
+
+      // Step 2: Get splik details for each bookmark
+      const splikIds = userBookmarks.map(bookmark => bookmark.splik_id);
+      const { data: spliksData, error: spliksError } = await supabase
+        .from("spliks")
+        .select("id, title, description, thumbnail_url, video_url, created_at, user_id")
+        .in("id", splikIds);
+
+      console.log("Spliks data:", spliksData, "Error:", spliksError);
+
+      if (spliksError) throw spliksError;
+
+      // Step 3: Get creator profiles
+      const userIds = spliksData?.map(splik => splik.user_id) || [];
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .in("id", userIds);
+
+      console.log("Profiles data:", profilesData, "Error:", profilesError);
+
+      // Step 4: Combine the data
+      const combinedData = userBookmarks.map(bookmark => {
+        const splik = spliksData?.find(s => s.id === bookmark.splik_id);
+        const profile = profilesData?.find(p => p.id === splik?.user_id);
+        
+        return {
+          id: bookmark.id,
+          splik_id: bookmark.splik_id,
+          created_at: bookmark.created_at,
+          spliks: splik ? {
+            ...splik,
+            profiles: profile || null
+          } : null
+        };
+      });
+
+      console.log("Final combined bookmarks data:", combinedData);
+      setBookmarks(combinedData);
     } catch (error) {
       console.error("Error fetching bookmarks:", error);
     } finally {
