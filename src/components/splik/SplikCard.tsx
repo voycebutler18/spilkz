@@ -32,7 +32,7 @@ type Splik = {
   video_url: string | null;
   thumbnail_url?: string | null;
   created_at?: string;
-  hype_count?: number | null; // optional precomputed count
+  hype_count?: number | null; // optional precomputed count (used as a placeholder only)
   mime_type?: string | null;
   profile?: Profile | null;
 };
@@ -53,6 +53,26 @@ type Props = {
 };
 
 const VISIBILITY_THRESHOLD = 0.6;
+
+/** Public-safe count fetcher.
+ *  Prefers RPC `count_boosts_batch(ids uuid[])` (works without SELECT on boosts).
+ *  Falls back to a public SELECT if you enabled a read policy instead.
+ */
+async function fetchBoostCountPublic(splikId: string): Promise<number> {
+  try {
+    const { data, error } = await supabase.rpc("count_boosts_batch", { ids: [splikId] });
+    if (!error && data && data.length) return Number(data[0].total) || 0;
+  } catch {
+    /* ignore and try fallback */
+  }
+
+  const { count } = await supabase
+    .from("boosts")
+    .select("*", { head: true, count: "exact" })
+    .eq("splik_id", splikId);
+
+  return count ?? 0;
+}
 
 export default function SplikCard({
   splik,
@@ -75,7 +95,7 @@ export default function SplikCard({
   const [isFollowing, setIsFollowing] = React.useState(false);
   const [followLoading, setFollowLoading] = React.useState(false);
 
-  // Seed UI from props/db row
+  // Seed UI from parent/db row while we fetch the real count publicly below.
   const [hypeCount, setHypeCount] = React.useState<number>(
     initialHypeCount ?? splik.hype_count ?? 0
   );
@@ -86,7 +106,7 @@ export default function SplikCard({
     initialIsSaved ?? false
   );
 
-  // Keep in sync if parent updates
+  // Keep in sync if parent updates placeholders
   React.useEffect(() => {
     setHypeCount(initialHypeCount ?? splik.hype_count ?? 0);
   }, [initialHypeCount, splik.hype_count]);
@@ -135,7 +155,38 @@ export default function SplikCard({
     };
   }, [splik.user_id, splik.profile?.username, splik.profile?.display_name]);
 
-  /* ---------- ensure saved/hype state (if parent didn't pass it) ---------- */
+  /* ---------- public, source-of-truth boost count (works logged out) ---------- */
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      const total = await fetchBoostCountPublic(splik.id);
+      if (!cancelled) setHypeCount(total);
+    };
+
+    load();
+
+    // Optional live updates: re-count whenever boosts change for this splik
+    const ch = supabase
+      .channel(`boosts-${splik.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "boosts", filter: `splik_id=eq.${splik.id}` },
+        async () => {
+          if (cancelled) return;
+          const total = await fetchBoostCountPublic(splik.id);
+          setHypeCount(total);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      try { supabase.removeChannel(ch); } catch {}
+    };
+  }, [splik.id]);
+
+  /* ---------- per-user states (bookmark / has boosted / following) ---------- */
   React.useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -143,17 +194,15 @@ export default function SplikCard({
 
       try {
         if (initialIsSaved === undefined) {
-          // ✅ Updated to use new bookmarks table instead of favorites
           const { count } = await supabase
             .from("bookmarks")
             .select("id", { head: true, count: "exact" })
             .eq("user_id", user.id)
             .eq("splik_id", splik.id);
-          if (!cancelled) setIsSaved((count ?? 0) > 0);
+        if (!cancelled) setIsSaved((count ?? 0) > 0);
         }
 
         if (initialHasHyped === undefined) {
-          // ✅ Updated to use new boosts table instead of hype_reactions
           const { data: boostRow } = await supabase
             .from("boosts")
             .select("id")
@@ -163,14 +212,7 @@ export default function SplikCard({
           if (!cancelled) setHasHyped(!!boostRow);
         }
 
-        if (initialHypeCount === undefined && splik.hype_count == null) {
-          // ✅ Updated to count from boosts table
-          const { count } = await supabase
-            .from("boosts")
-            .select("*", { head: true, count: "exact" })
-            .eq("splik_id", splik.id);
-          if (!cancelled) setHypeCount(count ?? 0);
-        }
+        // NOTE: we no longer count boosts here — public effect above is the single source of truth.
 
         // Check follow status if not creator
         if (!isCreator) {
@@ -195,8 +237,8 @@ export default function SplikCard({
     splik.id,
     initialIsSaved,
     initialHasHyped,
-    initialHypeCount,
     splik.hype_count,
+    isCreator,
   ]);
 
   /* ---------- autoplay / visibility for video posts ---------- */
@@ -298,7 +340,6 @@ export default function SplikCard({
   const toggleHype = async () => {
     try {
       const u = await ensureAuth();
-      console.log("Toggling boost for splik:", splik.id, "user:", u.id, "current state:", hasHyped);
 
       if (hasHyped) {
         // Remove boost
@@ -307,8 +348,7 @@ export default function SplikCard({
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
-        console.log("Remove boost result:", result);
-        
+
         if (!result.error) {
           setHasHyped(false);
           setHypeCount((n) => Math.max(0, n - 1));
@@ -317,85 +357,69 @@ export default function SplikCard({
         // Add boost
         const result = await supabase
           .from("boosts")
-          .insert({ 
-            splik_id: splik.id, 
-            user_id: u.id
-          });
-        console.log("Add boost result:", result);
-        
-        if (!result.error) {
+          .insert({ splik_id: splik.id, user_id: u.id });
+
+        // If unique-constraint exists and row already there, treat as boosted
+        if (result.error && String(result.error.message || "").toLowerCase().includes("duplicate")) {
+          setHasHyped(true);
+        } else if (!result.error) {
           setHasHyped(true);
           setHypeCount((n) => n + 1);
         }
       }
 
-      // Refresh the actual count from database
-      const { count } = await supabase
-        .from("boosts")
-        .select("*", { head: true, count: "exact" })
-        .eq("splik_id", splik.id);
-      setHypeCount(count || 0);
-      
+      // Always refresh from server to show the truth
+      const total = await fetchBoostCountPublic(splik.id);
+      setHypeCount(total);
     } catch (error) {
-      console.error("Boost error:", error);
+      // auth_required already toasted
+      if ((error as any)?.message !== "auth_required") {
+        console.error("Boost error:", error);
+      }
     }
   };
 
   const toggleFollow = async () => {
     if (followLoading) return;
-    
+
     try {
       const u = await ensureAuth();
       setFollowLoading(true);
-      console.log("Toggling follow for user:", splik.user_id, "current state:", isFollowing);
-      
+
       if (isFollowing) {
-        // Unfollow
         const result = await supabase
           .from("followers")
           .delete()
           .eq("follower_id", u.id)
           .eq("following_id", splik.user_id);
-        
-        console.log("Unfollow result:", result);
-        
+
         if (!result.error) {
           setIsFollowing(false);
-          toast({
-            title: "Unfollowed",
-            description: `You unfollowed ${name}`,
-          });
+          toast({ title: "Unfollowed", description: `You unfollowed ${name}` });
         } else {
           throw result.error;
         }
       } else {
-        // Follow
         const result = await supabase
           .from("followers")
-          .insert([{ 
-            follower_id: u.id, 
-            following_id: splik.user_id 
-          }]);
-        
-        console.log("Follow result:", result);
-        
+          .insert([{ follower_id: u.id, following_id: splik.user_id }]);
+
         if (!result.error) {
           setIsFollowing(true);
-          toast({
-            title: "Following",
-            description: `You are now following ${name}`,
-          });
+          toast({ title: "Following", description: `You are now following ${name}` });
         } else {
           throw result.error;
         }
       }
     } catch (error) {
-      console.error("Follow error:", error);
-      toast({
-        title: "Error",
-        description: "Could not update follow status. Please try again.",
-        variant: "destructive",
-      });
+      if ((error as any)?.message !== "auth_required") {
+        console.error("Follow error:", error);
+        toast({
+          title: "Error",
+          description: "Could not update follow status. Please try again.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setFollowLoading(false);
     }
@@ -404,33 +428,30 @@ export default function SplikCard({
   const toggleSave = async () => {
     try {
       const u = await ensureAuth();
-      console.log("Toggling bookmark for splik:", splik.id, "user:", u.id, "current state:", isSaved);
-      
+
       if (isSaved) {
-        // Remove bookmark
         const result = await supabase
           .from("bookmarks")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
-        console.log("Remove bookmark result:", result);
-        
+
         if (!result.error) {
           setIsSaved(false);
         }
       } else {
-        // Add bookmark
         const result = await supabase
           .from("bookmarks")
           .insert([{ splik_id: splik.id, user_id: u.id }]);
-        console.log("Add bookmark result:", result);
-        
+
         if (!result.error) {
           setIsSaved(true);
         }
       }
     } catch (error) {
-      console.error("Bookmark error:", error);
+      if ((error as any)?.message !== "auth_required") {
+        console.error("Bookmark error:", error);
+      }
     }
   };
 
