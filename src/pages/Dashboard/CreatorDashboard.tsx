@@ -21,8 +21,8 @@ import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
-  Video, Users, TrendingUp, Settings, Heart, MessageCircle, Shield, Trash2, Plus,
-  Volume2, VolumeX, BarChart3,
+  Video, Users, TrendingUp, Settings, MessageCircle, Shield, Trash2, Plus,
+  Volume2, VolumeX, BarChart3, Bookmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -34,9 +34,9 @@ interface Profile {
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
-  followers_count: number;
-  following_count: number;
-  spliks_count: number;
+  followers_count?: number;
+  following_count?: number;
+  spliks_count?: number;
   followers_private?: boolean;
   following_private?: boolean;
 }
@@ -46,14 +46,15 @@ interface SplikRow {
   user_id: string;
   title: string | null;
   description: string | null;
-  video_url: string | null;      // null for photos
-  thumbnail_url: string | null;  // for photos this is the image itself
+  video_url: string | null;
+  thumbnail_url: string | null;
   created_at: string;
-  boosts_count?: number | null;  // Changed from likes_count
-  comments_count?: number | null;
-  trim_start?: number | null;    // videos only
-  trim_end?: number | null;      // videos only
-  mime_type?: string | null;     // optional, helpful to distinguish photo/video
+  boosts_count?: number;
+  comments_count?: number;
+  bookmarks_count?: number;
+  trim_start?: number | null;
+  trim_end?: number | null;
+  mime_type?: string | null;
   profile?: {
     username?: string | null;
     display_name?: string | null;
@@ -64,8 +65,9 @@ interface SplikRow {
 interface DashboardStats {
   totalSpliks: number;
   followers: number;
-  totalBoosts: number;      // Changed from totalReactions
-  avgBoostsPerPost: number; // Changed from avgReactionsPerVideo
+  totalBoosts: number;
+  avgBoostsPerPost: number;
+  totalBookmarks: number;
 }
 
 interface CommentRow {
@@ -79,34 +81,78 @@ interface CommentRow {
   user_avatar_url?: string | null;
 }
 
-/* ----------------------------- Helpers for counts ----------------------------- */
-async function fetchBoostCountsFor(ids: string[]) {
+/* ----------------------------- Real-time Count Helpers ----------------------------- */
+async function fetchBoostCounts(splikIds: string[]) {
   const counts: Record<string, number> = {};
+  if (splikIds.length === 0) return counts;
+  
   try {
-    // Update this table name to match your boost system
     const { data } = await supabase
-      .from("boost_reactions") // Replace with your actual boost table name
+      .from("splik_boosts")
       .select("splik_id")
-      .in("splik_id", ids);
+      .in("splik_id", splikIds);
 
-    (data || []).forEach((r: any) => {
-      const id = r.splik_id as string;
-      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
+    (data || []).forEach((boost: any) => {
+      const id = boost.splik_id;
+      counts[id] = (counts[id] || 0) + 1;
     });
-  } catch {}
+  } catch (error) {
+    console.error("Error fetching boost counts:", error);
+  }
   return counts;
 }
 
-async function fetchCommentCountsFor(ids: string[]) {
+async function fetchBookmarkCounts(splikIds: string[]) {
   const counts: Record<string, number> = {};
+  if (splikIds.length === 0) return counts;
+  
   try {
-    const { data } = await supabase.from("comments").select("splik_id").in("splik_id", ids);
-    (data || []).forEach((r: any) => {
-      const id = r.splik_id as string;
-      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
+    const { data } = await supabase
+      .from("splik_bookmarks")
+      .select("splik_id")
+      .in("splik_id", splikIds);
+
+    (data || []).forEach((bookmark: any) => {
+      const id = bookmark.splik_id;
+      counts[id] = (counts[id] || 0) + 1;
     });
-  } catch {}
+  } catch (error) {
+    console.error("Error fetching bookmark counts:", error);
+  }
   return counts;
+}
+
+async function fetchCommentCounts(splikIds: string[]) {
+  const counts: Record<string, number> = {};
+  if (splikIds.length === 0) return counts;
+  
+  try {
+    const { data } = await supabase
+      .from("comments")
+      .select("splik_id")
+      .in("splik_id", splikIds);
+
+    (data || []).forEach((comment: any) => {
+      const id = comment.splik_id;
+      counts[id] = (counts[id] || 0) + 1;
+    });
+  } catch (error) {
+    console.error("Error fetching comment counts:", error);
+  }
+  return counts;
+}
+
+async function fetchFollowerCount(userId: string) {
+  try {
+    const { count } = await supabase
+      .from("user_follows")
+      .select("*", { count: "exact", head: true })
+      .eq("following_id", userId);
+    return count || 0;
+  } catch (error) {
+    console.error("Error fetching follower count:", error);
+    return 0;
+  }
 }
 
 /* ----------------------------- Comments Manager ----------------------------- */
@@ -156,544 +202,107 @@ function CommentsManager({
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
-        (payload) => {
-          const id = (payload.old as any).id as string;
-          setComments((prev) => prev.filter((c) => c.id !== id));
-          onCountChange?.(-1);
-        }
-      )
-      .subscribe();
-
-    unsubRef.current = () => supabase.removeChannel(ch);
-    return () => {
-      if (unsubRef.current) unsubRef.current();
-      unsubRef.current = undefined;
-    };
-  }, [open, splik.id, onCountChange]);
-
-  const handleDelete = async (commentId: string) => {
-    try {
-      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
-      if (error) throw error;
-      toast.success("Comment deleted");
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to delete comment");
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : null)}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Comments — {splik.title || splik.id.slice(0, 6)}</DialogTitle>
-        </DialogHeader>
-
-        {loading ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>
-        ) : comments.length === 0 ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">No comments yet</div>
-        ) : (
-          <div className="max-h-[60vh] overflow-y-auto space-y-3">
-            {comments.map((c) => (
-              <div key={c.id} className="flex items-start gap-3 rounded-lg border p-3">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={c.user_avatar_url || undefined} />
-                  <AvatarFallback>
-                    {(c.user_display_name?.[0] || c.user_username?.[0] || "U").toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">
-                        {c.user_display_name || c.user_username || c.user_id}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(c.created_at), { addSuffix: true })}
-                      </div>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="h-8 px-2"
-                      onClick={() => handleDelete(c.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  <p className="text-sm mt-2 whitespace-pre-wrap break-words">{c.body}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ----------------------------- Feed Item ----------------------------- */
-function CreatorFeedItem({
-  splik, onDelete, onCommentCountAdjust,
-}: {
-  splik: SplikRow;
-  onDelete: (id: string) => void;
-  onCommentCountAdjust: (id: string, delta: number) => void;
-}) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
-  const [showComments, setShowComments] = useState(false);
-
-  const isPhoto = !splik.video_url && !!splik.thumbnail_url;
-  const start = Math.max(0, Number(splik.trim_start ?? 0));
-  const loopEnd = start + 3;
-
-  /* Video-only lifecycle */
-  useEffect(() => {
-    if (isPhoto) return;
-
-    const v = videoRef.current;
-    if (!v) return;
-
-    v.playsInline = true;
-    v.setAttribute("playsinline", "true");
-    // @ts-expect-error iOS vendor
-    v.setAttribute("webkit-playsinline", "true");
-    v.muted = true;
-    v.setAttribute("muted", "true");
-    v.controls = false;
-    v.preload = "metadata";
-    v.disablePictureInPicture = true;
-    // @ts-expect-error
-    v.disableRemotePlayback = true;
-
-    const onLoaded = () => {
-      try { v.currentTime = start; } catch {}
-    };
-    const onTimeUpdate = () => {
-      if (v.currentTime >= loopEnd || v.currentTime < start) {
-        try { v.currentTime = start; } catch {}
-      }
-    };
-
-    v.addEventListener("loadedmetadata", onLoaded);
-    v.addEventListener("timeupdate", onTimeUpdate);
-    return () => {
-      v.removeEventListener("loadedmetadata", onLoaded);
-      v.removeEventListener("timeupdate", onTimeUpdate);
-      try { v.pause(); } catch {}
-    };
-  }, [isPhoto, start, loopEnd]);
-
-  const togglePlayPause = async () => {
-    if (isPhoto) return;
-    const v = videoRef.current;
-    if (!v) return;
-
-    if (isPlaying) {
-      try { v.pause(); } catch {}
-      setIsPlaying(false);
-    } else {
-      try { v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01)); } catch {}
-      v.muted = isMuted;
-      if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
-      try {
-        await v.play();
-        setIsPlaying(true);
-      } catch (e) {
-        console.error("Play failed:", e);
-        setIsPlaying(false);
-      }
-    }
-  };
-
-  const toggleMute = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (isPhoto) return;
-    const v = videoRef.current;
-    if (!v) return;
-    const next = !isMuted;
-    v.muted = next;
-    if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
-    setIsMuted(next);
-  };
-
-  return (
-    <div className="w-full flex justify-center">
-      <div className="w-full max-w-[480px] bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-        {/* Media (9:16) */}
-        <div className="relative w-full" style={{ paddingBottom: "177.78%" }}>
-          {isPhoto ? (
-            <>
-              {/* PHOTO */}
-              <img
-                src={splik.thumbnail_url || ""}
-                alt={splik.title || "Photo"}
-                className="absolute inset-0 w-full h-full object-contain bg-black"
-              />
-
-              {/* Top-right Delete */}
-              <div className="absolute top-3 right-3">
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
-                  onClick={() => onDelete(splik.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-
-              {/* Stats bar */}
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
-                <div className="flex items-center justify-between text-white text-sm">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1">
-                      <TrendingUp className="h-4 w-4" />
-                      <span>{splik.boosts_count || 0}</span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowComments(true);
-                      }}
-                      className="flex items-center gap-1 hover:opacity-80"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                      <span>{splik.comments_count || 0}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>
-          ) : splik.video_url ? (
-            <>
-              {/* VIDEO */}
-              <video
-                ref={videoRef}
-                src={splik.video_url}
-                poster={splik.thumbnail_url || undefined}
-                className="absolute inset-0 w-full h-full object-cover"
-                muted
-                playsInline
-                // @ts-expect-error
-                webkit-playsinline="true"
-                preload="metadata"
-                controls={false}
-                controlsList="nodownload noplaybackrate noremoteplayback"
-                onClick={togglePlayPause}
-              />
-
-              {/* Center Play/Pause */}
-              <button
-                aria-label={isPlaying ? "Pause" : "Play"}
-                onClick={togglePlayPause}
-                className="absolute inset-0 flex items-center justify-center"
-              >
-                <div className="bg-black/45 rounded-full p-4">
-                  {isPlaying ? (
-                    <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-                    </svg>
-                  ) : (
-                    <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  )}
-                </div>
-              </button>
-
-              {/* Top-right Delete */}
-              <div className="absolute top-3 right-3">
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(splik.id);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-
-              {/* Bottom-right Mute */}
-              <button
-                onClick={toggleMute}
-                className="absolute bottom-3 right-3 z-10 bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
-                aria-label={isMuted ? "Unmute" : "Mute"}
-              >
-                {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
-              </button>
-
-              {/* Stats bar */}
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
-                <div className="flex items-center justify-between text-white text-sm">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1">
-                      <TrendingUp className="h-4 w-4" />
-                      <span>{splik.boosts_count || 0}</span>
-                    </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowComments(true);
-                      }}
-                      className="flex items-center gap-1 hover:opacity-80"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                      <span>{splik.comments_count || 0}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
-              <Video className="h-12 w-12 text-gray-600" />
-            </div>
-          )}
-        </div>
-
-        {/* Meta */}
-        <div className="p-4">
-          <h4 className="font-semibold text-white">
-            {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
-          </h4>
-          {splik.description && (
-            <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
-          )}
-          <div className="mt-2 text-xs text-gray-500">
-            {new Date(splik.created_at).toLocaleDateString()}
-            {!isPhoto && (
-              <span className="ml-1">
-                • Trimmed: {Math.max(0, Math.round((splik.trim_start ?? 0) * 10) / 10)}s –{" "}
-                {Math.round((Math.max(0, (splik.trim_start ?? 0)) + 3) * 10) / 10}s
-              </span>
-            )}
-          </div>
-
-          <div className="mt-3">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowComments(true)}>
-              <MessageCircle className="h-4 w-4" />
-              Manage comments
-            </Button>
-          </div>
-        </div>
-
-        {/* Comments modal */}
-        {showComments && (
-          <CommentsManager
-            open={showComments}
-            onClose={() => setShowComments(false)}
-            splik={splik}
-            onCountChange={(delta) => onCommentCountAdjust(splik.id, delta)}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ----------------------------- Feed ----------------------------- */
-function CreatorFeed({
-  spliks, onDelete, onCommentCountAdjust,
-}: {
-  spliks: SplikRow[];
-  onDelete: (id: string) => void;
-  onCommentCountAdjust: (id: string, delta: number) => void;
-}) {
-  return (
-    <div className="space-y-8">
-      {spliks.map((s) => (
-        <CreatorFeedItem
-          key={s.id}
-          splik={s}
-          onDelete={onDelete}
-          onCommentCountAdjust={onCommentCountAdjust}
-        />
-      ))}
-    </div>
-  );
-}
-
-/* ----------------------------- Main Component ----------------------------- */
-const CreatorDashboard = () => {
-  const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [spliks, setSpliks] = useState<SplikRow[]>([]);
-  const [stats, setStats] = useState<DashboardStats>({
-    totalSpliks: 0,
-    followers: 0,
-    totalBoosts: 0,
-    avgBoostsPerPost: 0,
-  });
-
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [editingProfile, setEditingProfile] = useState(false);
-  const [formData, setFormData] = useState({
-    username: "",
-    display_name: "",
-    bio: "",
-    avatar_url: "",
-  });
-
-  const channelCleanup = useRef<null | (() => void)>(null);
-
-  /* ------------------------ Auth + initial load ------------------------ */
-  useEffect(() => {
-    (async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth.user?.id || null;
-      if (!uid) {
-        navigate("/login");
-        return;
-      }
-      setCurrentUserId(uid);
-
-      try {
-        const { data: adminRow } = await supabase
-          .from("admin_users")
-          .select("user_id")
-          .eq("user_id", uid)
-          .maybeSingle();
-        setIsAdmin(!!adminRow?.user_id);
-      } catch {
-        setIsAdmin(false);
-      }
-
-      await Promise.all([fetchProfile(uid), fetchSpliks(uid)]);
-      setupRealtime(uid);
-      setLoading(false);
-    })();
-
-    return () => {
-      if (channelCleanup.current) {
-        try { channelCleanup.current(); } catch {}
-        channelCleanup.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* ---------------------------- Realtime ---------------------------- */
-  const setupRealtime = (uid: string) => {
-    if (channelCleanup.current) {
-      try { channelCleanup.current(); } catch {}
-      channelCleanup.current = null;
-    }
-
-    const ch = supabase
-      .channel("creator-dashboard")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
-        (payload) => {
-          const row = payload.new as SplikRow;
-          setSpliks((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
-          recomputeStatsFromList((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
-        (payload) => {
-          const row = payload.new as SplikRow;
-          setSpliks((prev) => prev.map((s) => (s.id === row.id ? { ...s, ...row } : s)));
-          recomputeStatsFromList((prev) => prev.map((s) => (s.id === row.id ? { ...s, ...row } : s)));
-        }
-      )
-      .on(
-        "postgres_changes",
         { event: "DELETE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
         (payload) => {
           const deletedId = (payload.old as any)?.id as string;
           setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
-          recomputeStatsFromList((prev) => prev.filter((s) => s.id !== deletedId));
+          updateStats();
         }
       )
-      // comments live updates
+      // Boost changes
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "splik_boosts" },
+        (payload) => {
+          const boost = payload.new as any;
+          setSpliks((prev) => prev.map((s) =>
+            s.id === boost.splik_id
+              ? { ...s, boosts_count: (s.boosts_count || 0) + 1 }
+              : s
+          ));
+          updateStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "splik_boosts" },
+        (payload) => {
+          const boost = payload.old as any;
+          setSpliks((prev) => prev.map((s) =>
+            s.id === boost.splik_id
+              ? { ...s, boosts_count: Math.max(0, (s.boosts_count || 0) - 1) }
+              : s
+          ));
+          updateStats();
+        }
+      )
+      // Bookmark changes
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "splik_bookmarks" },
+        (payload) => {
+          const bookmark = payload.new as any;
+          setSpliks((prev) => prev.map((s) =>
+            s.id === bookmark.splik_id
+              ? { ...s, bookmarks_count: (s.bookmarks_count || 0) + 1 }
+              : s
+          ));
+          updateStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "splik_bookmarks" },
+        (payload) => {
+          const bookmark = payload.old as any;
+          setSpliks((prev) => prev.map((s) =>
+            s.id === bookmark.splik_id
+              ? { ...s, bookmarks_count: Math.max(0, (s.bookmarks_count || 0) - 1) }
+              : s
+          ));
+          updateStats();
+        }
+      )
+      // Comment changes
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "comments" },
         (payload) => {
-          const sid = (payload.new as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            const next = prev.map((s) =>
-              s.id === sid ? { ...s, comments_count: (s.comments_count ?? 0) + 1 } : s
-            );
-            return next;
-          });
-          recomputeStatsFromList((prev) => prev);
+          const comment = payload.new as any;
+          setSpliks((prev) => prev.map((s) =>
+            s.id === comment.splik_id
+              ? { ...s, comments_count: (s.comments_count || 0) + 1 }
+              : s
+          ));
+          updateStats();
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "comments" },
         (payload) => {
-          const sid = (payload.old as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            const next = prev.map((s) =>
-              s.id === sid ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) - 1) } : s
-            );
-            return next;
-          });
-          recomputeStatsFromList((prev) => prev);
+          const comment = payload.old as any;
+          setSpliks((prev) => prev.map((s) =>
+            s.id === comment.splik_id
+              ? { ...s, comments_count: Math.max(0, (s.comments_count || 0) - 1) }
+              : s
+          ));
+          updateStats();
         }
       )
-      // boost live updates (updated from hype_reactions)
+      // Follower changes
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "boost_reactions" }, // Update table name
+        { event: "INSERT", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
         (payload) => {
-          const sid = (payload.new as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            return prev.map((s) =>
-              s.id === sid ? { ...s, boosts_count: (s.boosts_count ?? 0) + 1 } : s
-            );
-          });
-          recomputeStatsFromList((prev) => prev);
+          setStats((prev) => ({ ...prev, followers: prev.followers + 1 }));
         }
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "boost_reactions" }, // Update table name
+        { event: "DELETE", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
         (payload) => {
-          const sid = (payload.old as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            return prev.map((s) =>
-              s.id === sid
-                ? { ...s, boosts_count: Math.max(0, (s.boosts_count ?? 0) - 1) }
-                : s
-            );
-          });
-          recomputeStatsFromList((prev) => prev);
-        }
-      )
-      // profile updates
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${uid}` },
-        (payload) => {
-          const p = payload.new as Profile;
-          setProfile(p);
-          updateStatsFromProfile(p);
+          setStats((prev) => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
         }
       )
       .subscribe();
@@ -714,7 +323,6 @@ const CreatorDashboard = () => {
         bio: data.bio || "",
         avatar_url: data.avatar_url || "",
       });
-      updateStatsFromProfile(data as Profile);
     } catch (e) {
       console.error("Error fetching profile:", e);
     }
@@ -729,75 +337,70 @@ const CreatorDashboard = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      const ids = (rows || []).map((r: any) => r.id as string);
-      const [boostCounts, commentCounts] = await Promise.all([
-        fetchBoostCountsFor(ids),
-        fetchCommentCountsFor(ids),
+      const splikIds = (rows || []).map((r: any) => r.id as string);
+      
+      // Fetch all counts in parallel
+      const [boostCounts, bookmarkCounts, commentCounts] = await Promise.all([
+        fetchBoostCounts(splikIds),
+        fetchBookmarkCounts(splikIds),
+        fetchCommentCounts(splikIds),
       ]);
-
-      let prof: Profile | null = null;
-      try {
-        const { data } = await supabase
-          .from("profiles")
-          .select("username, display_name, avatar_url")
-          .eq("id", userId)
-          .single();
-        prof = (data as any) || null;
-      } catch {}
 
       const merged: SplikRow[] = (rows || []).map((r: any) => ({
         ...(r as SplikRow),
-        profile: prof,
-        boosts_count: boostCounts[r.id] ?? 0,
-        comments_count: commentCounts[r.id] ?? 0,
+        boosts_count: boostCounts[r.id] || 0,
+        bookmarks_count: bookmarkCounts[r.id] || 0,
+        comments_count: commentCounts[r.id] || 0,
       }));
 
       setSpliks(merged);
-      recomputeStatsFromList(merged);
+      updateStats();
     } catch (e) {
       console.error("Error fetching posts:", e);
     }
   };
 
-  /* ------------------------- Stats helpers ------------------------- */
-  const updateStatsFromProfile = (p: Profile) => {
-    setStats((prev) => ({
-      ...prev,
-      followers: p.followers_count ?? 0,
-      totalSpliks: p.spliks_count ?? 0,
-    }));
+  /* ----------------------------- Stats calculation ----------------------------- */
+  const updateStats = async () => {
+    if (!currentUserId) return;
+
+    try {
+      // Get follower count
+      const followerCount = await fetchFollowerCount(currentUserId);
+      
+      setSpliks((currentSpliks) => {
+        const totalSpliks = currentSpliks.length;
+        const totalBoosts = currentSpliks.reduce((acc, s) => acc + (s.boosts_count || 0), 0);
+        const totalBookmarks = currentSpliks.reduce((acc, s) => acc + (s.bookmarks_count || 0), 0);
+        const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
+
+        setStats({
+          totalSpliks,
+          followers: followerCount,
+          totalBoosts,
+          avgBoostsPerPost,
+          totalBookmarks,
+        });
+
+        return currentSpliks;
+      });
+    } catch (error) {
+      console.error("Error updating stats:", error);
+    }
   };
 
-  const recomputeStatsFromList = (
-    listOrUpdater: SplikRow[] | ((prev: SplikRow[]) => SplikRow[])
-  ) => {
-    setSpliks((prev) => {
-      const list = typeof listOrUpdater === "function" ? (listOrUpdater as any)(prev) : listOrUpdater;
-      const totalBoosts = list.reduce((acc, s) => acc + (s.boosts_count || 0), 0) || 0;
-      const totalSpliks = list.length;
-      const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
-
-      setStats((st) => ({
-        ...st,
-        totalSpliks,
-        totalBoosts,
-        avgBoostsPerPost,
-      }));
-      return list;
-    });
-  };
-
-  /* ------------------------- Comments count adjust ------------------------- */
-  const handleCommentCountAdjust = (splikId: string, delta: number) => {
+  /* ----------------------------- Event handlers ----------------------------- */
+  const handleCountChange = (splikId: string, type: 'boosts' | 'comments' | 'bookmarks', delta: number) => {
     setSpliks((prev) =>
       prev.map((s) =>
-        s.id === splikId ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) + delta) } : s
+        s.id === splikId
+          ? { ...s, [`${type}_count`]: Math.max(0, (s[`${type}_count` as keyof SplikRow] as number || 0) + delta) }
+          : s
       )
     );
-    recomputeStatsFromList((prev) => prev);
+    updateStats();
   };
 
-  /* ------------------------- Delete post ------------------------- */
   const handleDeleteVideo = async (videoId: string) => {
     if (!currentUserId) return;
 
@@ -811,7 +414,6 @@ const CreatorDashboard = () => {
     }
   };
 
-  /* ------------------------- Profile update ------------------------- */
   const handleProfileUpdate = async () => {
     if (!currentUserId) return;
     try {
@@ -912,7 +514,7 @@ const CreatorDashboard = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Modern Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {/* Total Posts - Enhanced */}
+          {/* Total Posts */}
           <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
@@ -937,7 +539,7 @@ const CreatorDashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Total Boosts - New */}
+          {/* Total Boosts */}
           <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
@@ -962,7 +564,7 @@ const CreatorDashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Followers - Enhanced */}
+          {/* Followers */}
           <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
@@ -987,7 +589,7 @@ const CreatorDashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Avg Boosts Per Post - New */}
+          {/* Avg Boosts Per Post */}
           <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
@@ -1027,13 +629,13 @@ const CreatorDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* Posts — FEED STYLE */}
+          {/* Posts Feed */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
               <CreatorFeed
                 spliks={spliks}
                 onDelete={handleDeleteVideo}
-                onCommentCountAdjust={handleCommentCountAdjust}
+                onCountChange={handleCountChange}
               />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
@@ -1056,12 +658,30 @@ const CreatorDashboard = () => {
                 <CardDescription className="text-gray-400">Track your content performance and growth</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
-                  <div>
-                    <p className="text-sm text-gray-400">This Week's Boosts</p>
-                    <p className="text-2xl font-bold text-white">{stats.totalBoosts}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-gray-400">Total Boosts</p>
+                      <p className="text-2xl font-bold text-white">{stats.totalBoosts}</p>
+                    </div>
+                    <Badge variant="secondary" className="bg-orange-900 text-orange-300">Live</Badge>
                   </div>
-                  <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
+                  
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-gray-400">Total Bookmarks</p>
+                      <p className="text-2xl font-bold text-white">{stats.totalBookmarks}</p>
+                    </div>
+                    <Badge variant="secondary" className="bg-blue-900 text-blue-300">Live</Badge>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-gray-400">Followers</p>
+                      <p className="text-2xl font-bold text-white">{stats.followers}</p>
+                    </div>
+                    <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
+                  </div>
                 </div>
 
                 <CreatorAnalytics spliks={spliks} stats={stats} />
@@ -1224,4 +844,466 @@ const CreatorDashboard = () => {
   );
 };
 
-export default CreatorDashboard;
+export default CreatorDashboard;: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
+        (payload) => {
+          const id = (payload.old as any).id as string;
+          setComments((prev) => prev.filter((c) => c.id !== id));
+          onCountChange?.(-1);
+        }
+      )
+      .subscribe();
+
+    unsubRef.current = () => supabase.removeChannel(ch);
+    return () => {
+      if (unsubRef.current) unsubRef.current();
+      unsubRef.current = undefined;
+    };
+  }, [open, splik.id, onCountChange]);
+
+  const handleDelete = async (commentId: string) => {
+    try {
+      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
+      if (error) throw error;
+      toast.success("Comment deleted");
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to delete comment");
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : null)}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Comments — {splik.title || splik.id.slice(0, 6)}</DialogTitle>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>
+        ) : comments.length === 0 ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">No comments yet</div>
+        ) : (
+          <div className="max-h-[60vh] overflow-y-auto space-y-3">
+            {comments.map((c) => (
+              <div key={c.id} className="flex items-start gap-3 rounded-lg border p-3">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={c.user_avatar_url || undefined} />
+                  <AvatarFallback>
+                    {(c.user_display_name?.[0] || c.user_username?.[0] || "U").toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">
+                        {c.user_display_name || c.user_username || c.user_id}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(c.created_at), { addSuffix: true })}
+                      </div>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-8 px-2"
+                      onClick={() => handleDelete(c.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <p className="text-sm mt-2 whitespace-pre-wrap break-words">{c.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ----------------------------- Feed Item ----------------------------- */
+function CreatorFeedItem({
+  splik, onDelete, onCountChange,
+}: {
+  splik: SplikRow;
+  onDelete: (id: string) => void;
+  onCountChange: (id: string, type: 'boosts' | 'comments' | 'bookmarks', delta: number) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [showComments, setShowComments] = useState(false);
+
+  const isPhoto = !splik.video_url && !!splik.thumbnail_url;
+  const start = Math.max(0, Number(splik.trim_start ?? 0));
+  const loopEnd = start + 3;
+
+  /* Video-only lifecycle */
+  useEffect(() => {
+    if (isPhoto) return;
+
+    const v = videoRef.current;
+    if (!v) return;
+
+    v.playsInline = true;
+    v.setAttribute("playsinline", "true");
+    // @ts-expect-error iOS vendor
+    v.setAttribute("webkit-playsinline", "true");
+    v.muted = true;
+    v.setAttribute("muted", "true");
+    v.controls = false;
+    v.preload = "metadata";
+    v.disablePictureInPicture = true;
+    // @ts-expect-error
+    v.disableRemotePlayback = true;
+
+    const onLoaded = () => {
+      try { v.currentTime = start; } catch {}
+    };
+    const onTimeUpdate = () => {
+      if (v.currentTime >= loopEnd || v.currentTime < start) {
+        try { v.currentTime = start; } catch {}
+      }
+    };
+
+    v.addEventListener("loadedmetadata", onLoaded);
+    v.addEventListener("timeupdate", onTimeUpdate);
+    return () => {
+      v.removeEventListener("loadedmetadata", onLoaded);
+      v.removeEventListener("timeupdate", onTimeUpdate);
+      try { v.pause(); } catch {}
+    };
+  }, [isPhoto, start, loopEnd]);
+
+  const togglePlayPause = async () => {
+    if (isPhoto) return;
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (isPlaying) {
+      try { v.pause(); } catch {}
+      setIsPlaying(false);
+    } else {
+      try { v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01)); } catch {}
+      v.muted = isMuted;
+      if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
+      try {
+        await v.play();
+        setIsPlaying(true);
+      } catch (e) {
+        console.error("Play failed:", e);
+        setIsPlaying(false);
+      }
+    }
+  };
+
+  const toggleMute = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (isPhoto) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const next = !isMuted;
+    v.muted = next;
+    if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
+    setIsMuted(next);
+  };
+
+  return (
+    <div className="w-full flex justify-center">
+      <div className="w-full max-w-[480px] bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+        {/* Media (9:16) */}
+        <div className="relative w-full" style={{ paddingBottom: "177.78%" }}>
+          {isPhoto ? (
+            <>
+              {/* PHOTO */}
+              <img
+                src={splik.thumbnail_url || ""}
+                alt={splik.title || "Photo"}
+                className="absolute inset-0 w-full h-full object-contain bg-black"
+              />
+
+              {/* Top-right Delete */}
+              <div className="absolute top-3 right-3">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
+                  onClick={() => onDelete(splik.id)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Stats bar */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+                <div className="flex items-center justify-between text-white text-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1">
+                      <TrendingUp className="h-4 w-4 text-orange-400" />
+                      <span>{splik.boosts_count || 0}</span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowComments(true);
+                      }}
+                      className="flex items-center gap-1 hover:opacity-80"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      <span>{splik.comments_count || 0}</span>
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <Bookmark className="h-4 w-4 text-blue-400" />
+                      <span>{splik.bookmarks_count || 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : splik.video_url ? (
+            <>
+              {/* VIDEO */}
+              <video
+                ref={videoRef}
+                src={splik.video_url}
+                poster={splik.thumbnail_url || undefined}
+                className="absolute inset-0 w-full h-full object-cover"
+                muted
+                playsInline
+                // @ts-expect-error
+                webkit-playsinline="true"
+                preload="metadata"
+                controls={false}
+                controlsList="nodownload noplaybackrate noremoteplayback"
+                onClick={togglePlayPause}
+              />
+
+              {/* Center Play/Pause */}
+              <button
+                aria-label={isPlaying ? "Pause" : "Play"}
+                onClick={togglePlayPause}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <div className="bg-black/45 rounded-full p-4">
+                  {isPlaying ? (
+                    <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-10 w-10 text-white" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                </div>
+              </button>
+
+              {/* Top-right Delete */}
+              <div className="absolute top-3 right-3">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-8 w-8 p-0 bg-red-900 hover:bg-red-800 shadow-lg"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(splik.id);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Bottom-right Mute */}
+              <button
+                onClick={toggleMute}
+                className="absolute bottom-3 right-3 z-10 bg-black/60 hover:bg-black/70 rounded-full p-2 ring-1 ring-white/40 shadow-md"
+                aria-label={isMuted ? "Unmute" : "Mute"}
+              >
+                {isMuted ? <VolumeX className="h-5 w-5 text-white" /> : <Volume2 className="h-5 w-5 text-white" />}
+              </button>
+
+              {/* Stats bar */}
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+                <div className="flex items-center justify-between text-white text-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1">
+                      <TrendingUp className="h-4 w-4 text-orange-400" />
+                      <span>{splik.boosts_count || 0}</span>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowComments(true);
+                      }}
+                      className="flex items-center gap-1 hover:opacity-80"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                      <span>{splik.comments_count || 0}</span>
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <Bookmark className="h-4 w-4 text-blue-400" />
+                      <span>{splik.bookmarks_count || 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+              <Video className="h-12 w-12 text-gray-600" />
+            </div>
+          )}
+        </div>
+
+        {/* Meta */}
+        <div className="p-4">
+          <h4 className="font-semibold text-white">
+            {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
+          </h4>
+          {splik.description && (
+            <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
+          )}
+          <div className="mt-2 text-xs text-gray-500">
+            {new Date(splik.created_at).toLocaleDateString()}
+            {!isPhoto && (
+              <span className="ml-1">
+                • Trimmed: {Math.max(0, Math.round((splik.trim_start ?? 0) * 10) / 10)}s –{" "}
+                {Math.round((Math.max(0, (splik.trim_start ?? 0)) + 3) * 10) / 10}s
+              </span>
+            )}
+          </div>
+
+          <div className="mt-3">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowComments(true)}>
+              <MessageCircle className="h-4 w-4" />
+              Manage comments
+            </Button>
+          </div>
+        </div>
+
+        {/* Comments modal */}
+        {showComments && (
+          <CommentsManager
+            open={showComments}
+            onClose={() => setShowComments(false)}
+            splik={splik}
+            onCountChange={(delta) => onCountChange(splik.id, 'comments', delta)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- Feed ----------------------------- */
+function CreatorFeed({
+  spliks, onDelete, onCountChange,
+}: {
+  spliks: SplikRow[];
+  onDelete: (id: string) => void;
+  onCountChange: (id: string, type: 'boosts' | 'comments' | 'bookmarks', delta: number) => void;
+}) {
+  return (
+    <div className="space-y-8">
+      {spliks.map((s) => (
+        <CreatorFeedItem
+          key={s.id}
+          splik={s}
+          onDelete={onDelete}
+          onCountChange={onCountChange}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* ----------------------------- Main Component ----------------------------- */
+const CreatorDashboard = () => {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [spliks, setSpliks] = useState<SplikRow[]>([]);
+  const [stats, setStats] = useState<DashboardStats>({
+    totalSpliks: 0,
+    followers: 0,
+    totalBoosts: 0,
+    avgBoostsPerPost: 0,
+    totalBookmarks: 0,
+  });
+
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [formData, setFormData] = useState({
+    username: "",
+    display_name: "",
+    bio: "",
+    avatar_url: "",
+  });
+
+  const channelCleanup = useRef<null | (() => void)>(null);
+
+  /* ------------------------ Auth + initial load ------------------------ */
+  useEffect(() => {
+    (async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth.user?.id || null;
+      if (!uid) {
+        navigate("/login");
+        return;
+      }
+      setCurrentUserId(uid);
+
+      try {
+        const { data: adminRow } = await supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", uid)
+          .maybeSingle();
+        setIsAdmin(!!adminRow?.user_id);
+      } catch {
+        setIsAdmin(false);
+      }
+
+      await Promise.all([fetchProfile(uid), fetchSpliks(uid)]);
+      setupRealtime(uid);
+      setLoading(false);
+    })();
+
+    return () => {
+      if (channelCleanup.current) {
+        try { channelCleanup.current(); } catch {}
+        channelCleanup.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------------------- Realtime ---------------------------- */
+  const setupRealtime = (uid: string) => {
+    if (channelCleanup.current) {
+      try { channelCleanup.current(); } catch {}
+      channelCleanup.current = null;
+    }
+
+    const ch = supabase
+      .channel("creator-dashboard-realtime")
+      // Spliks changes
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        (payload) => {
+          const row = payload.new as SplikRow;
+          setSpliks((prev) => [{ ...row, boosts_count: 0, comments_count: 0, bookmarks_count: 0 }, ...prev]);
+          updateStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema
