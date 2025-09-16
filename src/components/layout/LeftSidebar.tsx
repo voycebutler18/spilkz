@@ -2,7 +2,6 @@
 import * as React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Badge } from "@/components/ui/badge";
 import { Heart, Bookmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -83,17 +82,17 @@ const LeftSidebar: React.FC = () => {
             🙏 Daily Prayers
           </Link>
 
-          {/* Splikz Dating (coming soon) */}
-          <div
-            className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground/90 hover:bg-white/5 cursor-not-allowed select-none"
-            aria-disabled="true"
-            title="Splikz Dating is coming soon"
+          {/* ✅ Splikz Dating (active link) */}
+          <Link
+            to={user ? "/dating" : "/login?next=/dating"}
+            className={cn(
+              "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
+              isActive("/dating") && "bg-white/10 font-medium"
+            )}
+            title={user ? "Splikz Dating" : "Sign in to use Splikz Dating"}
           >
-            <span>Splikz Dating</span>
-            <Badge variant="secondary" className="text-[10px]">
-              Coming soon
-            </Badge>
-          </div>
+            Splikz Dating
+          </Link>
 
           <Link
             to="/brands"
@@ -164,18 +163,6 @@ const LeftSidebar: React.FC = () => {
               >
                 📝 NoteBox
               </Link>
-
-              {/* ⚠️ Legacy Favorites - Remove after migration */}
-              {/* <Link
-                to="/dashboard/favorites"
-                className={cn(
-                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5 text-muted-foreground",
-                  isActive("/dashboard/favorites") && "bg-white/10 font-medium"
-                )}
-                title="Legacy favorites - migrating to new system"
-              >
-                Legacy Favorites
-              </Link> */}
             </nav>
           </>
         )}
