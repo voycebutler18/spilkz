@@ -125,7 +125,9 @@ const Signup = () => {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         if (session) {
           navigate("/dashboard");
           return;
@@ -178,8 +180,20 @@ const Signup = () => {
     const normUsername = normalizeUsername(username);
 
     // basic validation
-    if (!normEmail || !password || !firstName || !lastName || !dob || !city || !normUsername) {
-      toast({ title: "Error", description: "Please fill in all fields", variant: "destructive" });
+    if (
+      !normEmail ||
+      !password ||
+      !firstName ||
+      !lastName ||
+      !dob ||
+      !city ||
+      !normUsername
+    ) {
+      toast({
+        title: "Error",
+        description: "Please fill in all fields",
+        variant: "destructive",
+      });
       return;
     }
     if (!USERNAME_RE.test(normUsername)) {
@@ -191,7 +205,11 @@ const Signup = () => {
       return;
     }
     if (password.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Password must be at least 6 characters",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -199,7 +217,8 @@ const Signup = () => {
     if (Number.isNaN(ageNum) || ageNum < 13 || ageNum > 120) {
       toast({
         title: "Invalid age",
-        description: "Your date of birth must indicate an age between 13 and 120.",
+        description:
+          "Your date of birth must indicate an age between 13 and 120.",
         variant: "destructive",
       });
       return;
@@ -242,9 +261,8 @@ const Signup = () => {
       if (error) throw error;
 
       if (data.user) {
-        // Create profile row - CORRECTED VERSION
-        const normHandle = normalizeUsername(username);
-
+        // Create/ensure profile row with handle immediately available.
+        // display_name defaults to @handle so right rail + routes show correctly.
         const { error: profileError } = await supabase
           .from("profiles")
           .upsert(
@@ -254,17 +272,14 @@ const Signup = () => {
               last_name: lastName,
               age: ageNum,
               city,
-              // store normalized handle
-              username: normHandle,
-              // make sure something visible shows up in feeds immediately
-              display_name: `${firstName} ${lastName}`.trim() || `@${normHandle}`,
-              // optional: set avatar_url later via uploader
+              username: normUsername,          // ✅ handle saved now
+              display_name: `@${normUsername}`,// ✅ visible immediately
             },
-            { onConflict: "id" } // safe if a row already exists
+            { onConflict: "id" }               // safe if a row already exists for this id
           );
 
         if (profileError) {
-          // If the username was taken in the split second between check & insert
+          // If your DB has a unique constraint and another user grabbed it in between
           if ((profileError as any).code === "23505") {
             toast({
               title: "Username just got taken",
@@ -277,19 +292,24 @@ const Signup = () => {
           console.error("Profile creation error:", profileError);
         }
 
-        // Optional welcome email (safe to keep)
+        // Optional welcome email
         try {
-          const { error: emailError } = await supabase.functions.invoke("send-welcome-email", {
-            body: { email: normEmail, firstName, lastName },
-          });
-          if (emailError) console.error("Failed to send welcome email:", emailError);
+          const { error: emailError } = await supabase.functions.invoke(
+            "send-welcome-email",
+            { body: { email: normEmail, firstName, lastName } }
+          );
+          if (emailError)
+            console.error("Failed to send welcome email:", emailError);
         } catch (emailError) {
           console.error("Error calling email function:", emailError);
         }
 
         // Sign in immediately for smoother UX
         const { data: signInData, error: signInError } =
-          await supabase.auth.signInWithPassword({ email: normEmail, password });
+          await supabase.auth.signInWithPassword({
+            email: normEmail,
+            password,
+          });
 
         if (!signInError && signInData.session) {
           toast({ title: "Account created!", description: "Welcome to Splikz!" });
@@ -329,7 +349,9 @@ const Signup = () => {
             <Sparkles className="h-12 w-12 text-primary" />
           </div>
           <CardTitle className="text-2xl">Create your account</CardTitle>
-          <CardDescription>Join Splikz and start sharing your gestures</CardDescription>
+          <CardDescription>
+            Join Splikz and start sharing your gestures
+          </CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -398,12 +420,17 @@ const Signup = () => {
                 </div>
               </div>
               {usernameMsg && (
-                <p className={`text-xs ${usernameOK ? "text-green-600" : "text-red-600"}`}>
+                <p
+                  className={`text-xs ${
+                    usernameOK ? "text-green-600" : "text-red-600"
+                  }`}
+                >
                   {usernameMsg}
                 </p>
               )}
               <p className="text-[11px] text-muted-foreground">
-                3–20 characters. Letters, numbers, dots or underscores. Not case-sensitive.
+                3–20 characters. Letters, numbers, dots or underscores. Not
+                case-sensitive.
               </p>
             </div>
 
@@ -461,13 +488,21 @@ const Signup = () => {
                   />
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  For safety, your DOB helps us verify age and can't be changed later.
+                  For safety, your DOB helps us verify age and can’t be changed
+                  later.
                 </p>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="age">Age</Label>
-                <Input id="age" type="text" value={computedAge ?? ""} placeholder="—" readOnly disabled />
+                <Input
+                  id="age"
+                  type="text"
+                  value={computedAge ?? ""}
+                  placeholder="—"
+                  readOnly
+                  disabled
+                />
               </div>
             </div>
 
