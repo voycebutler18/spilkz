@@ -1,10 +1,14 @@
-// src/components/dashboard/CreatorDashboard.tsx
+// src/pages/Dashboard/CreatorDashboard.tsx
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +25,18 @@ import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
-  Video, Users, TrendingUp, Settings, MessageCircle, Shield, Trash2, Plus,
-  Volume2, VolumeX, BarChart3, Bookmark,
+  Video,
+  Users,
+  TrendingUp,
+  Settings,
+  MessageCircle,
+  Shield,
+  Trash2,
+  Plus,
+  Volume2,
+  VolumeX,
+  BarChart3,
+  Bookmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -85,7 +99,7 @@ interface CommentRow {
 async function fetchBoostCounts(splikIds: string[]) {
   const counts: Record<string, number> = {};
   if (splikIds.length === 0) return counts;
-  
+
   try {
     const { data } = await supabase
       .from("boosts")
@@ -93,7 +107,7 @@ async function fetchBoostCounts(splikIds: string[]) {
       .in("splik_id", splikIds);
 
     (data || []).forEach((boost: any) => {
-      const id = boost.splik_id;
+      const id = boost.splik_id as string;
       counts[id] = (counts[id] || 0) + 1;
     });
   } catch (error) {
@@ -105,7 +119,7 @@ async function fetchBoostCounts(splikIds: string[]) {
 async function fetchBookmarkCounts(splikIds: string[]) {
   const counts: Record<string, number> = {};
   if (splikIds.length === 0) return counts;
-  
+
   try {
     const { data } = await supabase
       .from("bookmarks")
@@ -113,7 +127,7 @@ async function fetchBookmarkCounts(splikIds: string[]) {
       .in("splik_id", splikIds);
 
     (data || []).forEach((bookmark: any) => {
-      const id = bookmark.splik_id;
+      const id = bookmark.splik_id as string;
       counts[id] = (counts[id] || 0) + 1;
     });
   } catch (error) {
@@ -125,7 +139,7 @@ async function fetchBookmarkCounts(splikIds: string[]) {
 async function fetchCommentCounts(splikIds: string[]) {
   const counts: Record<string, number> = {};
   if (splikIds.length === 0) return counts;
-  
+
   try {
     const { data } = await supabase
       .from("comments")
@@ -133,7 +147,7 @@ async function fetchCommentCounts(splikIds: string[]) {
       .in("splik_id", splikIds);
 
     (data || []).forEach((comment: any) => {
-      const id = comment.splik_id;
+      const id = comment.splik_id as string;
       counts[id] = (counts[id] || 0) + 1;
     });
   } catch (error) {
@@ -148,7 +162,7 @@ async function fetchFollowerCount(userId: string) {
       .from("followers")
       .select("*", { count: "exact", head: true })
       .eq("following_id", userId);
-    return count || 0;
+  return count || 0;
   } catch (error) {
     console.error("Error fetching follower count:", error);
     return 0;
@@ -157,7 +171,10 @@ async function fetchFollowerCount(userId: string) {
 
 /* ----------------------------- Comments Manager ----------------------------- */
 function CommentsManager({
-  open, onClose, splik, onCountChange,
+  open,
+  onClose,
+  splik,
+  onCountChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -190,6 +207,7 @@ function CommentsManager({
     if (!open) return;
     fetchComments();
 
+    // Subscribe ONLY to this post's comment inserts/deletes
     const ch = supabase
       .channel(`comments-${splik.id}`)
       .on(
@@ -202,649 +220,7 @@ function CommentsManager({
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
-        (payload) => {
-          const deletedId = (payload.old as any)?.id as string;
-          setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
-          updateStats();
-        }
-      )
-      // Boost changes
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "splik_boosts" },
-        (payload) => {
-          const boost = payload.new as any;
-          setSpliks((prev) => prev.map((s) =>
-            s.id === boost.splik_id
-              ? { ...s, boosts_count: (s.boosts_count || 0) + 1 }
-              : s
-          ));
-          updateStats();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "splik_boosts" },
-        (payload) => {
-          const boost = payload.old as any;
-          setSpliks((prev) => prev.map((s) =>
-            s.id === boost.splik_id
-              ? { ...s, boosts_count: Math.max(0, (s.boosts_count || 0) - 1) }
-              : s
-          ));
-          updateStats();
-        }
-      )
-      // Bookmark changes
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "splik_bookmarks" },
-        (payload) => {
-          const bookmark = payload.new as any;
-          setSpliks((prev) => prev.map((s) =>
-            s.id === bookmark.splik_id
-              ? { ...s, bookmarks_count: (s.bookmarks_count || 0) + 1 }
-              : s
-          ));
-          updateStats();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "splik_bookmarks" },
-        (payload) => {
-          const bookmark = payload.old as any;
-          setSpliks((prev) => prev.map((s) =>
-            s.id === bookmark.splik_id
-              ? { ...s, bookmarks_count: Math.max(0, (s.bookmarks_count || 0) - 1) }
-              : s
-          ));
-          updateStats();
-        }
-      )
-      // Comment changes
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "comments" },
-        (payload) => {
-          const comment = payload.new as any;
-          setSpliks((prev) => prev.map((s) =>
-            s.id === comment.splik_id
-              ? { ...s, comments_count: (s.comments_count || 0) + 1 }
-              : s
-          ));
-          updateStats();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "comments" },
-        (payload) => {
-          const comment = payload.old as any;
-          setSpliks((prev) => prev.map((s) =>
-            s.id === comment.splik_id
-              ? { ...s, comments_count: Math.max(0, (s.comments_count || 0) - 1) }
-              : s
-          ));
-          updateStats();
-        }
-      )
-      // Follower changes
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
-        (payload) => {
-          setStats((prev) => ({ ...prev, followers: prev.followers + 1 }));
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
-        (payload) => {
-          setStats((prev) => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
-        }
-      )
-      .subscribe();
-
-    channelCleanup.current = () => supabase.removeChannel(ch);
-  };
-
-  /* ----------------------------- Fetchers ----------------------------- */
-  const fetchProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
-      if (error) throw error;
-
-      setProfile(data as Profile);
-      setFormData({
-        username: data.username || "",
-        display_name: data.display_name || "",
-        bio: data.bio || "",
-        avatar_url: data.avatar_url || "",
-      });
-    } catch (e) {
-      console.error("Error fetching profile:", e);
-    }
-  };
-
-  const fetchSpliks = async (userId: string) => {
-    try {
-      const { data: rows, error } = await supabase
-        .from("spliks")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-
-      const splikIds = (rows || []).map((r: any) => r.id as string);
-      
-      // Fetch all counts in parallel
-      const [boostCounts, bookmarkCounts, commentCounts] = await Promise.all([
-        fetchBoostCounts(splikIds),
-        fetchBookmarkCounts(splikIds),
-        fetchCommentCounts(splikIds),
-      ]);
-
-      const merged: SplikRow[] = (rows || []).map((r: any) => ({
-        ...(r as SplikRow),
-        boosts_count: boostCounts[r.id] || 0,
-        bookmarks_count: bookmarkCounts[r.id] || 0,
-        comments_count: commentCounts[r.id] || 0,
-      }));
-
-      setSpliks(merged);
-      updateStats();
-    } catch (e) {
-      console.error("Error fetching posts:", e);
-    }
-  };
-
-  /* ----------------------------- Stats calculation ----------------------------- */
-  const updateStats = async () => {
-    if (!currentUserId) return;
-
-    try {
-      // Get follower count
-      const followerCount = await fetchFollowerCount(currentUserId);
-      
-      setSpliks((currentSpliks) => {
-        const totalSpliks = currentSpliks.length;
-        const totalBoosts = currentSpliks.reduce((acc, s) => acc + (s.boosts_count || 0), 0);
-        const totalBookmarks = currentSpliks.reduce((acc, s) => acc + (s.bookmarks_count || 0), 0);
-        const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
-
-        setStats({
-          totalSpliks,
-          followers: followerCount,
-          totalBoosts,
-          avgBoostsPerPost,
-          totalBookmarks,
-        });
-
-        return currentSpliks;
-      });
-    } catch (error) {
-      console.error("Error updating stats:", error);
-    }
-  };
-
-  /* ----------------------------- Event handlers ----------------------------- */
-  const handleCountChange = (splikId: string, type: 'boosts' | 'comments' | 'bookmarks', delta: number) => {
-    setSpliks((prev) =>
-      prev.map((s) =>
-        s.id === splikId
-          ? { ...s, [`${type}_count`]: Math.max(0, (s[`${type}_count` as keyof SplikRow] as number || 0) + delta) }
-          : s
-      )
-    );
-    updateStats();
-  };
-
-  const handleDeleteVideo = async (videoId: string) => {
-    if (!currentUserId) return;
-
-    try {
-      const { error } = await supabase.from("spliks").delete().eq("id", videoId).eq("user_id", currentUserId);
-      if (error) throw error;
-      toast.success("Post deleted successfully");
-    } catch (error) {
-      console.error("Error deleting post:", error);
-      toast.error("Failed to delete post");
-    }
-  };
-
-  const handleProfileUpdate = async () => {
-    if (!currentUserId) return;
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          username: formData.username,
-          display_name: formData.display_name,
-          bio: formData.bio,
-          avatar_url: formData.avatar_url,
-        })
-        .eq("id", currentUserId);
-      if (error) throw error;
-
-      toast.success("Profile updated successfully");
-      setEditingProfile(false);
-      fetchProfile(currentUserId);
-    } catch (error: any) {
-      if (error.message?.includes("duplicate key")) {
-        toast.error("Username already taken");
-      } else {
-        toast.error("Failed to update profile");
-      }
-    }
-  };
-
-  const togglePrivacy = async (field: "followers_private" | "following_private") => {
-    if (!currentUserId || !profile) return;
-    const newValue = !profile[field];
-    try {
-      const { error } = await supabase.from("profiles").update({ [field]: newValue }).eq("id", currentUserId);
-      if (error) throw error;
-
-      setProfile({ ...profile, [field]: newValue });
-      toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
-    } catch (e) {
-      console.error("Error updating privacy settings", e);
-      toast.error("Failed to update privacy settings");
-    }
-  };
-
-  /* ------------------------------ UI ------------------------------ */
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-950">
-        <div className="flex items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-gray-900 to-gray-800 border-b border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
-            {/* Profile Info */}
-            <div className="flex items-center gap-6">
-              <Avatar className="h-20 w-20 ring-4 ring-blue-500/20">
-                <AvatarImage src={profile?.avatar_url || undefined} />
-                <AvatarFallback className="bg-gray-800 text-2xl">
-                  {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                  {profile?.display_name || "Creator Dashboard"}
-                </h1>
-                <p className="text-gray-400 mt-1">@{profile?.username || "username"}</p>
-                {profile?.bio && <p className="text-gray-300 mt-2 max-w-md">{profile.bio}</p>}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-3">
-              <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
-                <Plus className="h-4 w-4" />
-                Upload
-              </Button>
-              {isAdmin && (
-                <Button
-                  variant="outline"
-                  className="gap-2 bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
-                  onClick={() => navigate("/admin")}
-                >
-                  <Shield className="h-4 w-4" />
-                  Admin
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Modern Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {/* Total Posts */}
-          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
-                <Video className="h-4 w-4" />
-                Total Posts
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.totalSpliks}</div>
-                <div className="p-3 bg-blue-500/20 rounded-xl border border-blue-500/30">
-                  <Video className="h-6 w-6 text-blue-400" />
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">Videos & photos shared</p>
-              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (stats.totalSpliks / 50) * 100)}%` }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Total Boosts */}
-          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" />
-                Total Boosts
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.totalBoosts}</div>
-                <div className="p-3 bg-orange-500/20 rounded-xl border border-orange-500/30">
-                  <TrendingUp className="h-6 w-6 text-orange-400" />
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">Content amplification</p>
-              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-orange-500 to-yellow-400 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (stats.totalBoosts / 100) * 100)}%` }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Followers */}
-          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                Followers
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.followers}</div>
-                <div className="p-3 bg-green-500/20 rounded-xl border border-green-500/30">
-                  <Users className="h-6 w-6 text-green-400" />
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">Community members</p>
-              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (stats.followers / 1000) * 100)}%` }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Avg Boosts Per Post */}
-          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
-                <BarChart3 className="h-4 w-4" />
-                Avg Boosts
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold text-white">{stats.avgBoostsPerPost}</div>
-                <div className="p-3 bg-purple-500/20 rounded-xl border border-purple-500/30">
-                  <BarChart3 className="h-6 w-6 text-purple-400" />
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">Per post engagement</p>
-              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-purple-500 to-pink-400 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (stats.avgBoostsPerPost / 20) * 100)}%` }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Tabs */}
-        <Tabs defaultValue="videos" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-gray-900 border-gray-800">
-            <TabsTrigger value="videos" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
-              My Posts
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
-              Analytics
-            </TabsTrigger>
-            <TabsTrigger value="profile" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
-              Profile Settings
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Posts Feed */}
-          <TabsContent value="videos" className="mt-8">
-            {spliks.length > 0 ? (
-              <CreatorFeed
-                spliks={spliks}
-                onDelete={handleDeleteVideo}
-                onCountChange={handleCountChange}
-              />
-            ) : (
-              <Card className="p-12 text-center bg-gray-900 border-gray-800">
-                <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
-                <h3 className="text-xl font-semibold text-white mb-2">No posts yet</h3>
-                <p className="text-gray-400 mb-6">Start building your content library</p>
-                <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
-                  <Plus className="h-4 w-4" />
-                  Upload Your First Post
-                </Button>
-              </Card>
-            )}
-          </TabsContent>
-
-          {/* Analytics */}
-          <TabsContent value="analytics" className="mt-8">
-            <Card className="bg-gray-900 border-gray-800">
-              <CardHeader>
-                <CardTitle className="text-white">Performance Overview</CardTitle>
-                <CardDescription className="text-gray-400">Track your content performance and growth</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
-                    <div>
-                      <p className="text-sm text-gray-400">Total Boosts</p>
-                      <p className="text-2xl font-bold text-white">{stats.totalBoosts}</p>
-                    </div>
-                    <Badge variant="secondary" className="bg-orange-900 text-orange-300">Live</Badge>
-                  </div>
-                  
-                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
-                    <div>
-                      <p className="text-sm text-gray-400">Total Bookmarks</p>
-                      <p className="text-2xl font-bold text-white">{stats.totalBookmarks}</p>
-                    </div>
-                    <Badge variant="secondary" className="bg-blue-900 text-blue-300">Live</Badge>
-                  </div>
-                  
-                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
-                    <div>
-                      <p className="text-sm text-gray-400">Followers</p>
-                      <p className="text-2xl font-bold text-white">{stats.followers}</p>
-                    </div>
-                    <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
-                  </div>
-                </div>
-
-                <CreatorAnalytics spliks={spliks} stats={stats} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Profile Settings */}
-          <TabsContent value="profile" className="mt-8">
-            <Card className="bg-gray-900 border-gray-800">
-              <CardHeader>
-                <CardTitle className="text-white">Profile Settings</CardTitle>
-                <CardDescription className="text-gray-400">Manage your creator profile</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {editingProfile ? (
-                  <div className="space-y-6">
-                    <div>
-                      <p className="text-sm text-gray-400 mb-2">Profile Photo</p>
-                      <AvatarUploader
-                        value={formData.avatar_url || profile?.avatar_url}
-                        onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
-                      />
-                      <p className="text-xs text-gray-500 mt-2">JPG/PNG recommended. We'll compress for faster loading.</p>
-                    </div>
-
-                    <div>
-                      <Label htmlFor="username" className="text-gray-300">Username</Label>
-                      <Input
-                        id="username"
-                        value={formData.username}
-                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                        placeholder="@username"
-                        className="bg-gray-800 border-gray-700 text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="display_name" className="text-gray-300">Display Name</Label>
-                      <Input
-                        id="display_name"
-                        value={formData.display_name}
-                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
-                        placeholder="Your display name"
-                        className="bg-gray-800 border-gray-700 text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="bio" className="text-gray-300">Bio</Label>
-                      <Textarea
-                        id="bio"
-                        value={formData.bio}
-                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                        placeholder="Tell us about yourself"
-                        rows={4}
-                        className="bg-gray-800 border-gray-700 text-white"
-                      />
-                    </div>
-
-                    <div className="flex gap-2">
-                      <Button onClick={handleProfileUpdate} className="bg-blue-600 hover:bg-blue-700">
-                        Save Changes
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => setEditingProfile(false)}
-                        className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-4">
-                      <Avatar className="h-16 w-16 ring-2 ring-blue-500/20">
-                        <AvatarImage src={profile?.avatar_url || undefined} />
-                        <AvatarFallback className="bg-gray-800 text-xl">
-                          {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm text-gray-400">Signed in as</p>
-                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-sm text-gray-400 mb-1">Display Name</p>
-                        <p className="font-medium text-white">{profile?.display_name || "Not set"}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-400 mb-1">Username</p>
-                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-sm text-gray-400 mb-1">Bio</p>
-                      <p className="font-medium text-white break-words">{profile?.bio || "No bio yet"}</p>
-                    </div>
-
-                    <div className="border-t border-gray-800 pt-6 space-y-4">
-                      <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
-                        <div>
-                          <p className="font-medium text-white text-sm">Followers List</p>
-                          <p className="text-xs text-gray-400">
-                            {profile?.followers_private ? "Private — Only you" : "Public — Everyone"}
-                          </p>
-                        </div>
-                        <Switch
-                          checked={profile?.followers_private || false}
-                          onCheckedChange={() => togglePrivacy("followers_private")}
-                          className="data-[state=checked]:bg-blue-600"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
-                        <div>
-                          <p className="font-medium text-white text-sm">Following List</p>
-                          <p className="text-xs text-gray-400">
-                            {profile?.following_private ? "Private — Only you" : "Public — Everyone"}
-                          </p>
-                        </div>
-                        <Switch
-                          checked={profile?.following_private || false}
-                          onCheckedChange={() => togglePrivacy("following_private")}
-                          className="data-[state=checked]:bg-blue-600"
-                        />
-                      </div>
-                    </div>
-
-                    <Button
-                      onClick={() => setEditingProfile(true)}
-                      className="bg-gray-800 hover:bg-gray-700 border border-gray-700 gap-2"
-                    >
-                      <Settings className="mr-2 h-4 w-4" />
-                      Edit Profile
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </div>
-
-      {/* Upload modal */}
-      <VideoUploadModal
-        open={uploadModalOpen}
-        onClose={() => setUploadModalOpen(false)}
-        onUploadComplete={() => {
-          if (currentUserId) fetchSpliks(currentUserId);
-          setUploadModalOpen(false);
-        }}
-      />
-    </div>
-  );
-};
-
-export default CreatorDashboard;: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
+        { event: "DELETE", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
         (payload) => {
           const id = (payload.old as any).id as string;
           setComments((prev) => prev.filter((c) => c.id !== id));
@@ -862,7 +238,11 @@ export default CreatorDashboard;: "public", table: "comments", filter: `splik_id
 
   const handleDelete = async (commentId: string) => {
     try {
-      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
+      const { error } = await supabase
+        .from("comments")
+        .delete()
+        .eq("id", commentId)
+        .eq("splik_id", splik.id);
       if (error) throw error;
       toast.success("Comment deleted");
     } catch (e) {
@@ -927,11 +307,13 @@ export default CreatorDashboard;: "public", table: "comments", filter: `splik_id
 
 /* ----------------------------- Feed Item ----------------------------- */
 function CreatorFeedItem({
-  splik, onDelete, onCountChange,
+  splik,
+  onDelete,
+  onCountChange,
 }: {
   splik: SplikRow;
   onDelete: (id: string) => void;
-  onCountChange: (id: string, type: 'boosts' | 'comments' | 'bookmarks', delta: number) => void;
+  onCountChange: (id: string, type: "boosts" | "comments" | "bookmarks", delta: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -957,16 +339,20 @@ function CreatorFeedItem({
     v.setAttribute("muted", "true");
     v.controls = false;
     v.preload = "metadata";
-    v.disablePictureInPicture = true;
+    (v as any).disablePictureInPicture = true;
     // @ts-expect-error
     v.disableRemotePlayback = true;
 
     const onLoaded = () => {
-      try { v.currentTime = start; } catch {}
+      try {
+        v.currentTime = start;
+      } catch {}
     };
     const onTimeUpdate = () => {
       if (v.currentTime >= loopEnd || v.currentTime < start) {
-        try { v.currentTime = start; } catch {}
+        try {
+          v.currentTime = start;
+        } catch {}
       }
     };
 
@@ -975,7 +361,9 @@ function CreatorFeedItem({
     return () => {
       v.removeEventListener("loadedmetadata", onLoaded);
       v.removeEventListener("timeupdate", onTimeUpdate);
-      try { v.pause(); } catch {}
+      try {
+        v.pause();
+      } catch {}
     };
   }, [isPhoto, start, loopEnd]);
 
@@ -985,12 +373,17 @@ function CreatorFeedItem({
     if (!v) return;
 
     if (isPlaying) {
-      try { v.pause(); } catch {}
+      try {
+        v.pause();
+      } catch {}
       setIsPlaying(false);
     } else {
-      try { v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01)); } catch {}
+      try {
+        v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01));
+      } catch {}
       v.muted = isMuted;
-      if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
+      if (isMuted) v.setAttribute("muted", "true");
+      else v.removeAttribute("muted");
       try {
         await v.play();
         setIsPlaying(true);
@@ -1008,7 +401,8 @@ function CreatorFeedItem({
     if (!v) return;
     const next = !isMuted;
     v.muted = next;
-    if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
+    if (next) v.setAttribute("muted", "true");
+    else v.removeAttribute("muted");
     setIsMuted(next);
   };
 
@@ -1163,9 +557,7 @@ function CreatorFeedItem({
           <h4 className="font-semibold text-white">
             {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
           </h4>
-          {splik.description && (
-            <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
-          )}
+          {splik.description && <p className="text-sm text-gray-400 mt-1">{splik.description}</p>}
           <div className="mt-2 text-xs text-gray-500">
             {new Date(splik.created_at).toLocaleDateString()}
             {!isPhoto && (
@@ -1190,7 +582,7 @@ function CreatorFeedItem({
             open={showComments}
             onClose={() => setShowComments(false)}
             splik={splik}
-            onCountChange={(delta) => onCountChange(splik.id, 'comments', delta)}
+            onCountChange={(delta) => onCountChange(splik.id, "comments", delta)}
           />
         )}
       </div>
@@ -1200,21 +592,18 @@ function CreatorFeedItem({
 
 /* ----------------------------- Feed ----------------------------- */
 function CreatorFeed({
-  spliks, onDelete, onCountChange,
+  spliks,
+  onDelete,
+  onCountChange,
 }: {
   spliks: SplikRow[];
   onDelete: (id: string) => void;
-  onCountChange: (id: string, type: 'boosts' | 'comments' | 'bookmarks', delta: number) => void;
+  onCountChange: (id: string, type: "boosts" | "comments" | "bookmarks", delta: number) => void;
 }) {
   return (
     <div className="space-y-8">
       {spliks.map((s) => (
-        <CreatorFeedItem
-          key={s.id}
-          splik={s}
-          onDelete={onDelete}
-          onCountChange={onCountChange}
-        />
+        <CreatorFeedItem key={s.id} splik={s} onDelete={onDelete} onCountChange={onCountChange} />
       ))}
     </div>
   );
@@ -1278,7 +667,9 @@ const CreatorDashboard = () => {
 
     return () => {
       if (channelCleanup.current) {
-        try { channelCleanup.current(); } catch {}
+        try {
+          channelCleanup.current();
+        } catch {}
         channelCleanup.current = null;
       }
     };
@@ -1288,22 +679,709 @@ const CreatorDashboard = () => {
   /* ---------------------------- Realtime ---------------------------- */
   const setupRealtime = (uid: string) => {
     if (channelCleanup.current) {
-      try { channelCleanup.current(); } catch {}
+      try {
+        channelCleanup.current();
+      } catch {}
       channelCleanup.current = null;
     }
 
     const ch = supabase
       .channel("creator-dashboard-realtime")
-      // Spliks changes
+      // Spliks changes (only current user's posts)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
         (payload) => {
           const row = payload.new as SplikRow;
-          setSpliks((prev) => [{ ...row, boosts_count: 0, comments_count: 0, bookmarks_count: 0 }, ...prev]);
+          setSpliks((prev) => [
+            { ...row, boosts_count: 0, comments_count: 0, bookmarks_count: 0 },
+            ...prev,
+          ]);
           updateStats();
         }
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema
+        { event: "DELETE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        (payload) => {
+          const deletedId = (payload.old as any)?.id as string;
+          setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
+          updateStats();
+        }
+      )
+      // Boost changes
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "boosts" },
+        (payload) => {
+          const boost = payload.new as any;
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === boost.splik_id ? { ...s, boosts_count: (s.boosts_count || 0) + 1 } : s
+            )
+          );
+          updateStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "boosts" },
+        (payload) => {
+          const boost = payload.old as any;
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === boost.splik_id
+                ? { ...s, boosts_count: Math.max(0, (s.boosts_count || 0) - 1) }
+                : s
+            )
+          );
+          updateStats();
+        }
+      )
+      // Bookmark changes
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "bookmarks" },
+        (payload) => {
+          const bookmark = payload.new as any;
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === bookmark.splik_id
+                ? { ...s, bookmarks_count: (s.bookmarks_count || 0) + 1 }
+                : s
+            )
+          );
+          updateStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "bookmarks" },
+        (payload) => {
+          const bookmark = payload.old as any;
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === bookmark.splik_id
+                ? { ...s, bookmarks_count: Math.max(0, (s.bookmarks_count || 0) - 1) }
+                : s
+            )
+          );
+          updateStats();
+        }
+      )
+      // Comment changes
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "comments" },
+        (payload) => {
+          const comment = payload.new as any;
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === comment.splik_id
+                ? { ...s, comments_count: (s.comments_count || 0) + 1 }
+                : s
+            )
+          );
+          updateStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "comments" },
+        (payload) => {
+          const comment = payload.old as any;
+          setSpliks((prev) =>
+            prev.map((s) =>
+              s.id === comment.splik_id
+                ? { ...s, comments_count: Math.max(0, (s.comments_count || 0) - 1) }
+                : s
+            )
+          );
+          updateStats();
+        }
+      )
+      // Follower changes for this user
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "followers", filter: `following_id=eq.${uid}` },
+        () => {
+          setStats((prev) => ({ ...prev, followers: prev.followers + 1 }));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "followers", filter: `following_id=eq.${uid}` },
+        () => {
+          setStats((prev) => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
+        }
+      )
+      .subscribe();
+
+    channelCleanup.current = () => supabase.removeChannel(ch);
+  };
+
+  /* ----------------------------- Fetchers ----------------------------- */
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single();
+      if (error) throw error;
+
+      setProfile(data as Profile);
+      setFormData({
+        username: data.username || "",
+        display_name: data.display_name || "",
+        bio: data.bio || "",
+        avatar_url: data.avatar_url || "",
+      });
+    } catch (e) {
+      console.error("Error fetching profile:", e);
+    }
+  };
+
+  const fetchSpliks = async (userId: string) => {
+    try {
+      const { data: rows, error } = await supabase
+        .from("spliks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+
+      const splikIds = (rows || []).map((r: any) => r.id as string);
+
+      // Fetch all counts in parallel
+      const [boostCounts, bookmarkCounts, commentCounts] = await Promise.all([
+        fetchBoostCounts(splikIds),
+        fetchBookmarkCounts(splikIds),
+        fetchCommentCounts(splikIds),
+      ]);
+
+      const merged: SplikRow[] = (rows || []).map((r: any) => ({
+        ...(r as SplikRow),
+        boosts_count: boostCounts[r.id] || 0,
+        bookmarks_count: bookmarkCounts[r.id] || 0,
+        comments_count: commentCounts[r.id] || 0,
+      }));
+
+      setSpliks(merged);
+      updateStats();
+    } catch (e) {
+      console.error("Error fetching posts:", e);
+    }
+  };
+
+  /* ----------------------------- Stats calculation ----------------------------- */
+  const updateStats = async () => {
+    if (!currentUserId) return;
+
+    try {
+      // Get follower count
+      const followerCount = await fetchFollowerCount(currentUserId);
+
+      setSpliks((currentSpliks) => {
+        const totalSpliks = currentSpliks.length;
+        const totalBoosts = currentSpliks.reduce((acc, s) => acc + (s.boosts_count || 0), 0);
+        const totalBookmarks = currentSpliks.reduce((acc, s) => acc + (s.bookmarks_count || 0), 0);
+        const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
+
+        setStats({
+          totalSpliks,
+          followers: followerCount,
+          totalBoosts,
+          avgBoostsPerPost,
+          totalBookmarks,
+        });
+
+        return currentSpliks;
+      });
+    } catch (error) {
+      console.error("Error updating stats:", error);
+    }
+  };
+
+  /* ----------------------------- Event handlers ----------------------------- */
+  const handleCountChange = (
+    splikId: string,
+    type: "boosts" | "comments" | "bookmarks",
+    delta: number
+  ) => {
+    setSpliks((prev) =>
+      prev.map((s) =>
+        s.id === splikId
+          ? ({
+              ...s,
+              [`${type}_count`]: Math.max(0, ((s as any)[`${type}_count`] || 0) + delta),
+            } as SplikRow)
+          : s
+      )
+    );
+    updateStats();
+  };
+
+  const handleDeleteVideo = async (videoId: string) => {
+    if (!currentUserId) return;
+
+    try {
+      const { error } = await supabase
+        .from("spliks")
+        .delete()
+        .eq("id", videoId)
+        .eq("user_id", currentUserId);
+      if (error) throw error;
+      toast.success("Post deleted successfully");
+    } catch (error) {
+      console.error("Error deleting post:", error);
+      toast.error("Failed to delete post");
+    }
+  };
+
+  const handleProfileUpdate = async () => {
+    if (!currentUserId) return;
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          username: formData.username,
+          display_name: formData.display_name,
+          bio: formData.bio,
+          avatar_url: formData.avatar_url,
+        })
+        .eq("id", currentUserId);
+      if (error) throw error;
+
+      toast.success("Profile updated successfully");
+      setEditingProfile(false);
+      fetchProfile(currentUserId);
+    } catch (error: any) {
+      if (error.message?.includes("duplicate key")) {
+        toast.error("Username already taken");
+      } else {
+        toast.error("Failed to update profile");
+      }
+    }
+  };
+
+  const togglePrivacy = async (field: "followers_private" | "following_private") => {
+    if (!currentUserId || !profile) return;
+    const newValue = !profile[field];
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ [field]: newValue })
+        .eq("id", currentUserId);
+      if (error) throw error;
+
+      setProfile({ ...(profile as Profile), [field]: newValue } as Profile);
+      toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
+    } catch (e) {
+      console.error("Error updating privacy settings", e);
+      toast.error("Failed to update privacy settings");
+    }
+  };
+
+  /* ------------------------------ UI ------------------------------ */
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950">
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-gray-900 to-gray-800 border-b border-gray-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+            {/* Profile Info */}
+            <div className="flex items-center gap-6">
+              <Avatar className="h-20 w-20 ring-4 ring-blue-500/20">
+                <AvatarImage src={profile?.avatar_url || undefined} />
+                <AvatarFallback className="bg-gray-800 text-2xl">
+                  {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                  {profile?.display_name || "Creator Dashboard"}
+                </h1>
+                <p className="text-gray-400 mt-1">@{profile?.username || "username"}</p>
+                {profile?.bio && <p className="text-gray-300 mt-2 max-w-md">{profile.bio}</p>}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-3">
+              <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
+                <Plus className="h-4 w-4" />
+                Upload
+              </Button>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  className="gap-2 bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
+                  onClick={() => navigate("/admin")}
+                >
+                  <Shield className="h-4 w-4" />
+                  Admin
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Modern Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {/* Total Posts */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <Video className="h-4 w-4" />
+                Total Posts
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-bold text-white">{stats.totalSpliks}</div>
+                <div className="p-3 bg-blue-500/20 rounded-xl border border-blue-500/30">
+                  <Video className="h-6 w-6 text-blue-400" />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Videos & photos shared</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.totalSpliks / 50) * 100)}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Total Boosts */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" />
+                Total Boosts
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-bold text-white">{stats.totalBoosts}</div>
+                <div className="p-3 bg-orange-500/20 rounded-xl border border-orange-500/30">
+                  <TrendingUp className="h-6 w-6 text-orange-400" />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Content amplification</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-orange-500 to-yellow-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.totalBoosts / 100) * 100)}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Followers */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Followers
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-bold text-white">{stats.followers}</div>
+                <div className="p-3 bg-green-500/20 rounded-xl border border-green-500/30">
+                  <Users className="h-6 w-6 text-green-400" />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Community members</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.followers / 1000) * 100)}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Avg Boosts Per Post */}
+          <Card className="bg-gradient-to-br from-gray-900 to-gray-800 border-gray-700 hover:border-gray-600 transition-all duration-300">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-gray-400 flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Avg Boosts
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="text-3xl font-bold text-white">{stats.avgBoostsPerPost}</div>
+                <div className="p-3 bg-purple-500/20 rounded-xl border border-purple-500/30">
+                  <BarChart3 className="h-6 w-6 text-purple-400" />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Per post engagement</p>
+              <div className="mt-2 h-1 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (stats.avgBoostsPerPost / 20) * 100)}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Tabs */}
+        <Tabs defaultValue="videos" className="w-full">
+          <TabsList className="grid w-full grid-cols-3 bg-gray-900 border-gray-800">
+            <TabsTrigger value="videos" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
+              My Posts
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="profile" className="data-[state=active]:bg-gray-800 data-[state=active]:text-white">
+              Profile Settings
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Posts Feed */}
+          <TabsContent value="videos" className="mt-8">
+            {spliks.length > 0 ? (
+              <CreatorFeed spliks={spliks} onDelete={handleDeleteVideo} onCountChange={handleCountChange} />
+            ) : (
+              <Card className="p-12 text-center bg-gray-900 border-gray-800">
+                <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
+                <h3 className="text-xl font-semibold text-white mb-2">No posts yet</h3>
+                <p className="text-gray-400 mb-6">Start building your content library</p>
+                <Button onClick={() => setUploadModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 gap-2">
+                  <Plus className="h-4 w-4" />
+                  Upload Your First Post
+                </Button>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* Analytics */}
+          <TabsContent value="analytics" className="mt-8">
+            <Card className="bg-gray-900 border-gray-800">
+              <CardHeader>
+                <CardTitle className="text-white">Performance Overview</CardTitle>
+                <CardDescription className="text-gray-400">
+                  Track your content performance and growth
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-gray-400">Total Boosts</p>
+                      <p className="text-2xl font-bold text-white">{stats.totalBoosts}</p>
+                    </div>
+                    <Badge variant="secondary" className="bg-orange-900 text-orange-300">
+                      Live
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-gray-400">Total Bookmarks</p>
+                      <p className="text-2xl font-bold text-white">{stats.totalBookmarks}</p>
+                    </div>
+                    <Badge variant="secondary" className="bg-blue-900 text-blue-300">
+                      Live
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
+                    <div>
+                      <p className="text-sm text-gray-400">Followers</p>
+                      <p className="text-2xl font-bold text-white">{stats.followers}</p>
+                    </div>
+                    <Badge variant="secondary" className="bg-green-900 text-green-300">
+                      Live
+                    </Badge>
+                  </div>
+                </div>
+
+                <CreatorAnalytics spliks={spliks} stats={stats} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Profile Settings */}
+          <TabsContent value="profile" className="mt-8">
+            <Card className="bg-gray-900 border-gray-800">
+              <CardHeader>
+                <CardTitle className="text-white">Profile Settings</CardTitle>
+                <CardDescription className="text-gray-400">Manage your creator profile</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {editingProfile ? (
+                  <div className="space-y-6">
+                    <div>
+                      <p className="text-sm text-gray-400 mb-2">Profile Photo</p>
+                      <AvatarUploader
+                        value={formData.avatar_url || profile?.avatar_url}
+                        onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
+                      />
+                      <p className="text-xs text-gray-500 mt-2">
+                        JPG/PNG recommended. We'll compress for faster loading.
+                      </p>
+                    </div>
+
+                    <div>
+                      <Label htmlFor="username" className="text-gray-300">
+                        Username
+                      </Label>
+                      <Input
+                        id="username"
+                        value={formData.username}
+                        onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                        placeholder="@username"
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="display_name" className="text-gray-300">
+                        Display Name
+                      </Label>
+                      <Input
+                        id="display_name"
+                        value={formData.display_name}
+                        onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                        placeholder="Your display name"
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="bio" className="text-gray-300">
+                        Bio
+                      </Label>
+                      <Textarea
+                        id="bio"
+                        value={formData.bio}
+                        onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                        placeholder="Tell us about yourself"
+                        rows={4}
+                        className="bg-gray-800 border-gray-700 text-white"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button onClick={handleProfileUpdate} className="bg-blue-600 hover:bg-blue-700">
+                        Save Changes
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setEditingProfile(false)}
+                        className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-4">
+                      <Avatar className="h-16 w-16 ring-2 ring-blue-500/20">
+                        <AvatarImage src={profile?.avatar_url || undefined} />
+                        <AvatarFallback className="bg-gray-800 text-xl">
+                          {profile?.display_name?.[0] || profile?.username?.[0] || "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-sm text-gray-400">Signed in as</p>
+                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <p className="text-sm text-gray-400 mb-1">Display Name</p>
+                        <p className="font-medium text-white">{profile?.display_name || "Not set"}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-400 mb-1">Username</p>
+                        <p className="font-medium text-white">@{profile?.username || "Not set"}</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-sm text-gray-400 mb-1">Bio</p>
+                      <p className="font-medium text-white break-words">{profile?.bio || "No bio yet"}</p>
+                    </div>
+
+                    <div className="border-t border-gray-800 pt-6 space-y-4">
+                      <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
+                        <div>
+                          <p className="font-medium text-white text-sm">Followers List</p>
+                          <p className="text-xs text-gray-400">
+                            {profile?.followers_private ? "Private — Only you" : "Public — Everyone"}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={profile?.followers_private || false}
+                          onCheckedChange={() => togglePrivacy("followers_private")}
+                          className="data-[state=checked]:bg-blue-600"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
+                        <div>
+                          <p className="font-medium text-white text-sm">Following List</p>
+                          <p className="text-xs text-gray-400">
+                            {profile?.following_private ? "Private — Only you" : "Public — Everyone"}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={profile?.following_private || false}
+                          onCheckedChange={() => togglePrivacy("following_private")}
+                          className="data-[state=checked]:bg-blue-600"
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={() => setEditingProfile(true)}
+                      className="bg-gray-800 hover:bg-gray-700 border border-gray-700 gap-2"
+                    >
+                      <Settings className="mr-2 h-4 w-4" />
+                      Edit Profile
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {/* Upload modal */}
+      <VideoUploadModal
+        open={uploadModalOpen}
+        onClose={() => setUploadModalOpen(false)}
+        onUploadComplete={() => {
+          if (currentUserId) fetchSpliks(currentUserId);
+          setUploadModalOpen(false);
+        }}
+      />
+    </div>
+  );
+};
+
+export default CreatorDashboard;
