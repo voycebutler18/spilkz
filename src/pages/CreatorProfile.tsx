@@ -1,4 +1,3 @@
-
 // src/pages/CreatorProfile.tsx
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
@@ -11,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, Heart } from "lucide-react";
+import { MapPin, Calendar, Film, Users, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -43,8 +42,8 @@ export default function CreatorProfile() {
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [spliks, setSpliks] = useState<any[]>([]);
-  const [likedSpliks, setLikedSpliks] = useState<any[]>([]);
-  const [likedLoading, setLikedLoading] = useState(false);
+  const [boostedSpliks, setBoostedSpliks] = useState<any[]>([]);
+  const [boostedLoading, setBoostedLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showFollowersList, setShowFollowersList] = useState(false);
@@ -89,7 +88,7 @@ export default function CreatorProfile() {
       setLoading(true);
       setProfile(null);
       setSpliks([]);
-      setLikedSpliks([]);
+      setBoostedSpliks([]);
 
       try {
         let profileData: Profile | null = null;
@@ -147,7 +146,7 @@ export default function CreatorProfile() {
 
         setProfile(profileData);
         await fetchSpliks(profileData.id, cancelled);
-        await fetchLikedSpliks(profileData.id, cancelled);
+        await fetchBoostedSpliks(profileData.id, cancelled);
       } catch (e) {
         console.error("Error resolving profile:", e);
         if (!cancelled) {
@@ -191,11 +190,11 @@ export default function CreatorProfile() {
         { event: "*", schema: "public", table: "followers" },
         () => refreshCounts(profile.id)
       )
-      // refresh the "Liked" tab on hype_reactions
+      // refresh the "Boosted" tab on boosts
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "hype_reactions", filter: `user_id=eq.${profile.id}` },
-        () => fetchLikedSpliks(profile.id)
+        { event: "*", schema: "public", table: "boosts", filter: `user_id=eq.${profile.id}` },
+        () => fetchBoostedSpliks(profile.id)
       )
       .subscribe();
 
@@ -247,25 +246,25 @@ export default function CreatorProfile() {
     }
   };
 
-  // Liked tab uses hype_reactions
-  const fetchLikedSpliks = async (userId: string, cancelled?: boolean) => {
+  // Boosted tab uses boosts table instead of hype_reactions
+  const fetchBoostedSpliks = async (userId: string, cancelled?: boolean) => {
     try {
-      setLikedLoading(true);
+      setBoostedLoading(true);
 
-      const { data: likesRows, error: likesErr } = await supabase
-        .from("hype_reactions")
+      const { data: boostRows, error: boostsErr } = await supabase
+        .from("boosts")
         .select("splik_id, created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
 
-      if (likesErr) throw likesErr;
+      if (boostsErr) throw boostsErr;
 
-      if (!likesRows?.length) {
-        if (!cancelled) setLikedSpliks([]);
+      if (!boostRows?.length) {
+        if (!cancelled) setBoostedSpliks([]);
         return;
       }
 
-      const ids = likesRows.map((r) => r.splik_id);
+      const ids = boostRows.map((r) => r.splik_id);
 
       const { data: splikRows, error: spliksErr } = await supabase
         .from("spliks")
@@ -286,15 +285,15 @@ export default function CreatorProfile() {
       );
 
       const orderIndex: Record<string, number> = {};
-      likesRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
+      boostRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
       withProfiles.sort((a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0));
 
-      if (!cancelled) setLikedSpliks(withProfiles);
+      if (!cancelled) setBoostedSpliks(withProfiles);
     } catch (e) {
-      console.error("Error fetching liked videos:", e);
-      if (!cancelled) toast.error("Failed to load liked videos");
+      console.error("Error fetching boosted videos:", e);
+      if (!cancelled) toast.error("Failed to load boosted videos");
     } finally {
-      if (!cancelled) setLikedLoading(false);
+      if (!cancelled) setBoostedLoading(false);
     }
   };
 
@@ -465,7 +464,7 @@ export default function CreatorProfile() {
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="videos">Videos</TabsTrigger>
             <TabsTrigger value="about">About</TabsTrigger>
-            <TabsTrigger value="liked">Liked</TabsTrigger>
+            <TabsTrigger value="boosted">Boosted</TabsTrigger>
           </TabsList>
 
           <TabsContent value="videos" className="mt-6">
@@ -526,15 +525,15 @@ export default function CreatorProfile() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="liked" className="mt-6">
-            {likedLoading ? (
+          <TabsContent value="boosted" className="mt-6">
+            {boostedLoading ? (
               <Card className="p-12 text-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-                <p className="text-muted-foreground mt-3">Loading liked videos…</p>
+                <p className="text-muted-foreground mt-3">Loading boosted videos…</p>
               </Card>
-            ) : likedSpliks.length > 0 ? (
+            ) : boostedSpliks.length > 0 ? (
               <VideoGrid
-                spliks={likedSpliks}
+                spliks={boostedSpliks}
                 showCreatorInfo={true}
                 onDeleteComment={
                   currentUserId === profile.id
@@ -550,8 +549,8 @@ export default function CreatorProfile() {
               />
             ) : (
               <Card className="p-12 text-center">
-                <Heart className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No liked videos yet</p>
+                <TrendingUp className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No boosted videos yet</p>
               </Card>
             )}
           </TabsContent>
