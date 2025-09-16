@@ -482,6 +482,9 @@ const Explore = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState<any>(null);
 
+  // guest CTA visibility
+  const [showGuestCta, setShowGuestCta] = useState(false);
+
   // upload dialog
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -501,6 +504,26 @@ const Explore = () => {
     );
     return () => subscription.unsubscribe();
   }, []);
+
+  // Handle guest CTA show/hide with persistence
+  useEffect(() => {
+    const key = "hide-guest-cta";
+    const hidden = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+    if (!user && !hidden) {
+      setShowGuestCta(true);
+    } else {
+      setShowGuestCta(false);
+    }
+  }, [user]);
+
+  const dismissGuestCta = () => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("hide-guest-cta", "1");
+      }
+    } catch {}
+    setShowGuestCta(false);
+  };
 
   /* ✅ UPDATED FEED FUNCTION WITH SHUFFLING */
   const fetchHomeFeed = async (showRefreshToast = false) => {
@@ -825,9 +848,40 @@ const Explore = () => {
                 <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
                 <span className="hidden md:inline ml-2">Update</span>
               </Button>
-              {/* Upload button removed as requested */}
             </div>
           </div>
+
+          {/* 🔔 Guest-only signup prompt */}
+          {!user && showGuestCta && (
+            <div className="relative mt-4 rounded-xl border border-primary/30 bg-primary/10 p-4">
+              <button
+                type="button"
+                onClick={dismissGuestCta}
+                className="absolute right-2 top-2 inline-flex items-center justify-center h-8 w-8 rounded-full hover:bg-primary/20 focus:outline-none"
+                aria-label="Dismiss"
+                title="Dismiss"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="flex flex-col md:flex-row md:items-center gap-3 pr-10">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                  <p className="text-sm md:text-base font-medium">
+                    Join Splikz to follow creators, see full profiles, and post your own 3-second videos.
+                  </p>
+                </div>
+                <div className="flex gap-2 md:ml-auto">
+                  <Button asChild>
+                    <Link to="/signup">Create free account</Link>
+                  </Button>
+                  <Button asChild variant="outline">
+                    <Link to="/login">Log in</Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
