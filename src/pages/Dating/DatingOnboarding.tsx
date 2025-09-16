@@ -1,4 +1,6 @@
+// src/pages/Dating/DatingOnboarding.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,14 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Loader2, 
-  ArrowLeft, 
-  ArrowRight, 
-  Check, 
-  Heart, 
+import {
+  Loader2,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Heart,
   Sparkles,
-  User,
   MapPin,
   Camera,
   Upload,
@@ -22,11 +23,7 @@ import {
   X,
   Plus,
   Star,
-  Zap,
-  Globe,
-  Shield,
   Users,
-  Calendar,
   Coffee,
   Music2,
   Palette,
@@ -35,45 +32,8 @@ import {
   Dumbbell,
   Plane,
   ChefHat,
-  PawPrint,
-  Car,
-  Briefcase,
-  GraduationCap,
-  Mountain
+  Mountain,
 } from "lucide-react";
-
-// Mock supabase - replace with real import
-const supabase = {
-  auth: {
-    getUser: () => Promise.resolve({ data: { user: { id: 'user123', email: 'user@example.com' } } }),
-    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
-  },
-  from: (table) => ({
-    select: (fields) => ({
-      eq: (field, value) => ({
-        maybeSingle: () => {
-          if (table === 'profiles') {
-            return Promise.resolve({ 
-              data: {
-                id: 'user123',
-                username: 'real_user',
-                display_name: 'Real User',
-                first_name: 'Real',
-                last_name: 'User',
-                dob: '1995-06-15',
-                city: 'San Francisco',
-                avatar_url: null
-              }, 
-              error: null 
-            });
-          }
-          return Promise.resolve({ data: null, error: null });
-        }
-      })
-    }),
-    upsert: () => Promise.resolve({ error: null })
-  })
-};
 
 const GENDER_IDENTITIES = [
   { id: "man", label: "Man", icon: "👨" },
@@ -82,73 +42,60 @@ const GENDER_IDENTITIES = [
   { id: "trans_man", label: "Trans man", icon: "🏳️‍⚧️" },
   { id: "trans_woman", label: "Trans woman", icon: "🏳️‍⚧️" },
   { id: "genderfluid", label: "Genderfluid", icon: "🌊" },
-  { id: "other", label: "Other", icon: "✨" }
+  { id: "other", label: "Other", icon: "✨" },
 ];
 
 const ORIENTATIONS = [
-  { id: "straight", label: "Straight", color: "bg-blue-500/20 border-blue-500/40 text-blue-300" },
-  { id: "gay", label: "Gay", color: "bg-rainbow-500/20 border-rainbow-500/40 text-rainbow-300" },
-  { id: "lesbian", label: "Lesbian", color: "bg-pink-500/20 border-pink-500/40 text-pink-300" },
-  { id: "bisexual", label: "Bisexual", color: "bg-purple-500/20 border-purple-500/40 text-purple-300" },
-  { id: "pansexual", label: "Pansexual", color: "bg-yellow-500/20 border-yellow-500/40 text-yellow-300" },
-  { id: "asexual", label: "Asexual", color: "bg-gray-500/20 border-gray-500/40 text-gray-300" },
-  { id: "queer", label: "Queer", color: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300" },
-  { id: "questioning", label: "Questioning", color: "bg-orange-500/20 border-orange-500/40 text-orange-300" }
+  { id: "straight", label: "Straight" },
+  { id: "gay", label: "Gay" },
+  { id: "lesbian", label: "Lesbian" },
+  { id: "bisexual", label: "Bisexual" },
+  { id: "pansexual", label: "Pansexual" },
+  { id: "asexual", label: "Asexual" },
+  { id: "queer", label: "Queer" },
+  { id: "questioning", label: "Questioning" },
 ];
 
 const SEEKING_GENDERS = [
-  "Men", "Women", "Non-binary folks", "Trans men", "Trans women", "Everyone"
+  "Men",
+  "Women",
+  "Non-binary folks",
+  "Trans men",
+  "Trans women",
+  "Everyone",
 ];
 
 const RELATIONSHIP_TYPES = [
-  { 
-    id: "long_term", 
-    label: "Long-term relationship", 
+  {
+    id: "long_term",
+    label: "Long-term relationship",
     desc: "Looking for something serious and meaningful",
-    icon: Heart,
-    gradient: "from-red-500/20 to-pink-500/20 border-red-500/30"
+    gradient: "from-red-500/20 to-pink-500/20 border-red-500/30",
   },
-  { 
-    id: "short_term", 
-    label: "Short-term dating", 
+  {
+    id: "short_term",
+    label: "Short-term dating",
     desc: "Casual dating, see what happens naturally",
-    icon: Coffee,
-    gradient: "from-orange-500/20 to-yellow-500/20 border-orange-500/30"
+    gradient: "from-orange-500/20 to-yellow-500/20 border-orange-500/30",
   },
-  { 
-    id: "friends", 
-    label: "New friends", 
+  {
+    id: "friends",
+    label: "New friends",
     desc: "Building genuine platonic connections",
-    icon: Users,
-    gradient: "from-blue-500/20 to-cyan-500/20 border-blue-500/30"
+    gradient: "from-blue-500/20 to-cyan-500/20 border-blue-500/30",
   },
-  { 
-    id: "networking", 
-    label: "Professional networking", 
+  {
+    id: "networking",
+    label: "Professional networking",
     desc: "Career connections and opportunities",
-    icon: Briefcase,
-    gradient: "from-purple-500/20 to-indigo-500/20 border-purple-500/30"
+    gradient: "from-purple-500/20 to-indigo-500/20 border-purple-500/30",
   },
-  { 
-    id: "unsure", 
-    label: "Open to possibilities", 
+  {
+    id: "unsure",
+    label: "Open to possibilities",
     desc: "Still figuring it out, open to connections",
-    icon: Star,
-    gradient: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30"
-  }
-];
-
-const FAITHS = [
-  { id: "christian", label: "Christian", desc: "Following Christ's teachings" },
-  { id: "muslim", label: "Muslim", desc: "Following Islamic faith" },
-  { id: "jewish", label: "Jewish", desc: "Part of Jewish tradition" },
-  { id: "hindu", label: "Hindu", desc: "Following Hindu dharma" },
-  { id: "buddhist", label: "Buddhist", desc: "Following Buddhist path" },
-  { id: "spiritual", label: "Spiritual", desc: "Spiritual but not religious" },
-  { id: "agnostic", label: "Agnostic", desc: "Open to possibilities" },
-  { id: "atheist", label: "Atheist", desc: "Non-religious worldview" },
-  { id: "other", label: "Other faith", desc: "Different spiritual path" },
-  { id: "prefer_not_say", label: "Prefer not to say", desc: "Private about faith" }
+    gradient: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30",
+  },
 ];
 
 const INTEREST_CATEGORIES = [
@@ -159,8 +106,8 @@ const INTEREST_CATEGORIES = [
       { id: "art", label: "Art", icon: Palette },
       { id: "photography", label: "Photography", icon: Camera },
       { id: "writing", label: "Writing", icon: BookOpen },
-      { id: "dancing", label: "Dancing", icon: Users }
-    ]
+      { id: "dancing", label: "Dancing", icon: Users },
+    ],
   },
   {
     name: "Active",
@@ -169,8 +116,8 @@ const INTEREST_CATEGORIES = [
       { id: "outdoors", label: "Outdoors", icon: Mountain },
       { id: "sports", label: "Sports", icon: Users },
       { id: "hiking", label: "Hiking", icon: Mountain },
-      { id: "yoga", label: "Yoga", icon: Users }
-    ]
+      { id: "yoga", label: "Yoga", icon: Users },
+    ],
   },
   {
     name: "Social",
@@ -179,253 +126,149 @@ const INTEREST_CATEGORIES = [
       { id: "coffee", label: "Coffee", icon: Coffee },
       { id: "travel", label: "Travel", icon: Plane },
       { id: "nightlife", label: "Nightlife", icon: Users },
-      { id: "cooking", label: "Cooking", icon: ChefHat }
-    ]
+      { id: "cooking", label: "Cooking", icon: ChefHat },
+    ],
   },
   {
     name: "Digital",
     items: [
       { id: "gaming", label: "Gaming", icon: Gamepad2 },
-      { id: "tech", label: "Tech", icon: Zap },
+      { id: "tech", label: "Tech", icon: Play },
       { id: "movies", label: "Movies", icon: Play },
       { id: "podcasts", label: "Podcasts", icon: Mic },
-      { id: "streaming", label: "Streaming", icon: Play }
-    ]
-  }
+      { id: "streaming", label: "Streaming", icon: Play },
+    ],
+  },
 ];
 
-function calcAge(dobISO) {
-  if (!dobISO) return null;
-  const d = new Date(dobISO + (dobISO.length === 10 ? "T00:00:00" : ""));
-  if (Number.isNaN(d.getTime())) return null;
-  const t = new Date();
-  let age = t.getFullYear() - d.getFullYear();
-  const m = t.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && t.getDate() < d.getDate())) age--;
-  return age >= 0 ? age : null;
-}
+// --- helpers
+const calcAgeFromDob = (dobISO: string | null) => {
+  if (!dobISO) return "";
+  const dob = new Date(dobISO);
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+  return age < 0 || Number.isNaN(age) ? "" : String(age);
+};
+const enforce18Plus = (dobISO: string | null) => {
+  if (!dobISO) return true;
+  const dob = new Date(dobISO);
+  const min = new Date();
+  min.setFullYear(min.getFullYear() - 18);
+  return dob <= min;
+};
 
-const DatingOnboardingWizard = () => {
-  const [loading, setLoading] = useState(true);
+const DatingOnboardingWizard: React.FC = () => {
+  const navigate = useNavigate();
+
+  const [loading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [currentStep, setCurrentStep] = useState(1);
-  const [totalSteps] = useState(7);
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [showVideoUpload, setShowVideoUpload] = useState(false);
-  
-  // Form state
+  const totalSteps = 7;
+
+  // --- Form state (no fake defaults)
   const [formData, setFormData] = useState({
     name: "",
     city: "",
-    age: null,
+    age: "",
+    dob: "", // yyyy-mm-dd
     bio: "",
     gender: "",
     pronouns: "",
     orientation: "",
-    seeking: [],
+    seeking: [] as string[],
     relationshipType: "",
-    faith: "",
-    denomination: "",
-    interests: [],
-    photos: [],
-    videoIntro: null,
+    interests: [] as string[],
+    photos: [] as { id: number; url: string; file?: File }[],
+    videoIntro: null as null | { url: string; file?: File },
     showAge: true,
-    verified: false
   });
 
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-
-  const progress = (currentStep / totalSteps) * 100;
-
-  // Load real user data
+  // prefill from localStorage (set by DatingHome quick-start)
   useEffect(() => {
-    let mounted = true;
-
-    const loadUserData = async () => {
-      try {
-        const { data: authData } = await supabase.auth.getUser();
-        if (!mounted) return;
-        
-        const currentUser = authData.user;
-        setUser(currentUser);
-
-        if (currentUser) {
-          // Get profile data
-          const { data: profileData } = await supabase
-            .from("profiles")
-            .select("id, username, display_name, first_name, last_name, avatar_url, city, dob")
-            .eq("id", currentUser.id)
-            .maybeSingle();
-
-          if (mounted && profileData) {
-            setProfile(profileData);
-            const age = calcAge(profileData.dob);
-            const fullName = [profileData.first_name, profileData.last_name].filter(Boolean).join(" ").trim();
-            const displayName = profileData.display_name?.trim() || fullName || profileData.username?.trim() || "User";
-            
-            setFormData(prev => ({
-              ...prev,
-              name: displayName,
-              city: profileData.city || "",
-              age: age
-            }));
-          }
-
-          // Check for existing dating profile
-          const { data: datingProfile } = await supabase
-            .from("dating_profiles")
-            .select("*")
-            .eq("user_id", currentUser.id)
-            .maybeSingle();
-
-          if (mounted && datingProfile) {
-            setFormData(prev => ({
-              ...prev,
-              name: datingProfile.name || prev.name,
-              city: datingProfile.city || prev.city,
-              bio: datingProfile.intro || "",
-              gender: datingProfile.gender_identity || "",
-              pronouns: datingProfile.pronouns || "",
-              orientation: datingProfile.orientation || "",
-              seeking: Array.isArray(datingProfile.seeking_genders) ? datingProfile.seeking_genders : [],
-              faith: datingProfile.faith || "",
-              denomination: datingProfile.denomination || "",
-              interests: Array.isArray(datingProfile.interests) ? datingProfile.interests : [],
-              showAge: datingProfile.show_age ?? true,
-              videoIntro: datingProfile.video_intro_url || null
-            }));
-          }
-        }
-      } catch (error) {
-        console.error("Error loading user data:", error);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-
-    loadUserData();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  // Read prefill from localStorage
-  useEffect(() => {
-    const raw = localStorage.getItem("dating_prefill");
-    if (raw) {
-      try {
-        const prefill = JSON.parse(raw);
-        setFormData(prev => ({
-          ...prev,
-          name: prefill.name || prev.name,
-          bio: prefill.bio || prev.bio
+    try {
+      const raw = localStorage.getItem("dating_prefill");
+      if (raw) {
+        const pre = JSON.parse(raw);
+        setFormData((p) => ({
+          ...p,
+          name: pre.name ?? p.name,
+          bio: pre.bio ?? p.bio,
         }));
-      } catch {}
-      localStorage.removeItem("dating_prefill");
-    }
+      }
+    } catch {}
   }, []);
 
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
+  const progress = Math.round((currentStep / totalSteps) * 100);
 
-  const toggleArrayItem = (field, item) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: prev[field].includes(item) 
-        ? prev[field].filter(i => i !== item)
-        : [...prev[field], item]
+  const handleInput = (field: string, value: any) =>
+    setFormData((p) => ({ ...p, [field]: value }));
+
+  const toggleArrayItem = (field: "seeking" | "interests", item: string) =>
+    setFormData((p) => ({
+      ...p,
+      [field]: p[field].includes(item)
+        ? p[field].filter((i) => i !== item)
+        : [...p[field], item],
     }));
-  };
 
-  const nextStep = () => {
-    if (currentStep < totalSteps) {
-      setCurrentStep(prev => prev + 1);
-    }
-  };
-
+  const nextStep = () => currentStep < totalSteps && setCurrentStep((s) => s + 1);
   const prevStep = () => {
-    if (currentStep > 1) {
-      setCurrentStep(prev => prev - 1);
+    if (currentStep === 1) {
+      navigate("/dating"); // ✅ exit wizard from step 1
+    } else {
+      setCurrentStep((s) => s - 1);
     }
   };
 
-  const handlePhotoUpload = async (file) => {
+  // ---------- Uploads (photo + video) ----------
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const addPhoto = async (file: File) => {
+    setUploadError(null);
     setUploadingPhoto(true);
-    // Mock upload delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const newPhoto = {
-      id: Date.now(),
-      url: URL.createObjectURL(file),
-      file
-    };
-    setFormData(prev => ({
-      ...prev,
-      photos: [...prev.photos, newPhoto]
+    // Local preview only here; your real upload/save can run on Publish.
+    const url = URL.createObjectURL(file);
+    setFormData((p) => ({
+      ...p,
+      photos: [...p.photos, { id: Date.now(), url, file }],
     }));
     setUploadingPhoto(false);
   };
 
-  const removePhoto = (photoId) => {
-    setFormData(prev => ({
-      ...prev,
-      photos: prev.photos.filter(p => p.id !== photoId)
-    }));
+  const removePhoto = (id: number) =>
+    setFormData((p) => ({ ...p, photos: p.photos.filter((ph) => ph.id !== id) }));
+
+  const addVideoIntro = async (file: File) => {
+    setUploadError(null);
+    // Create local preview; you can trim to 3s on server or later save.
+    const url = URL.createObjectURL(file);
+    setFormData((p) => ({ ...p, videoIntro: { url, file } }));
   };
 
-  const saveProfile = async () => {
-    if (!user) return;
-    
-    setSaving(true);
-    try {
-      const payload = {
-        user_id: user.id,
-        name: formData.name.trim(),
-        intro: formData.bio.trim() || null,
-        city: formData.city.trim() || null,
-        gender_identity: formData.gender || null,
-        pronouns: formData.pronouns || null,
-        orientation: formData.orientation || null,
-        seeking_genders: formData.seeking,
-        faith: formData.faith || null,
-        denomination: formData.denomination || null,
-        interests: formData.interests,
-        show_age: formData.showAge,
-        video_intro_url: formData.videoIntro,
-        published: true,
-        updated_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from("dating_profiles")
-        .upsert(payload, { onConflict: "user_id" });
-
-      if (error) throw error;
-
-      // Success - redirect or show success
-      console.log("Profile saved successfully!");
-      
-    } catch (error) {
-      console.error("Error saving profile:", error);
-    } finally {
-      setSaving(false);
-    }
+  // keep age & dob in sync
+  const onDobChange = (dobISO: string) => {
+    handleInput("dob", dobISO);
+    handleInput("age", calcAgeFromDob(dobISO));
+  };
+  const onAgeChange = (age: string) => {
+    // allow manual entry; do not overwrite dob if user types age.
+    handleInput("age", age.replace(/[^\d]/g, "").slice(0, 3));
   };
 
+  // ---------- UI subcomponents ----------
   const StepIndicator = () => (
     <div className="w-full max-w-4xl mx-auto mb-8">
       <div className="flex items-center justify-between mb-4">
         <div className="text-sm text-zinc-400">
           Step {currentStep} of {totalSteps}
         </div>
-        <div className="text-sm text-zinc-400">
-          {Math.round(progress)}% complete
-        </div>
+        <div className="text-sm text-zinc-400">{progress}% complete</div>
       </div>
       <div className="w-full bg-zinc-800 rounded-full h-2">
-        <div 
+        <div
           className="bg-gradient-to-r from-fuchsia-500 to-purple-500 h-2 rounded-full transition-all duration-500 ease-out"
           style={{ width: `${progress}%` }}
         />
@@ -433,72 +276,278 @@ const DatingOnboardingWizard = () => {
     </div>
   );
 
-  const StepCard = ({ children, title, subtitle }) => (
+  const StepCard: React.FC<{ title: string; subtitle?: string }> = ({
+    title,
+    subtitle,
+    children,
+  }) => (
     <Card className="w-full max-w-4xl mx-auto bg-zinc-950 border-zinc-800 shadow-2xl">
       <CardHeader className="text-center border-b border-zinc-800 pb-6">
-        <CardTitle className="text-2xl font-bold text-white mb-2">{title}</CardTitle>
+        <CardTitle className="text-2xl font-bold text-white mb-2">
+          {title}
+        </CardTitle>
         {subtitle && <p className="text-zinc-400">{subtitle}</p>}
       </CardHeader>
-      <CardContent className="p-8">
-        {children}
-      </CardContent>
+      <CardContent className="p-8">{children}</CardContent>
     </Card>
   );
 
+  const NavigationButtons = () => (
+    <div className="flex justify-between items-center w-full max-w-4xl mx-auto mt-8">
+      <Button
+        variant="outline"
+        onClick={prevStep}
+        className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+      >
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        {currentStep === 1 ? "Exit" : "Back"}
+      </Button>
+
+      {currentStep === totalSteps ? (
+        <Button
+          onClick={() => setSaving(true)}
+          disabled={saving}
+          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8"
+        >
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Publishing your profile...
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4 mr-2" />
+              Publish my profile
+            </>
+          )}
+        </Button>
+      ) : (
+        <Button
+          onClick={nextStep}
+          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8"
+        >
+          Continue
+          <ArrowRight className="h-4 w-4 ml-2" />
+        </Button>
+      )}
+    </div>
+  );
+
+  const ProfilePreview = () => (
+    <div className="fixed right-4 top-4 w-80 max-h-[80vh] overflow-y-auto hidden xl:block">
+      <Card className="bg-zinc-950/95 backdrop-blur-sm border-zinc-800 shadow-2xl">
+        <CardHeader className="border-b border-zinc-800">
+          <CardTitle className="text-white text-sm">Live Preview</CardTitle>
+        </CardHeader>
+        <CardContent className="p-4">
+          <div className="space-y-4">
+            <div className="text-center">
+              <div className="h-20 w-20 mx-auto mb-3 ring-2 ring-fuchsia-500/30 rounded-full overflow-hidden relative">
+                {formData.videoIntro?.url ? (
+                  <video
+                    src={formData.videoIntro.url}
+                    className="h-full w-full object-cover"
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                  />
+                ) : formData.photos[0]?.url ? (
+                  <img
+                    src={formData.photos[0].url}
+                    className="h-full w-full object-cover"
+                    alt="main"
+                  />
+                ) : (
+                  <Avatar className="h-20 w-20 mx-auto">
+                    <AvatarImage />
+                    <AvatarFallback className="bg-zinc-800 text-zinc-300 text-lg">
+                      {formData.name ? formData.name.charAt(0) : "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                )}
+              </div>
+
+              <h3 className="text-white font-semibold">
+                {formData.name || "Your name"}
+                {formData.showAge && formData.age ? `, ${formData.age}` : ""}
+              </h3>
+              <p className="text-zinc-400 text-sm flex items-center justify-center gap-1">
+                <MapPin className="h-3 w-3" />
+                {formData.city || "Your city"}
+              </p>
+            </div>
+
+            {formData.bio && (
+              <div className="text-sm text-zinc-300 bg-zinc-900 rounded-lg p-3">
+                {formData.bio}
+              </div>
+            )}
+
+            {formData.interests.length > 0 && (
+              <div>
+                <p className="text-xs text-zinc-500 mb-2">Interests</p>
+                <div className="flex flex-wrap gap-1">
+                  {formData.interests.slice(0, 6).map((interest) => (
+                    <Badge
+                      key={interest}
+                      className="bg-zinc-800 text-zinc-300 text-xs"
+                    >
+                      {interest}
+                    </Badge>
+                  ))}
+                  {formData.interests.length > 6 && (
+                    <Badge className="bg-zinc-800 text-zinc-300 text-xs">
+                      +{formData.interests.length - 6} more
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(formData.photos.length > 0 || formData.videoIntro) && (
+              <div className="text-xs text-zinc-500 text-center">
+                {formData.photos.length} photo
+                {formData.photos.length !== 1 ? "s" : ""}
+                {formData.videoIntro && " • Video intro"}
+              </div>
+            )}
+
+            <div className="bg-gradient-to-r from-fuchsia-500/10 to-purple-500/10 border border-fuchsia-500/20 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div
+                  className={`w-3 h-3 rounded-full ${
+                    progress >= 100 ? "bg-green-500" : "bg-yellow-500"
+                  }`}
+                />
+                <span className="text-sm text-white font-medium">
+                  {progress >= 100 ? "Ready to publish!" : "Keep going..."}
+                </span>
+              </div>
+              <div className="text-xs text-zinc-400">
+                Profile strength: {progress}%
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  // ---------- Steps ----------
   const renderStep = () => {
     switch (currentStep) {
       case 1:
         return (
-          <StepCard 
-            title="Let's start with the basics" 
+          <StepCard
+            title="Let's start with the basics"
             subtitle="Tell us a bit about yourself"
           >
             <div className="space-y-6">
-              {/* Profile Photo Upload */}
-              <div className="flex justify-center mb-6">
-                <div className="relative">
-                  <Avatar className="h-32 w-32 ring-4 ring-fuchsia-500/30 cursor-pointer">
-                    <AvatarImage src={profile?.avatar_url} />
-                    <AvatarFallback className="bg-zinc-800 text-2xl text-zinc-300">
-                      {formData.name.charAt(0) || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <button
-                    className="absolute bottom-0 right-0 bg-fuchsia-500 rounded-full p-2 text-white hover:bg-fuchsia-600 transition-colors"
-                    onClick={() => document.getElementById('avatar-upload')?.click()}
-                  >
-                    <Camera className="h-4 w-4" />
-                  </button>
-                  <input
-                    id="avatar-upload"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handlePhotoUpload(file);
-                    }}
-                  />
+              {/* Avatar block (photo or 3s video) */}
+              <div className="flex flex-col items-center gap-4">
+                <div className="h-32 w-32 rounded-full ring-4 ring-fuchsia-500/30 overflow-hidden relative bg-zinc-900">
+                  {formData.videoIntro?.url ? (
+                    <video
+                      src={formData.videoIntro.url}
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                    />
+                  ) : formData.photos[0]?.url ? (
+                    <img
+                      src={formData.photos[0].url}
+                      className="h-full w-full object-cover"
+                      alt="main"
+                    />
+                  ) : (
+                    <Avatar className="h-32 w-32">
+                      <AvatarImage />
+                      <AvatarFallback className="bg-zinc-800 text-zinc-300 text-2xl">
+                        {formData.name ? formData.name.charAt(0) : "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                  )}
                 </div>
+
+                <div className="flex flex-wrap gap-3">
+                  {/* Upload Photo */}
+                  <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 cursor-pointer hover:border-zinc-600">
+                    <Upload className="h-4 w-4" />
+                    <span>Upload photo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) addPhoto(f);
+                      }}
+                    />
+                  </label>
+
+                  {/* Upload 3s Video */}
+                  <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white cursor-pointer hover:from-fuchsia-500 hover:to-purple-500">
+                    <Camera className="h-4 w-4" />
+                    <span>Add 3-sec video</span>
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) addVideoIntro(f);
+                      }}
+                    />
+                  </label>
+
+                  {formData.videoIntro && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10 border-zinc-700 text-zinc-300"
+                      onClick={() => handleInput("videoIntro", null)}
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Remove video
+                    </Button>
+                  )}
+                </div>
+
+                {uploadingPhoto && (
+                  <div className="text-sm text-zinc-400 flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Adding photo…
+                  </div>
+                )}
+                {uploadError && (
+                  <div className="text-sm text-red-400">{uploadError}</div>
+                )}
               </div>
-              
+
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
-                  <Label className="text-zinc-300 text-sm font-medium">Your name</Label>
+                  <Label className="text-zinc-300 text-sm font-medium">
+                    Your name
+                  </Label>
                   <Input
                     value={formData.name}
-                    onChange={(e) => handleInputChange('name', e.target.value)}
+                    onChange={(e) => handleInput("name", e.target.value)}
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                     placeholder="What should people call you?"
                   />
                 </div>
+
                 <div>
-                  <Label className="text-zinc-300 text-sm font-medium">City</Label>
+                  <Label className="text-zinc-300 text-sm font-medium">
+                    City
+                  </Label>
                   <div className="relative mt-2">
                     <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-zinc-500" />
                     <Input
                       value={formData.city}
-                      onChange={(e) => handleInputChange('city', e.target.value)}
+                      onChange={(e) => handleInput("city", e.target.value)}
                       className="pl-10 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                       placeholder="Where are you based?"
                     />
@@ -506,16 +555,35 @@ const DatingOnboardingWizard = () => {
                 </div>
               </div>
 
-              <div>
-                <Label className="text-zinc-300 text-sm font-medium">Tell us about yourself</Label>
-                <Textarea
-                  value={formData.bio}
-                  onChange={(e) => handleInputChange('bio', e.target.value.slice(0, 500))}
-                  className="mt-2 bg-zinc-900 border-zinc-700 text-white min-h-[120px] resize-none"
-                  placeholder="Share your vibe, interests, what makes you unique..."
-                />
-                <div className="text-xs text-zinc-500 mt-2 text-right">
-                  {formData.bio.length}/500
+              {/* Age + DOB */}
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <Label className="text-zinc-300 text-sm font-medium">
+                    Date of birth
+                  </Label>
+                  <Input
+                    type="date"
+                    value={formData.dob}
+                    onChange={(e) => onDobChange(e.target.value)}
+                    className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
+                  />
+                  {formData.dob && !enforce18Plus(formData.dob) && (
+                    <p className="text-red-400 text-xs mt-2">
+                      You must be at least 18 years old.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label className="text-zinc-300 text-sm font-medium">
+                    Age
+                  </Label>
+                  <Input
+                    inputMode="numeric"
+                    value={formData.age}
+                    onChange={(e) => onAgeChange(e.target.value)}
+                    className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
+                    placeholder="Your age"
+                  />
                 </div>
               </div>
 
@@ -523,37 +591,37 @@ const DatingOnboardingWizard = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-white font-medium">Show my age</div>
-                    <div className="text-zinc-400 text-sm">Age: {formData.age || 'Not set'}</div>
+                    <div className="text-zinc-400 text-sm">
+                      Age shown: {formData.age || "—"}
+                    </div>
                   </div>
                   <button
-                    onClick={() => handleInputChange('showAge', !formData.showAge)}
+                    onClick={() => handleInput("showAge", !formData.showAge)}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      formData.showAge ? 'bg-fuchsia-500' : 'bg-zinc-600'
+                      formData.showAge ? "bg-fuchsia-500" : "bg-zinc-600"
                     }`}
                   >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      formData.showAge ? 'translate-x-6' : 'translate-x-1'
-                    }`} />
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        formData.showAge ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
                   </button>
                 </div>
               </div>
 
-              {/* Video Upload Option */}
-              <div className="bg-gradient-to-r from-fuchsia-500/10 to-purple-500/10 border border-fuchsia-500/20 rounded-xl p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-white font-medium flex items-center gap-2">
-                      <Camera className="h-5 w-5 text-fuchsia-400" />
-                      3-Second Video Intro
-                    </div>
-                    <div className="text-zinc-400 text-sm">Show your personality instantly</div>
-                  </div>
-                  <Button
-                    onClick={() => setShowVideoUpload(true)}
-                    className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
-                  >
-                    {formData.videoIntro ? 'Update Video' : 'Add Video'}
-                  </Button>
+              <div>
+                <Label className="text-zinc-300 text-sm font-medium">
+                  Tell us about yourself
+                </Label>
+                <Textarea
+                  value={formData.bio}
+                  onChange={(e) => handleInput("bio", e.target.value.slice(0, 500))}
+                  className="mt-2 bg-zinc-900 border-zinc-700 text-white min-h-[120px] resize-none"
+                  placeholder="Share your vibe, interests, what makes you unique..."
+                />
+                <div className="text-xs text-zinc-500 mt-2 text-right">
+                  {formData.bio.length}/500
                 </div>
               </div>
             </div>
@@ -562,22 +630,21 @@ const DatingOnboardingWizard = () => {
 
       case 2:
         return (
-          <StepCard 
-            title="Your identity matters" 
-            subtitle="Help us understand who you are"
-          >
+          <StepCard title="Your identity matters" subtitle="Help us understand who you are">
             <div className="space-y-8">
               <div>
-                <Label className="text-zinc-300 text-lg font-medium mb-4 block">Gender identity</Label>
+                <Label className="text-zinc-300 text-lg font-medium mb-4 block">
+                  Gender identity
+                </Label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {GENDER_IDENTITIES.map(gender => (
+                  {GENDER_IDENTITIES.map((gender) => (
                     <button
                       key={gender.id}
-                      onClick={() => handleInputChange('gender', gender.id)}
+                      onClick={() => handleInput("gender", gender.id)}
                       className={`p-4 rounded-xl border-2 transition-all text-left ${
                         formData.gender === gender.id
-                          ? 'border-fuchsia-500 bg-fuchsia-500/10'
-                          : 'border-zinc-700 bg-zinc-900 hover:border-zinc-600'
+                          ? "border-fuchsia-500 bg-fuchsia-500/10"
+                          : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
                       }`}
                     >
                       <div className="text-2xl mb-2">{gender.icon}</div>
@@ -588,25 +655,33 @@ const DatingOnboardingWizard = () => {
               </div>
 
               <div>
-                <Label className="text-zinc-300 text-lg font-medium mb-4 block">Pronouns</Label>
+                <Label className="text-zinc-300 text-lg font-medium mb-4 block">
+                  Pronouns
+                </Label>
                 <div className="flex flex-wrap gap-3">
-                  {['he/him', 'she/her', 'they/them', 'he/they', 'she/they', 'ze/zir'].map(pronoun => (
-                    <button
-                      key={pronoun}
-                      onClick={() => handleInputChange('pronouns', pronoun)}
-                      className={`px-6 py-3 rounded-full border transition-all ${
-                        formData.pronouns === pronoun
-                          ? 'border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-300'
-                          : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600'
-                      }`}
-                    >
-                      {pronoun}
-                    </button>
-                  ))}
+                  {["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].map(
+                    (p) => (
+                      <button
+                        key={p}
+                        onClick={() => handleInput("pronouns", p)}
+                        className={`px-6 py-3 rounded-full border transition-all ${
+                          formData.pronouns === p
+                            ? "border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-300"
+                            : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  )}
                 </div>
                 <Input
-                  value={formData.pronouns.includes('/') ? '' : formData.pronouns}
-                  onChange={(e) => handleInputChange('pronouns', e.target.value)}
+                  value={["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].includes(
+                    formData.pronouns
+                  )
+                    ? ""
+                    : formData.pronouns}
+                  onChange={(e) => handleInput("pronouns", e.target.value)}
                   className="mt-3 bg-zinc-900 border-zinc-700 text-white"
                   placeholder="Or enter custom pronouns..."
                 />
@@ -617,22 +692,19 @@ const DatingOnboardingWizard = () => {
 
       case 3:
         return (
-          <StepCard 
-            title="Sexual orientation" 
-            subtitle="How do you identify?"
-          >
+          <StepCard title="Sexual orientation" subtitle="How do you identify?">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {ORIENTATIONS.map(orientation => (
+              {ORIENTATIONS.map((o) => (
                 <button
-                  key={orientation.id}
-                  onClick={() => handleInputChange('orientation', orientation.id)}
+                  key={o.id}
+                  onClick={() => handleInput("orientation", o.id)}
                   className={`p-6 rounded-xl border-2 transition-all text-center ${
-                    formData.orientation === orientation.id
-                      ? 'border-fuchsia-500 bg-fuchsia-500/10'
-                      : 'border-zinc-700 bg-zinc-900 hover:border-zinc-600'
+                    formData.orientation === o.id
+                      ? "border-fuchsia-500 bg-fuchsia-500/10"
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
                   }`}
                 >
-                  <div className="text-white font-medium text-lg">{orientation.label}</div>
+                  <div className="text-white font-medium text-lg">{o.label}</div>
                 </button>
               ))}
             </div>
@@ -641,104 +713,320 @@ const DatingOnboardingWizard = () => {
 
       case 4:
         return (
-          <StepCard 
-            title="Who would you like to meet?" 
-            subtitle="Select all that apply"
-          >
+          <StepCard title="Who would you like to meet?" subtitle="Select all that apply">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {SEEKING_GENDERS.map(gender => (
+              {SEEKING_GENDERS.map((g) => (
                 <button
-                  key={gender}
-                  onClick={() => toggleArrayItem('seeking', gender)}
+                  key={g}
+                  onClick={() => toggleArrayItem("seeking", g)}
                   className={`p-6 rounded-xl border-2 transition-all text-center ${
-                    formData.seeking.includes(gender)
-                      ? 'border-fuchsia-500 bg-fuchsia-500/10'
-                      : 'border-zinc-700 bg-zinc-900 hover:border-zinc-600'
+                    formData.seeking.includes(g)
+                      ? "border-fuchsia-500 bg-fuchsia-500/10"
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
                   }`}
                 >
-                  <div className="text-white font-medium">{gender}</div>
+                  <div className="text-white font-medium">{g}</div>
                 </button>
               ))}
             </div>
-            
-            {formData.seeking.length > 0 && (
-              <div className="mt-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
-                <p className="text-green-300 text-sm">
-                  Perfect! We'll show you profiles that match your preferences and might be interested in connecting with you.
-                </p>
-              </div>
-            )}
           </StepCard>
         );
 
       case 5:
         return (
-          <StepCard 
-            title="What are you looking for?" 
+          <StepCard
+            title="What are you looking for?"
             subtitle="Your relationship goals help us find better matches"
           >
             <div className="space-y-4">
-              {RELATIONSHIP_TYPES.map(type => {
-                const IconComponent = type.icon;
-                return (
-                  <button
-                    key={type.id}
-                    onClick={() => handleInputChange('relationshipType', type.id)}
-                    className={`w-full p-6 rounded-xl border-2 transition-all text-left bg-gradient-to-r ${
-                      formData.relationshipType === type.id
-                        ? 'border-fuchsia-500 bg-fuchsia-500/10'
-                        : `border-zinc-700 bg-zinc-900 hover:border-zinc-600 ${type.gradient}`
-                    }`}
-                  >
-                    <div className="flex items-start gap-4">
-                      <div className="p-2 rounded-lg bg-white/5">
-                        <IconComponent className="h-6 w-6 text-white" />
-                      </div>
-                      <div>
-                        <div className="text-white font-medium text-lg mb-1">{type.label}</div>
-                        <div className="text-zinc-400 text-sm">{type.desc}</div>
-                      </div>
+              {RELATIONSHIP_TYPES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => handleInput("relationshipType", t.id)}
+                  className={`w-full p-6 rounded-xl border-2 transition-all text-left bg-gradient-to-r ${
+                    formData.relationshipType === t.id
+                      ? "border-fuchsia-500 bg-fuchsia-500/10"
+                      : `border-zinc-700 bg-zinc-900 hover:border-zinc-600 ${t.gradient}`
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="p-2 rounded-lg bg-white/5">
+                      <Star className="h-6 w-6 text-white" />
                     </div>
-                  </button>
-                );
-              })}
+                    <div>
+                      <div className="text-white font-medium text-lg mb-1">{t.label}</div>
+                      <div className="text-zinc-400 text-sm">{t.desc}</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
             </div>
           </StepCard>
         );
 
       case 6:
         return (
-          <StepCard 
-            title="Your interests make you unique" 
+          <StepCard
+            title="Your interests make you unique"
             subtitle="Select what you're passionate about"
           >
             <div className="space-y-8">
-              {INTEREST_CATEGORIES.map(category => (
-                <div key={category.name}>
-                  <h3 className="text-white font-medium text-lg mb-4">{category.name}</h3>
+              {INTEREST_CATEGORIES.map((cat) => (
+                <div key={cat.name}>
+                  <h3 className="text-white font-medium text-lg mb-4">{cat.name}</h3>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                    {category.items.map(interest => {
-                      const IconComponent = interest.icon;
+                    {cat.items.map((i) => {
+                      const Icon = i.icon;
                       return (
                         <button
-                          key={interest.id}
-                          onClick={() => toggleArrayItem('interests', interest.id)}
+                          key={i.id}
+                          onClick={() => toggleArrayItem("interests", i.id)}
                           className={`p-4 rounded-xl border transition-all text-center ${
-                            formData.interests.includes(interest.id)
-                              ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
-                              : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600'
+                            formData.interests.includes(i.id)
+                              ? "border-cyan-500 bg-cyan-500/10 text-cyan-300"
+                              : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600"
                           }`}
                         >
-                          <IconComponent className="h-6 w-6 mx-auto mb-2" />
-                          <div className="text-sm font-medium">{interest.label}</div>
+                          <Icon className="h-6 w-6 mx-auto mb-2" />
+                          <div className="text-sm font-medium">{i.label}</div>
                         </button>
                       );
                     })}
                   </div>
                 </div>
               ))}
-              
+
               <div>
                 <Input
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && e.target.value.trim())
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    if (e.key === "Enter" && v) {
+                      if (!formData.interests.includes(v)) {
+                        handleInput("interests", [...formData.interests, v]);
+                      }
+                      (e.target as HTMLInputElement).value = "";
+                    }
+                  }}
+                  className="bg-zinc-900 border-zinc-700 text-white"
+                  placeholder="Type a custom interest and press Enter..."
+                />
+              </div>
+
+              {formData.interests.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {formData.interests.map((i) => (
+                    <Badge
+                      key={i}
+                      className="bg-zinc-800 text-zinc-200 hover:bg-zinc-700 cursor-pointer"
+                      onClick={() => toggleArrayItem("interests", i)}
+                    >
+                      {i} <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          </StepCard>
+        );
+
+      case 7:
+        return (
+          <StepCard
+            title="Add photos and create your video intro"
+            subtitle="Show your personality - video intros get 3x more matches!"
+          >
+            <div className="space-y-8">
+              {/* Photos */}
+              <div>
+                <h3 className="text-white font-medium text-lg mb-4">
+                  Photos (2–6 recommended)
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {formData.photos.map((photo, idx) => (
+                    <div key={photo.id} className="relative group">
+                      <img
+                        src={photo.url}
+                        alt={`Photo ${idx + 1}`}
+                        className="w-full h-48 object-cover rounded-xl"
+                      />
+                      <button
+                        onClick={() => removePhoto(photo.id)}
+                        className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                      {idx === 0 && (
+                        <div className="absolute top-2 left-2 bg-fuchsia-500 text-white text-xs px-2 py-1 rounded-full">
+                          Main
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {formData.photos.length < 6 && (
+                    <label className="border-2 border-dashed border-zinc-700 rounded-xl h-48 flex flex-col items-center justify-center cursor-pointer hover:border-zinc-600 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])}
+                        className="hidden"
+                      />
+                      {uploadingPhoto ? (
+                        <Loader2 className="h-8 w-8 text-fuchsia-500 animate-spin" />
+                      ) : (
+                        <>
+                          <Plus className="h-8 w-8 text-zinc-500 mb-2" />
+                          <span className="text-zinc-400 text-sm">Add photo</span>
+                        </>
+                      )}
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {/* Video Intro (can also be added on step 1) */}
+              <div>
+                <h3 className="text-white font-medium text-lg mb-4">
+                  3-Second Video Intro{" "}
+                  <Badge className="ml-2 bg-gradient-to-r from-fuchsia-500 to-purple-500 text-white">
+                    <Star className="h-3 w-3 mr-1" />
+                    Recommended
+                  </Badge>
+                </h3>
+
+                {!formData.videoIntro ? (
+                  <label className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center cursor-pointer hover:border-fuchsia-500/70 transition-colors">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])}
+                    />
+                    <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Camera className="h-8 w-8 text-white" />
+                    </div>
+                    <h4 className="text-white font-medium mb-2">
+                      Create your signature 3-second intro
+                    </h4>
+                    <p className="text-zinc-400 text-sm">
+                      Show your personality! We’ll trim to exactly 3 seconds when you publish.
+                    </p>
+                  </label>
+                ) : (
+                  <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-700">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-lg flex items-center justify-center overflow-hidden">
+                        <video
+                          src={formData.videoIntro.url}
+                          className="h-full w-full object-cover"
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-white font-medium">Video intro ready!</p>
+                        <p className="text-zinc-400 text-sm">Will be trimmed to 3s</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleInput("videoIntro", null)}
+                        className="border-zinc-700"
+                      >
+                        Re-record
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </StepCard>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-fuchsia-500 mx-auto mb-4" />
+          <p className="text-zinc-300">Loading your details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+      {/* Background */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-fuchsia-900/20 via-purple-900/10 to-transparent" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-cyan-900/20 via-blue-900/10 to-transparent" />
+
+      {/* Header */}
+      <div className="relative z-10 border-b border-zinc-800/50 bg-black/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-fuchsia-600 to-purple-500 flex items-center justify-center">
+              <Heart className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold">Splikz Dating</h1>
+              <p className="text-sm text-zinc-400">Create your perfect dating profile</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
+        <StepIndicator />
+        <div className="flex gap-6">
+          <div className="flex-1">{renderStep()} <NavigationButtons /></div>
+        </div>
+      </div>
+
+      {/* Live Preview */}
+      <ProfilePreview />
+
+      {/* Publishing overlay */}
+      {saving && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <Card className="bg-zinc-950 border-zinc-700 w-full max-w-md">
+            <CardContent className="p-8 text-center">
+              <div className="h-16 w-16 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Sparkles className="h-8 w-8 text-white" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">
+                Publishing your profile...
+              </h3>
+              <p className="text-zinc-400 mb-6">
+                We’re saving your info and will trim your video to exactly 3 seconds.
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-sm text-zinc-300">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Profile information saved
+                </div>
+                <div className="flex items-center gap-3 text-sm text-zinc-300">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Photos added
+                </div>
+                <div className="flex items-center gap-3 text-sm text-zinc-300">
+                  <Loader2 className="h-4 w-4 animate-spin text-fuchsia-500" />
+                  Processing your 3-sec intro…
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DatingOnboardingWizard;
