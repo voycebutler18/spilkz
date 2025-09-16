@@ -1,3 +1,4 @@
+// src/App.tsx
 import NotesPage from "@/pages/Notes";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -75,7 +76,9 @@ import Promote from "@/pages/Promote";
 
 // ✅ Splikz Dating
 import DatingHome from "./pages/Dating/DatingHome";
-import DatingOnboarding from "./pages/Dating/DatingOnboarding"; // <-- this file below
+import DatingOnboarding from "./pages/Dating/DatingOnboarding";
+import DatingDiscover from "./pages/Dating/DatingDiscover";
+import DatingHearts from "./pages/Dating/DatingHearts";
 
 const queryClient = new QueryClient();
 
@@ -206,6 +209,8 @@ const App = () => (
               {/* ✅ Splikz Dating */}
               <Route path="/dating" element={<DatingHome />} />
               <Route path="/dating/onboarding" element={<DatingOnboarding />} />
+              <Route path="/dating/discover" element={<DatingDiscover />} />
+              <Route path="/dating/hearts" element={<DatingHearts />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
