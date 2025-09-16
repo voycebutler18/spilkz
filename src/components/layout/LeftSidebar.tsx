@@ -154,17 +154,6 @@ const LeftSidebar: React.FC = () => {
                 My Boosts
               </Link>
 
-              {/* Dashboard link */}
-              <Link
-                to="/dashboard"
-                className={cn(
-                  "block rounded-lg px-3 py-2 text-sm hover:bg-white/5",
-                  isActive("/dashboard") && "bg-white/10 font-medium"
-                )}
-              >
-                Creator Dashboard
-              </Link>
-
               {/* Notes link */}
               <Link
                 to="/notes"
