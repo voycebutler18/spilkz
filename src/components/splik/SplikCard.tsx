@@ -70,6 +70,8 @@ export default function SplikCard({
 
   const [user, setUser] = React.useState<any>(null);
 
+  const [isMuted, setIsMuted] = React.useState(true);
+  const [isPlaying, setIsPlaying] = React.useState(false);
   const [isFollowing, setIsFollowing] = React.useState(false);
   const [followLoading, setFollowLoading] = React.useState(false);
 
@@ -398,6 +400,8 @@ export default function SplikCard({
       setFollowLoading(false);
     }
   };
+
+  const toggleSave = async () => {
     try {
       const u = await ensureAuth();
       console.log("Toggling bookmark for splik:", splik.id, "user:", u.id, "current state:", isSaved);
