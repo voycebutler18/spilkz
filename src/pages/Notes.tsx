@@ -26,7 +26,7 @@ type NoteRow = {
   read_at: string | null;
   in_reply_to: string | null;
 
-  // from notes_enriched view
+  // (enriched locally)
   sender_username?: string | null;
   sender_display_name?: string | null;
   sender_avatar_url?: string | null;
@@ -109,35 +109,67 @@ export default function NotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // ---------- search creators ----------
+  // ---------- search creators (username OR display_name, supports "@") ----------
   useEffect(() => {
-    if (!query.trim()) {
+    const raw = query.trim();
+    if (!raw || toUser) {
       setOptions([]);
       return;
     }
-    const controller = new AbortController();
+
+    const term = raw.replace(/^@/, ""); // allow "@david"
+    const pattern = `%${term}%`;
+
+    let cancelled = false;
 
     const run = async () => {
       setSearching(true);
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, avatar_url")
-        .ilike("username", `%${query.trim()}%`)
-        .limit(8);
 
-      if (!controller.signal.aborted) {
-        if (error) console.error(error);
-        setOptions((data as Profile[]) ?? []);
-        setSearching(false);
-      }
+      const [byUser, byName] = await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id, username, display_name, avatar_url")
+          .ilike("username", pattern)
+          .limit(25),
+        supabase
+          .from("profiles")
+          .select("id, username, display_name, avatar_url")
+          .ilike("display_name", pattern)
+          .limit(25),
+      ]);
+
+      if (cancelled) return;
+
+      const a: Profile[] = (byUser.data as any) ?? [];
+      const seen = new Set(a.map((r) => r.id));
+      const merged: Profile[] = [
+        ...a,
+        ...(((byName.data as any) ?? []).filter((r: Profile) => !seen.has(r.id))),
+      ];
+
+      // rank: username prefix > display_name prefix > alpha
+      merged.sort((x, y) => {
+        const xu = (x.username || "").toLowerCase();
+        const yu = (y.username || "").toLowerCase();
+        const xd = (x.display_name || "").toLowerCase();
+        const yd = (y.display_name || "").toLowerCase();
+        const t = term.toLowerCase();
+        const rank = (s: string) => (s.startsWith(t) ? 0 : 1);
+        const rx = Math.min(rank(xu), rank(xd));
+        const ry = Math.min(rank(yu), rank(yd));
+        return rx !== ry ? rx - ry : (xd || xu).localeCompare(yd || yu);
+      });
+
+      setOptions(merged.slice(0, 25));
+      setSearching(false);
     };
 
-    const t = setTimeout(run, 250);
+    const t = setTimeout(run, 200);
     return () => {
-      controller.abort();
+      cancelled = true;
       clearTimeout(t);
     };
-  }, [query]);
+  }, [query, toUser]);
 
   const handleSend = async () => {
     if (!me) {
@@ -183,25 +215,20 @@ export default function NotesPage() {
     const ids = Array.from(readThisSession.current);
     if (!ids.length) return;
 
-    console.log("Deleting read notes:", ids);
-    
     try {
       const { error } = await supabase
         .from("notes")
         .delete()
         .in("id", ids)
         .eq("recipient_id", me);
-      
+
       if (error) {
         console.error("Failed to delete notes:", error);
         return;
       }
-      
-      console.log("Successfully deleted notes");
+
       readThisSession.current.clear();
-      
-      // Update local state to remove deleted notes
-      setInbox(prev => prev.filter(note => !ids.includes(note.id)));
+      setInbox((prev) => prev.filter((note) => !ids.includes(note.id)));
       toast.success(`Deleted ${ids.length} read note(s)`);
     } catch (error) {
       console.error("Error deleting notes:", error);
@@ -214,7 +241,6 @@ export default function NotesPage() {
     setLoadingInbox(true);
 
     try {
-      // Query directly from notes table with manual join to avoid view issues
       const { data: notesData, error: notesError } = await supabase
         .from("notes")
         .select("*")
@@ -224,32 +250,29 @@ export default function NotesPage() {
 
       if (notesError) throw notesError;
 
-      // Get sender profiles separately
-      const senderIds = [...new Set(notesData?.map(n => n.sender_id) || [])];
+      const senderIds = [...new Set(notesData?.map((n) => n.sender_id) || [])];
       const { data: profilesData } = await supabase
         .from("profiles")
         .select("id, username, display_name, avatar_url")
         .in("id", senderIds);
 
-      // Combine data manually
-      const enrichedNotes = (notesData || []).map(note => {
-        const profile = profilesData?.find(p => p.id === note.sender_id);
+      const enrichedNotes = (notesData || []).map((note) => {
+        const profile = profilesData?.find((p) => p.id === note.sender_id);
         return {
           ...note,
           sender_username: profile?.username,
           sender_display_name: profile?.display_name,
           sender_avatar_url: profile?.avatar_url,
-        };
+        } as NoteRow;
       });
 
       setInbox(enrichedNotes);
 
-      // Mark unread as read and schedule for deletion
       const unread = enrichedNotes.filter((n) => !n.read_at);
       if (unread.length) {
         const ids = unread.map((n) => n.id);
         const now = new Date().toISOString();
-        
+
         const { error: updErr } = await supabase
           .from("notes")
           .update({ read_at: now })
@@ -257,18 +280,10 @@ export default function NotesPage() {
           .eq("recipient_id", me);
 
         if (!updErr) {
-          // Add to deletion queue
           unread.forEach((n) => readThisSession.current.add(n.id));
-          
-          // Update local state
-          setInbox(prev =>
-            prev.map(n => ids.includes(n.id) ? { ...n, read_at: now } : n)
-          );
+          setInbox((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)));
 
-          // Schedule deletion after 5 seconds
-          if (deleteTimeoutRef.current) {
-            clearTimeout(deleteTimeoutRef.current);
-          }
+          if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
           deleteTimeoutRef.current = setTimeout(() => {
             deleteReadNow();
           }, 5000);
@@ -306,23 +321,18 @@ export default function NotesPage() {
   // ---------- enhanced cleanup on leave ----------
   useEffect(() => {
     const cleanup = () => {
-      if (deleteTimeoutRef.current) {
-        clearTimeout(deleteTimeoutRef.current);
-      }
+      if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
       deleteReadNow();
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        cleanup();
-      }
+      if (document.visibilityState === "hidden") cleanup();
     };
 
     const onBeforeUnload = () => cleanup();
     const onUnload = () => cleanup();
     const onPopState = () => cleanup();
 
-    // Multiple event listeners for better coverage
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("unload", onUnload);
@@ -375,7 +385,7 @@ export default function NotesPage() {
       <div>
         <h1 className="text-xl font-semibold">Send a Note</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Pick a creator and send a short, one-off note. When they read it, it gets automatically 
+          Pick a creator and send a short, one-off note. When they read it, it gets automatically
           deleted after 5 seconds. They can reply before it disappears.
         </p>
 
@@ -387,7 +397,7 @@ export default function NotesPage() {
                 setToUser(null);
                 setQuery(e.target.value);
               }}
-              placeholder="Search username…"
+              placeholder="Search name or username…"
               aria-label="Search creators"
             />
             {!!(query && !toUser) && (
@@ -560,9 +570,9 @@ export default function NotesPage() {
                 <div
                   className={cn(
                     "mt-2 text-xs",
-                    n.read_at 
+                    n.read_at
                       ? readThisSession.current.has(n.id)
-                        ? "text-red-600" 
+                        ? "text-red-600"
                         : "text-emerald-600"
                       : "text-muted-foreground",
                   )}
