@@ -74,6 +74,9 @@ import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalConte
 // ✅ Promote page (use alias so the path resolves on Linux builds)
 import Promote from "@/pages/Promote";
 
+// ✅ NEW: Splikz Dating (page only; routes here)
+import DatingHome from "./pages/Dating/DatingHome";
+
 const queryClient = new QueryClient();
 
 function UploadRoute() {
@@ -188,11 +191,9 @@ const App = () => (
 
               {/* Dashboard */}
               <Route path="/dashboard" element={<CreatorDashboard />} />
-              
               {/* ✅ New Reactions System Routes */}
               <Route path="/dashboard/bookmarks" element={<Bookmarks />} />
               <Route path="/dashboard/boosts" element={<Boosts />} />
-              
               {/* ⚠️ Legacy route - consider removing after migration */}
               <Route path="/dashboard/favorites" element={<Favorites />} />
 
@@ -208,6 +209,9 @@ const App = () => (
 
               {/* ✅ Notes (NoteBox) */}
               <Route path="/notes" element={<NotesPage />} />
+
+              {/* ✅ Splikz Dating */}
+              <Route path="/dating" element={<DatingHome />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
