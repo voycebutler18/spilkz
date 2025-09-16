@@ -86,6 +86,20 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
           </Link>
 
           {isAuthed && (
+            <Link
+              to="/dashboard"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/dashboard");
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] bg-primary/10 border border-primary/20"
+            >
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span>Creator Dashboard</span>
+            </Link>
+          )}
+
+          {isAuthed && (
             <Button 
               className="w-full rounded-xl bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]" 
               onClick={() => go("/upload")}
