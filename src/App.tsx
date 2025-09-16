@@ -1,4 +1,3 @@
-// src/App.tsx
 import NotesPage from "@/pages/Notes";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -47,9 +46,9 @@ import Admin from "./pages/admin/admin";
 
 // Dashboard
 import CreatorDashboard from "./pages/Dashboard/CreatorDashboard";
-import Favorites from "./pages/Dashboard/Favorites"; // ⚠️ Legacy - consider removing
-import Bookmarks from "./pages/Dashboard/Bookmarks"; // ✅ New bookmarks page
-import Boosts from "./pages/Dashboard/Boosts"; // ✅ New boosts page
+import Favorites from "./pages/Dashboard/Favorites";
+import Bookmarks from "./pages/Dashboard/Bookmarks";
+import Boosts from "./pages/Dashboard/Boosts";
 
 // Profiles & videos
 import Profile from "./pages/Profile";
@@ -71,12 +70,12 @@ import PrayersSearchPage from "./pages/PrayersSearch";
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
-// ✅ Promote page
+// Promote
 import Promote from "@/pages/Promote";
 
 // ✅ Splikz Dating
-import DatingHome from "./pages/Dating/DatingHome"; // Capital 'D' folder
-import DatingOnboardingWizard from "./pages/dating/DatingOnboardingWizard"; // <-- add this (lowercase 'd' folder)
+import DatingHome from "./pages/Dating/DatingHome";
+import DatingOnboarding from "./pages/Dating/DatingOnboarding"; // <-- this file below
 
 const queryClient = new QueryClient();
 
@@ -100,9 +99,7 @@ function ScrollToTop() {
   const { pathname, hash } = useLocation();
   useEffect(() => {
     try {
-      if ("scrollRestoration" in window.history) {
-        window.history.scrollRestoration = "manual";
-      }
+      if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
     } catch {}
   }, []);
   useEffect(() => {
@@ -116,9 +113,7 @@ function ScrollToTop() {
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
-    typeof window !== "undefined"
-      ? window.matchMedia("(min-width: 1024px)").matches
-      : true
+    typeof window !== "undefined" ? window.matchMedia("(min-width: 1024px)").matches : true
   );
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -134,7 +129,6 @@ function MessagesIndexRoute() {
   const isDesktop = useIsDesktop();
   return isDesktop ? <CombinedMessages /> : <MessagesInbox />;
 }
-
 function MessagesThreadRoute() {
   const isDesktop = useIsDesktop();
   return isDesktop ? <CombinedMessages /> : <MessageThread />;
@@ -203,15 +197,15 @@ const App = () => (
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
 
-              {/* ✅ Promote */}
+              {/* Promote */}
               <Route path="/promote/:splikId" element={<Promote />} />
 
-              {/* ✅ Notes (NoteBox) */}
+              {/* Notes */}
               <Route path="/notes" element={<NotesPage />} />
 
               {/* ✅ Splikz Dating */}
               <Route path="/dating" element={<DatingHome />} />
-              <Route path="/dating/onboarding" element={<DatingOnboardingWizard />} /> {/* <-- added */}
+              <Route path="/dating/onboarding" element={<DatingOnboarding />} />
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
