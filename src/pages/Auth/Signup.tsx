@@ -30,7 +30,6 @@ import { supabase } from "@/integrations/supabase/client";
 /* ---------------- helpers ---------------- */
 
 function toDateInputValue(d: Date) {
-  // Normalize to local date (avoid TZ off-by-one)
   const tzOff = d.getTimezoneOffset() * 60000;
   return new Date(d.getTime() - tzOff).toISOString().split("T")[0];
 }
@@ -48,7 +47,6 @@ function calcAgeFromDob(dobStr: string): number | null {
 }
 
 // Lowercase, trim, remove spaces. Allow letters, numbers, underscore, dot.
-// (You can loosen/tighten this to your brand’s rules.)
 function normalizeUsername(raw: string) {
   return (raw || "")
     .toLowerCase()
@@ -59,18 +57,29 @@ function normalizeUsername(raw: string) {
 
 const USERNAME_RE = /^[a-z0-9._]{3,20}$/;
 
+/**
+ * Availability check that:
+ *  - uses eq on normalized usernames (you store them normalized)
+ *  - if the read fails (RLS, network), returns true so we don't block signup.
+ *    The insert remains the source of truth.
+ */
 async function usernameIsAvailable(normUsername: string) {
   if (!normUsername) return false;
-  // Case-insensitive uniqueness check
-  const { count, error } = await supabase
-    .from("profiles")
-    .select("*", { head: true, count: "exact" })
-    .ilike("username", normUsername); // ILIKE without % acts as case-insensitive equals
-  if (error) {
-    // If the check fails, be conservative and say "not available"
-    return false;
+  try {
+    const { count, error } = await supabase
+      .from("profiles")
+      .select("id", { head: true, count: "exact" })
+      .eq("username", normUsername);
+
+    if (error) {
+      console.warn("Username check skipped (read not allowed / failed):", error);
+      return true; // don't block on read failure
+    }
+    return (count ?? 0) === 0;
+  } catch (e) {
+    console.warn("Username check failed:", e);
+    return true; // don't block on exceptions either
   }
-  return (count ?? 0) === 0;
 }
 
 /* ---------------- component ---------------- */
@@ -138,10 +147,10 @@ const Signup = () => {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
-  /* -------- username live check (on blur / submit we also re-check) -------- */
+  /* -------- username live check (on blur / submit also re-check) -------- */
   const runUsernameCheck = async (raw: string) => {
     const norm = normalizeUsername(raw);
-    setUsername(norm); // keep field normalized visually; remove this if you prefer to show raw typing
+    setUsername(norm); // show normalized form in the input
 
     if (!norm) {
       setUsernameOK(null);
@@ -196,7 +205,7 @@ const Signup = () => {
       return;
     }
 
-    // Make sure the username is still free at submit time
+    // Re-check availability (non-blocking on read failures)
     setCheckingUsername(true);
     const available = await usernameIsAvailable(normUsername);
     setCheckingUsername(false);
@@ -214,7 +223,7 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      // Create auth user (emails are case-insensitive; we normalize anyway)
+      // Create auth user
       const { data, error } = await supabase.auth.signUp({
         email: normEmail,
         password,
@@ -226,7 +235,7 @@ const Signup = () => {
             dob,
             age: ageNum,
             city,
-            username: normUsername, // store in auth metadata too
+            username: normUsername,
           },
         },
       });
@@ -240,12 +249,25 @@ const Signup = () => {
           last_name: lastName,
           age: ageNum,
           city,
-          username: normUsername, // lowercase, unique
+          username: normUsername, // stored normalized
           display_name: `${firstName} ${lastName}`,
         });
-        if (profileError) console.error("Profile creation error:", profileError);
 
-        // (Optional) welcome email
+        if (profileError) {
+          // If your DB has a unique constraint and another user grabbed it in between
+          if ((profileError as any).code === "23505") {
+            toast({
+              title: "Username just got taken",
+              description: "Please pick a different username.",
+              variant: "destructive",
+            });
+            setLoading(false);
+            return;
+          }
+          console.error("Profile creation error:", profileError);
+        }
+
+        // Optional welcome email (safe to keep)
         try {
           const { error: emailError } = await supabase.functions.invoke("send-welcome-email", {
             body: { email: normEmail, firstName, lastName },
@@ -255,18 +277,12 @@ const Signup = () => {
           console.error("Error calling email function:", emailError);
         }
 
-        // Dev convenience: sign in immediately
+        // Sign in immediately for smoother UX
         const { data: signInData, error: signInError } =
-          await supabase.auth.signInWithPassword({
-            email: normEmail,
-            password,
-          });
+          await supabase.auth.signInWithPassword({ email: normEmail, password });
 
         if (!signInError && signInData.session) {
-          toast({
-            title: "Account created!",
-            description: "Welcome to Splikz!",
-          });
+          toast({ title: "Account created!", description: "Welcome to Splikz!" });
           navigate("/dashboard");
         } else {
           toast({
@@ -343,7 +359,7 @@ const Signup = () => {
               </div>
             </div>
 
-            {/* Username (mandatory, unique, case-insensitive) */}
+            {/* Username (mandatory, unique) */}
             <div className="space-y-2">
               <Label htmlFor="username">Username (unique)</Label>
               <div className="relative">
@@ -372,11 +388,7 @@ const Signup = () => {
                 </div>
               </div>
               {usernameMsg && (
-                <p
-                  className={`text-xs ${
-                    usernameOK ? "text-green-600" : "text-red-600"
-                  }`}
-                >
+                <p className={`text-xs ${usernameOK ? "text-green-600" : "text-red-600"}`}>
                   {usernameMsg}
                 </p>
               )}
