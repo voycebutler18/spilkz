@@ -288,58 +288,76 @@ export default function SplikCard({
       console.log("Toggling boost for splik:", splik.id, "user:", u.id, "current state:", hasHyped);
 
       if (hasHyped) {
-        // optimistic
-        setHasHyped(false);
-        setHypeCount((n) => Math.max(0, n - 1));
-        // ✅ Updated to use new boosts table
+        // Remove boost
         const result = await supabase
           .from("boosts")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
         console.log("Remove boost result:", result);
+        
+        if (!result.error) {
+          setHasHyped(false);
+          setHypeCount((n) => Math.max(0, n - 1));
+        }
       } else {
-        setHasHyped(true);
-        setHypeCount((n) => n + 1);
-        // ✅ Updated to use new boosts table
+        // Add boost
         const result = await supabase
           .from("boosts")
           .insert({ 
             splik_id: splik.id, 
-            user_id: u.id,
-            created_at: new Date().toISOString()
+            user_id: u.id
           });
         console.log("Add boost result:", result);
+        
+        if (!result.error) {
+          setHasHyped(true);
+          setHypeCount((n) => n + 1);
+        }
       }
+
+      // Refresh the actual count from database
+      const { count } = await supabase
+        .from("boosts")
+        .select("*", { head: true, count: "exact" })
+        .eq("splik_id", splik.id);
+      setHypeCount(count || 0);
+      
     } catch (error) {
       console.error("Boost error:", error);
-      /* ignore; UI already rolled */
     }
   };
 
   const toggleSave = async () => {
     try {
       const u = await ensureAuth();
+      console.log("Toggling bookmark for splik:", splik.id, "user:", u.id, "current state:", isSaved);
+      
       if (isSaved) {
-        setIsSaved(false);
-        // ✅ Updated to use new bookmarks table
-        await supabase
+        // Remove bookmark
+        const result = await supabase
           .from("bookmarks")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
+        console.log("Remove bookmark result:", result);
+        
+        if (!result.error) {
+          setIsSaved(false);
+        }
       } else {
-        setIsSaved(true);
-        // ✅ Updated to use new bookmarks table
-        await supabase
+        // Add bookmark
+        const result = await supabase
           .from("bookmarks")
-          .insert([{ splik_id: splik.id, user_id: u.id }], {
-            onConflict: "user_id,splik_id",
-            ignoreDuplicates: true,
-          });
+          .insert([{ splik_id: splik.id, user_id: u.id }]);
+        console.log("Add bookmark result:", result);
+        
+        if (!result.error) {
+          setIsSaved(true);
+        }
       }
-    } catch {
-      /* ignore */
+    } catch (error) {
+      console.error("Bookmark error:", error);
     }
   };
 
