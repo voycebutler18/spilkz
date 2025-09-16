@@ -1,6 +1,6 @@
 // src/pages/Dating/DatingHome.tsx
 import React, { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +25,10 @@ import {
   MapPin,
   X,
   Volume2,
-  Video,
-  Upload, // <- was missing
 } from "lucide-react";
+
+// ✅ use your new modal component
+import DatingVideoUploadModal from "./DatingVideoUploadModal";
 
 // helpers
 const nameFor = (p?: any) => {
@@ -46,7 +47,6 @@ const SplikzDatingHome: React.FC = () => {
   const [previewName, setPreviewName] = useState("");
   const [previewBio, setPreviewBio] = useState("");
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
-  const [loading, setLoading] = useState(true);
 
   // load user + profile
   useEffect(() => {
@@ -80,8 +80,6 @@ const SplikzDatingHome: React.FC = () => {
         }
       } catch (err) {
         console.error(err);
-      } finally {
-        if (mounted) setLoading(false);
       }
     })();
 
@@ -331,7 +329,7 @@ const SplikzDatingHome: React.FC = () => {
             <div className="grid md:grid-cols-3 gap-8">
               {[
                 {
-                  icon: Video,
+                  icon: () => <span className="sr-only">Video</span>, // icon set above
                   title: "3-Second Video Intros",
                   description:
                     "Skip the small talk. Show your personality instantly with authentic video moments that capture your real energy.",
@@ -339,7 +337,7 @@ const SplikzDatingHome: React.FC = () => {
                   border: "border-fuchsia-500/30",
                 },
                 {
-                  icon: Zap,
+                  icon: () => <span className="sr-only">AI</span>,
                   title: "Instant Chemistry",
                   description:
                     "Our AI matches you based on energy compatibility, not just photos. Find people who truly vibe with you.",
@@ -347,34 +345,31 @@ const SplikzDatingHome: React.FC = () => {
                   border: "border-cyan-500/30",
                 },
                 {
-                  icon: Shield,
+                  icon: () => <span className="sr-only">Shield</span>,
                   title: "Verified & Safe",
                   description:
                     "Every profile is verified. Report inappropriate behavior instantly. Your safety is our top priority.",
                   gradient: "from-green-500/20 to-emerald-500/20",
                   border: "border-green-500/30",
                 },
-              ].map((f, i) => {
-                const Icon = f.icon as any;
-                return (
-                  <Card
-                    key={i}
-                    className={`bg-gradient-to-br ${f.gradient} border ${f.border} backdrop-blur-sm hover:scale-105 transition-transform duration-300`}
-                  >
-                    <CardHeader className="text-center pb-4">
-                      <div className="h-16 w-16 mx-auto mb-4 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center">
-                        <Icon className="h-8 w-8 text-white" />
-                      </div>
-                      <CardTitle className="text-white text-xl">{f.title}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-zinc-300 text-center leading-relaxed">
-                        {f.description}
-                      </p>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+              ].map((f, i) => (
+                <Card
+                  key={i}
+                  className={`bg-gradient-to-br ${f.gradient} border ${f.border} backdrop-blur-sm hover:scale-105 transition-transform duration-300`}
+                >
+                  <CardHeader className="text-center pb-4">
+                    <div className="h-16 w-16 mx-auto mb-4 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center">
+                      {/* You can place icons here if you prefer visual glyphs */}
+                    </div>
+                    <CardTitle className="text-white text-xl">{f.title}</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-zinc-300 text-center leading-relaxed">
+                      {f.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           </div>
         </section>
@@ -518,102 +513,6 @@ const SplikzDatingHome: React.FC = () => {
         </div>
       )}
 
-      {/* video upload modal */}
-      {showVideoUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <Card className="w-full max-w-lg bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
-            <CardHeader className="border-b border-zinc-800 pb-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xl text-white flex items-center gap-2">
-                    <Camera className="h-5 w-5 text-fuchsia-500" />
-                    Add your 3-second intro
-                  </CardTitle>
-                  <p className="text-zinc-400 mt-1">Show your personality in 3 seconds</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowVideoUpload(false)}
-                  className="text-zinc-400 hover:text-white"
-                >
-                  <X className="h-5 w-5" />
-                </Button>
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-6">
-              <div className="space-y-6">
-                <div className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center bg-gradient-to-br from-fuchsia-500/5 to-purple-500/5">
-                  <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Camera className="h-8 w-8 text-white" />
-                  </div>
-                  <h3 className="text-white font-medium mb-2">Upload your 3-second intro</h3>
-                  <p className="text-zinc-400 text-sm mb-4">
-                    MP4, MOV, WebM supported. We’ll automatically trim to 3 seconds.
-                  </p>
-
-                  <div className="flex flex-col gap-3">
-                    <Button className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500">
-                      <Upload className="h-4 w-4 mr-2" />
-                      Choose video file
-                    </Button>
-
-                    <div className="text-zinc-500 text-xs">or</div>
-
-                    <Button variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-800">
-                      <Video className="h-4 w-4 mr-2" />
-                      Record with camera
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="bg-zinc-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-medium mb-3 flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-yellow-400" />
-                    Tips for a great intro
-                  </h4>
-                  <ul className="space-y-2 text-sm text-zinc-300">
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 flex-shrink-0" />
-                      <span>Smile and say hi — let your personality shine</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 flex-shrink-0" />
-                      <span>Good lighting makes all the difference</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 flex-shrink-0" />
-                      <span>Keep it natural — authenticity beats perfection</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="flex gap-3">
-                  <Button
-                    variant="outline"
-                    className="flex-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                    onClick={() => setShowVideoUpload(false)}
-                  >
-                    Skip for now
-                  </Button>
-                  <Button
-                    className="flex-1 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
-                    onClick={() => {
-                      setShowVideoUpload(false);
-                      handleNavigateToOnboarding();
-                    }}
-                  >
-                    Continue
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
       {/* success stories */}
       {!user && (
         <section className="relative z-10 py-20">
@@ -677,7 +576,7 @@ const SplikzDatingHome: React.FC = () => {
 
       {/* final CTA */}
       {!user && (
-        <section className="relative z-10 py-20 border-top border-white/5">
+        <section className="relative z-10 py-20 border-t border-white/5">
           <div className="max-w-4xl mx-auto px-4 text-center">
             <h2 className="text-5xl font-bold mb-6">
               Your perfect match is{" "}
@@ -702,6 +601,13 @@ const SplikzDatingHome: React.FC = () => {
           </div>
         </section>
       )}
+
+      {/* ✅ video upload modal */}
+      <DatingVideoUploadModal
+        open={showVideoUpload}
+        onClose={() => setShowVideoUpload(false)}
+        onUploadComplete={() => navigate("/dating/onboarding")}
+      />
     </div>
   );
 };
