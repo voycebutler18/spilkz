@@ -1,16 +1,18 @@
-// src/pages/Dashboard/Bookmarks.tsx
+// src/pages/Dashboard/Boosts.tsx
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { Database } from "@/types/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bookmark, BookmarkX, Search } from "lucide-react";
+import { TrendingUp, TrendingDown, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-type BookmarkedSplik = {
+type Supabase = Database;
+type BoostedSplik = {
   id: string;
   splik_id: string;
   created_at: string;
@@ -29,14 +31,15 @@ type BookmarkedSplik = {
       avatar_url: string | null;
     } | null;
   } | null;
+  boost_count?: number;
 };
 
-export default function BookmarksPage() {
+export default function BoostsPage() {
   const [user, setUser] = useState<any>(null);
-  const [bookmarks, setBookmarks] = useState<BookmarkedSplik[]>([]);
+  const [boosts, setBoosts] = useState<BoostedSplik[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filteredBookmarks, setFilteredBookmarks] = useState<BookmarkedSplik[]>([]);
+  const [filteredBoosts, setFilteredBoosts] = useState<BoostedSplik[]>([]);
   const [activeTab, setActiveTab] = useState("recent");
 
   // Get current user
@@ -57,21 +60,21 @@ export default function BookmarksPage() {
 
   useEffect(() => {
     if (user) {
-      fetchBookmarks();
+      fetchBoosts();
     }
   }, [user]);
 
   useEffect(() => {
-    // Filter and sort bookmarks based on search query and active tab
-    let filtered = bookmarks;
+    // Filter and sort boosts based on search query and active tab
+    let filtered = boosts;
 
     // Apply search filter
     if (searchQuery.trim()) {
-      filtered = bookmarks.filter(bookmark =>
-        bookmark.spliks?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        bookmark.spliks?.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        bookmark.spliks?.profiles?.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        bookmark.spliks?.profiles?.display_name?.toLowerCase().includes(searchQuery.toLowerCase())
+      filtered = boosts.filter(boost =>
+        boost.spliks?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        boost.spliks?.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        boost.spliks?.profiles?.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        boost.spliks?.profiles?.display_name?.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
@@ -80,25 +83,24 @@ export default function BookmarksPage() {
       filtered = [...filtered].sort((a, b) => 
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
+    } else if (activeTab === "popular") {
+      filtered = [...filtered].sort((a, b) => 
+        (b.boost_count || 0) - (a.boost_count || 0)
+      );
     } else if (activeTab === "oldest") {
       filtered = [...filtered].sort((a, b) => 
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
       );
-    } else if (activeTab === "title") {
-      filtered = [...filtered].sort((a, b) => 
-        (a.spliks?.title || "").localeCompare(b.spliks?.title || "")
-      );
     }
 
-    setFilteredBookmarks(filtered);
-  }, [searchQuery, bookmarks, activeTab]);
+    setFilteredBoosts(filtered);
+  }, [searchQuery, boosts, activeTab]);
 
-  const fetchBookmarks = async () => {
+  const fetchBoosts = async () => {
     try {
-      console.log("Fetching bookmarks for user:", user?.id);
-      
-      const { data: bookmarkData, error: bookmarkError } = await supabase
-        .from("bookmarks")
+      // First, get the user's boosts with splik details
+      const { data: boostData, error: boostError } = await supabase
+        .from("boosts")
         .select(`
           id,
           splik_id,
@@ -122,23 +124,36 @@ export default function BookmarksPage() {
         .eq("user_id", user?.id)
         .order('created_at', { ascending: false });
 
-      console.log("Bookmark query result:", { data: bookmarkData, error: bookmarkError });
+      if (boostError) throw boostError;
 
-      if (bookmarkError) throw bookmarkError;
-      setBookmarks(bookmarkData || []);
+      // Get boost counts for each splik
+      const boostDataWithCounts = await Promise.all(
+        (boostData || []).map(async (boost) => {
+          if (!boost.spliks?.id) return { ...boost, boost_count: 0 };
+          
+          const { count } = await supabase
+            .from("boosts")
+            .select("*", { head: true, count: "exact" })
+            .eq("splik_id", boost.spliks.id);
+          
+          return { ...boost, boost_count: count || 0 };
+        })
+      );
+
+      setBoosts(boostDataWithCounts);
     } catch (error) {
-      console.error("Error fetching bookmarks:", error);
+      console.error("Error fetching boosts:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const removeBookmark = async (splikId: string) => {
+  const removeBoost = async (splikId: string) => {
     if (!user) return;
 
     try {
       const { error } = await supabase
-        .from("bookmarks")
+        .from("boosts")
         .delete()
         .eq("user_id", user.id)
         .eq("splik_id", splikId);
@@ -146,9 +161,9 @@ export default function BookmarksPage() {
       if (error) throw error;
 
       // Update local state
-      setBookmarks(prev => prev.filter(bookmark => bookmark.splik_id !== splikId));
+      setBoosts(prev => prev.filter(boost => boost.splik_id !== splikId));
     } catch (error) {
-      console.error("Error removing bookmark:", error);
+      console.error("Error removing boost:", error);
     }
   };
 
@@ -166,9 +181,9 @@ export default function BookmarksPage() {
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">My Bookmarks</h1>
+        <h1 className="text-3xl font-bold mb-2">My Boosts</h1>
         <p className="text-muted-foreground">
-          Spliks you've saved to watch later
+          Spliks you've boosted to show support
         </p>
       </div>
 
@@ -177,15 +192,15 @@ export default function BookmarksPage() {
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search your bookmarks..."
+            placeholder="Search your boosts..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10"
           />
         </div>
         <Badge variant="secondary" className="flex items-center gap-1">
-          <Bookmark className="h-3 w-3" />
-          {bookmarks.length} saved
+          <TrendingUp className="h-3 w-3" />
+          {boosts.length} boosted
         </Badge>
       </div>
 
@@ -193,43 +208,43 @@ export default function BookmarksPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
         <TabsList>
           <TabsTrigger value="recent">Most Recent</TabsTrigger>
+          <TabsTrigger value="popular">Most Popular</TabsTrigger>
           <TabsTrigger value="oldest">Oldest First</TabsTrigger>
-          <TabsTrigger value="title">By Title</TabsTrigger>
         </TabsList>
 
         <TabsContent value={activeTab} className="mt-6">
-          {filteredBookmarks.length === 0 ? (
+          {filteredBoosts.length === 0 ? (
             <Card className="text-center py-12">
               <CardContent>
-                <Bookmark className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-semibold mb-2">
-                  {searchQuery ? "No bookmarks found" : "No bookmarks yet"}
+                  {searchQuery ? "No boosts found" : "No boosts yet"}
                 </h3>
                 <p className="text-muted-foreground mb-4">
                   {searchQuery
                     ? "Try adjusting your search terms"
-                    : "Start bookmarking spliks to save them for later"
+                    : "Start boosting spliks to show your support"
                   }
                 </p>
                 {!searchQuery && (
                   <Link to="/home">
-                    <Button>Explore Spliks</Button>
+                    <Button>Discover Spliks</Button>
                   </Link>
                 )}
               </CardContent>
             </Card>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {filteredBookmarks.map((bookmark) => {
-                if (!bookmark.spliks) return null;
+              {filteredBoosts.map((boost) => {
+                if (!boost.spliks) return null;
                 
                 return (
-                  <Card key={bookmark.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+                  <Card key={boost.id} className="overflow-hidden hover:shadow-lg transition-shadow">
                     <div className="aspect-video relative bg-muted">
-                      {bookmark.spliks.thumbnail_url ? (
+                      {boost.spliks.thumbnail_url ? (
                         <img
-                          src={bookmark.spliks.thumbnail_url}
-                          alt={bookmark.spliks.title || "Splik thumbnail"}
+                          src={boost.spliks.thumbnail_url}
+                          alt={boost.spliks.title || "Splik thumbnail"}
                           className="w-full h-full object-cover"
                         />
                       ) : (
@@ -237,60 +252,72 @@ export default function BookmarksPage() {
                           <div className="text-4xl text-muted-foreground">📹</div>
                         </div>
                       )}
+                      
+                      {/* Boost count badge */}
+                      <Badge className="absolute top-2 left-2 bg-orange-500 text-white">
+                        <TrendingUp className="h-3 w-3 mr-1" />
+                        {boost.boost_count || 0}
+                      </Badge>
 
                       <Button
                         size="sm"
                         variant="outline"
                         className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm"
-                        onClick={() => removeBookmark(bookmark.splik_id)}
+                        onClick={() => removeBoost(boost.splik_id)}
                       >
-                        <BookmarkX className="h-4 w-4" />
+                        <TrendingDown className="h-4 w-4" />
                       </Button>
                     </div>
 
                     <CardHeader className="pb-2">
                       <CardTitle className="text-base line-clamp-2">
                         <Link
-                          to={`/splik/${bookmark.splik_id}`}
+                          to={`/splik/${boost.splik_id}`}
                           className="hover:text-primary transition-colors"
                         >
-                          {bookmark.spliks.title || "Untitled Splik"}
+                          {boost.spliks.title || "Untitled Splik"}
                         </Link>
                       </CardTitle>
                     </CardHeader>
 
                     <CardContent className="space-y-3">
-                      {bookmark.spliks.description && (
+                      {boost.spliks.description && (
                         <p className="text-sm text-muted-foreground line-clamp-2">
-                          {bookmark.spliks.description}
+                          {boost.spliks.description}
                         </p>
                       )}
 
                       {/* Creator Info */}
                       <div className="flex items-center gap-2">
-                        {bookmark.spliks.profiles?.avatar_url ? (
+                        {boost.spliks.profiles?.avatar_url ? (
                           <img
-                            src={bookmark.spliks.profiles.avatar_url}
-                            alt={bookmark.spliks.profiles.display_name || "Creator"}
+                            src={boost.spliks.profiles.avatar_url}
+                            alt={boost.spliks.profiles.display_name || "Creator"}
                             className="w-6 h-6 rounded-full"
                           />
                         ) : (
                           <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
-                            {(bookmark.spliks.profiles?.display_name || bookmark.spliks.profiles?.username || "?")[0].toUpperCase()}
+                            {(boost.spliks.profiles?.display_name || boost.spliks.profiles?.username || "?")[0].toUpperCase()}
                           </div>
                         )}
                         <Link
-                          to={`/creator/${bookmark.spliks.profiles?.username || bookmark.spliks.user_id}`}
+                          to={`/creator/${boost.spliks.profiles?.username || boost.spliks.user_id}`}
                           className="text-sm font-medium hover:text-primary transition-colors"
                         >
-                          {bookmark.spliks.profiles?.display_name || bookmark.spliks.profiles?.username || "Unknown User"}
+                          {boost.spliks.profiles?.display_name || boost.spliks.profiles?.username || "Unknown User"}
                         </Link>
                       </div>
 
-                      {/* Timestamp */}
+                      {/* Stats and timestamps */}
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center gap-1">
+                            <TrendingUp className="h-3 w-3" />
+                            {boost.boost_count || 0} boosts
+                          </span>
+                        </div>
                         <span>
-                          Saved {formatDistanceToNow(new Date(bookmark.created_at), { addSuffix: true })}
+                          Boosted {formatDistanceToNow(new Date(boost.created_at), { addSuffix: true })}
                         </span>
                       </div>
                     </CardContent>
