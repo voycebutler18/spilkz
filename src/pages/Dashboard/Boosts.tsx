@@ -98,37 +98,64 @@ export default function BoostsPage() {
 
   const fetchBoosts = async () => {
     try {
-      // First, get the user's boosts with splik details
-      const { data: boostData, error: boostError } = await supabase
+      console.log("Fetching boosts for user:", user?.id);
+      
+      // Step 1: Get user's boosts
+      const { data: userBoosts, error: boostsError } = await supabase
         .from("boosts")
-        .select(`
-          id,
-          splik_id,
-          created_at,
-          spliks (
-            id,
-            title,
-            description,
-            thumbnail_url,
-            video_url,
-            created_at,
-            user_id,
-            profiles (
-              id,
-              username,
-              display_name,
-              avatar_url
-            )
-          )
-        `)
+        .select("id, splik_id, created_at")
         .eq("user_id", user?.id)
         .order('created_at', { ascending: false });
 
-      if (boostError) throw boostError;
+      console.log("User boosts:", userBoosts, "Error:", boostsError);
 
-      // Get boost counts for each splik
-      const boostDataWithCounts = await Promise.all(
-        (boostData || []).map(async (boost) => {
+      if (boostsError) throw boostsError;
+      if (!userBoosts || userBoosts.length === 0) {
+        console.log("No boosts found for user");
+        setBoosts([]);
+        return;
+      }
+
+      // Step 2: Get splik details for each boost
+      const splikIds = userBoosts.map(boost => boost.splik_id);
+      const { data: spliksData, error: spliksError } = await supabase
+        .from("spliks")
+        .select("id, title, description, thumbnail_url, video_url, created_at, user_id")
+        .in("id", splikIds);
+
+      console.log("Spliks data:", spliksData, "Error:", spliksError);
+
+      if (spliksError) throw spliksError;
+
+      // Step 3: Get creator profiles
+      const userIds = spliksData?.map(splik => splik.user_id) || [];
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, username, display_name, avatar_url")
+        .in("id", userIds);
+
+      console.log("Profiles data:", profilesData, "Error:", profilesError);
+
+      // Step 4: Combine the data
+      const combinedData = userBoosts.map(boost => {
+        const splik = spliksData?.find(s => s.id === boost.splik_id);
+        const profile = profilesData?.find(p => p.id === splik?.user_id);
+        
+        return {
+          id: boost.id,
+          splik_id: boost.splik_id,
+          created_at: boost.created_at,
+          spliks: splik ? {
+            ...splik,
+            profiles: profile || null
+          } : null,
+          boost_count: 0 // Will be calculated next
+        };
+      });
+
+      // Step 5: Get boost counts for each splik
+      const finalData = await Promise.all(
+        combinedData.map(async (boost) => {
           if (!boost.spliks?.id) return { ...boost, boost_count: 0 };
           
           const { count } = await supabase
@@ -140,7 +167,8 @@ export default function BoostsPage() {
         })
       );
 
-      setBoosts(boostDataWithCounts);
+      console.log("Final combined data:", finalData);
+      setBoosts(finalData);
     } catch (error) {
       console.error("Error fetching boosts:", error);
     } finally {
