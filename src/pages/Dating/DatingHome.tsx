@@ -1,6 +1,6 @@
 // src/pages/Dating/DatingHome.tsx
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,6 +31,7 @@ const nameFor = (p?: Profile | null) => {
 /* ---------------- Page ---------------- */
 
 export default function DatingHome() {
+  const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [showInlineStart, setShowInlineStart] = useState(false);
@@ -164,7 +165,7 @@ export default function DatingHome() {
         </section>
       )}
 
-      {/* Inline “getting started” (no persistence yet) */}
+      {/* Inline “getting started” (now routes to onboarding) */}
       {user && showInlineStart && (
         <section className="mx-auto max-w-3xl px-4 py-10 md:py-14">
           <Card className="bg-white/5 border-white/10">
@@ -219,9 +220,15 @@ export default function DatingHome() {
 
               <div className="flex flex-wrap gap-3">
                 <Button
-                  disabled
                   className="bg-white text-black hover:bg-white/90"
-                  title="We’ll wire up saving in the next step"
+                  onClick={() => {
+                    // prefill onboarding, then navigate
+                    localStorage.setItem(
+                      "dating_prefill",
+                      JSON.stringify({ name: previewName, bio: previewBio })
+                    );
+                    navigate("/dating/onboarding");
+                  }}
                 >
                   Save & continue
                 </Button>
@@ -233,7 +240,7 @@ export default function DatingHome() {
                   Cancel
                 </Button>
                 <span className="text-xs text-white/60">
-                  (Saving & full flow come next — per your “page first” request.)
+                  You can finish the rest on the next screen.
                 </span>
               </div>
             </CardContent>
