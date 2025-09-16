@@ -2,7 +2,7 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
 import {
-  Flame,
+  TrendingUp,
   Bookmark,
   BookmarkCheck,
   Share2,
@@ -482,8 +482,8 @@ export default function SplikCard({
             aria-pressed={hasHyped}
             title="Boost this content"
           >
-            <Flame className={cn("h-4 w-4", hasHyped && "text-white")} />
-            {hypeCount}
+            <TrendingUp className={cn("h-4 w-4", hasHyped && "text-white")} />
+            {hasHyped ? "Boosted" : "Boost"} ({hypeCount})
           </Button>
 
           {/* ✅ Bookmark (renamed from Save) */}
