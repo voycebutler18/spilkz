@@ -70,8 +70,8 @@ export default function SplikCard({
 
   const [user, setUser] = React.useState<any>(null);
 
-  const [isMuted, setIsMuted] = React.useState(true);
-  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [isFollowing, setIsFollowing] = React.useState(false);
+  const [followLoading, setFollowLoading] = React.useState(false);
 
   // Seed UI from props/db row
   const [hypeCount, setHypeCount] = React.useState<number>(
@@ -168,6 +168,17 @@ export default function SplikCard({
             .select("*", { head: true, count: "exact" })
             .eq("splik_id", splik.id);
           if (!cancelled) setHypeCount(count ?? 0);
+        }
+
+        // Check follow status if not creator
+        if (!isCreator) {
+          const { data: followRow } = await supabase
+            .from("follows")
+            .select("id")
+            .eq("follower_id", user.id)
+            .eq("following_id", splik.user_id)
+            .maybeSingle();
+          if (!cancelled) setIsFollowing(!!followRow);
         }
       } catch {
         /* ignore */
@@ -328,7 +339,65 @@ export default function SplikCard({
     }
   };
 
-  const toggleSave = async () => {
+  const toggleFollow = async () => {
+    if (followLoading) return;
+    
+    try {
+      const u = await ensureAuth();
+      setFollowLoading(true);
+      console.log("Toggling follow for user:", splik.user_id, "current state:", isFollowing);
+      
+      if (isFollowing) {
+        // Unfollow
+        const result = await supabase
+          .from("follows")
+          .delete()
+          .eq("follower_id", u.id)
+          .eq("following_id", splik.user_id);
+        
+        console.log("Unfollow result:", result);
+        
+        if (!result.error) {
+          setIsFollowing(false);
+          toast({
+            title: "Unfollowed",
+            description: `You unfollowed ${name}`,
+          });
+        } else {
+          throw result.error;
+        }
+      } else {
+        // Follow
+        const result = await supabase
+          .from("follows")
+          .insert([{ 
+            follower_id: u.id, 
+            following_id: splik.user_id 
+          }]);
+        
+        console.log("Follow result:", result);
+        
+        if (!result.error) {
+          setIsFollowing(true);
+          toast({
+            title: "Following",
+            description: `You are now following ${name}`,
+          });
+        } else {
+          throw result.error;
+        }
+      }
+    } catch (error) {
+      console.error("Follow error:", error);
+      toast({
+        title: "Error",
+        description: "Could not update follow status. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setFollowLoading(false);
+    }
+  };
     try {
       const u = await ensureAuth();
       console.log("Toggling bookmark for splik:", splik.id, "user:", u.id, "current state:", isSaved);
@@ -445,35 +514,17 @@ export default function SplikCard({
                 </Link>
                 {!isCreator && (
                   <button
-                    onClick={async () => {
-                      try {
-                        const u = await ensureAuth();
-                        // Simple follow toggle logic
-                        const { data: existingFollow } = await supabase
-                          .from("follows")
-                          .select("id")
-                          .eq("follower_id", u.id)
-                          .eq("following_id", splik.user_id)
-                          .maybeSingle();
-                        
-                        if (existingFollow) {
-                          await supabase
-                            .from("follows")
-                            .delete()
-                            .eq("follower_id", u.id)
-                            .eq("following_id", splik.user_id);
-                        } else {
-                          await supabase
-                            .from("follows")
-                            .insert([{ follower_id: u.id, following_id: splik.user_id }]);
-                        }
-                      } catch (error) {
-                        console.error("Follow error:", error);
-                      }
-                    }}
-                    className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-6 h-6 rounded-full bg-red-500 border-2 border-white flex items-center justify-center text-xs font-bold text-white"
+                    onClick={toggleFollow}
+                    disabled={followLoading}
+                    className={cn(
+                      "absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold transition-all duration-200",
+                      isFollowing 
+                        ? "bg-gray-600 text-white" 
+                        : "bg-red-500 text-white hover:bg-red-600",
+                      followLoading && "opacity-50 cursor-not-allowed"
+                    )}
                   >
-                    +
+                    {followLoading ? "..." : (isFollowing ? "✓" : "+")}
                   </button>
                 )}
               </div>
