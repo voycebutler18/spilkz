@@ -138,6 +138,19 @@ export default function DatingOnboarding() {
     };
   }, [toast]);
 
+  // read prefill from DatingHome
+  useEffect(() => {
+    const raw = localStorage.getItem("dating_prefill");
+    if (raw) {
+      try {
+        const p = JSON.parse(raw);
+        if (p?.name) setName(p.name);
+        if (p?.bio) setBio(p.bio);
+      } catch {}
+      localStorage.removeItem("dating_prefill");
+    }
+  }, []);
+
   const toggleInterest = (tag: string) => {
     setInterests((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
@@ -159,7 +172,7 @@ export default function DatingOnboarding() {
       return;
     }
     if (!name.trim()) {
-      toast({ title: "Add your name", description: "This is what people will see." , variant: "destructive" });
+      toast({ title: "Add your name", description: "This is what people will see.", variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -176,7 +189,6 @@ export default function DatingOnboarding() {
         show_age: showAge,
       };
 
-      // Upsert (create or update)
       const { error } = await supabase
         .from("dating_profiles")
         .upsert(payload, { onConflict: "user_id" });
