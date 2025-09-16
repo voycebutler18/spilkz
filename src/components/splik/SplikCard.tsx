@@ -285,30 +285,34 @@ export default function SplikCard({
   const toggleHype = async () => {
     try {
       const u = await ensureAuth();
+      console.log("Toggling boost for splik:", splik.id, "user:", u.id, "current state:", hasHyped);
 
       if (hasHyped) {
         // optimistic
         setHasHyped(false);
         setHypeCount((n) => Math.max(0, n - 1));
         // ✅ Updated to use new boosts table
-        await supabase
+        const result = await supabase
           .from("boosts")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
+        console.log("Remove boost result:", result);
       } else {
         setHasHyped(true);
         setHypeCount((n) => n + 1);
         // ✅ Updated to use new boosts table
-        await supabase
+        const result = await supabase
           .from("boosts")
           .insert({ 
             splik_id: splik.id, 
             user_id: u.id,
             created_at: new Date().toISOString()
           });
+        console.log("Add boost result:", result);
       }
-    } catch {
+    } catch (error) {
+      console.error("Boost error:", error);
       /* ignore; UI already rolled */
     }
   };
