@@ -1,4 +1,6 @@
+// src/pages/Dating/DatingHome.tsx
 import React, { useEffect, useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,52 +8,39 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/integrations/supabase/client";
 
-// Mock supabase - replace with real import
-const supabase = {
-  auth: {
-    getUser: () => Promise.resolve({ data: { user: null } }),
-    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
-  },
-  from: () => ({
-    select: () => ({
-      eq: () => ({
-        maybeSingle: () => Promise.resolve({ data: null })
-      })
-    })
-  })
-};
-import { 
-  Heart, 
-  Play, 
-  Star, 
-  Shield, 
-  Zap, 
-  Users, 
+import {
+  Heart,
+  Play,
+  Star,
+  Shield,
+  Zap,
   MessageCircle,
   Camera,
   Sparkles,
   ArrowRight,
   CheckCircle,
-  Globe,
   Lock,
-  Mic,
-  Video,
-  Coffee,
-  Music,
   MapPin,
-  Calendar,
-  Palette,
   X,
-  ChevronDown,
-  Eye,
-  EyeOff,
-  Volume2
+  Volume2,
+  Video,
+  Upload, // <- was missing
 } from "lucide-react";
 
-const SplikzDatingHome = () => {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+// helpers
+const nameFor = (p?: any) => {
+  if (!p) return "Friend";
+  const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
+  return p.display_name?.trim() || full || p.username?.trim() || "Friend";
+};
+
+const SplikzDatingHome: React.FC = () => {
+  const navigate = useNavigate();
+
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [showQuickStart, setShowQuickStart] = useState(false);
   const [showVideoUpload, setShowVideoUpload] = useState(false);
   const [previewName, setPreviewName] = useState("");
@@ -59,110 +48,80 @@ const SplikzDatingHome = () => {
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [loading, setLoading] = useState(true);
 
-  // Load real auth + profile data
+  // load user + profile
   useEffect(() => {
     let mounted = true;
 
-    const loadUserData = async () => {
+    (async () => {
       try {
-        // Get authenticated user
-        const { data: authData } = await supabase.auth.getUser();
+        const { data } = await supabase.auth.getUser();
         if (!mounted) return;
-        
-        const currentUser = authData.user;
+
+        const currentUser = data.user ?? null;
         setUser(currentUser);
 
         if (currentUser) {
-          // Get profile data
-          const { data: profileData } = await supabase
+          const { data: p } = await supabase
             .from("profiles")
-            .select("id, username, display_name, first_name, last_name, avatar_url, city")
+            .select(
+              "id, username, display_name, first_name, last_name, avatar_url, city"
+            )
             .eq("id", currentUser.id)
             .maybeSingle();
 
-          if (mounted && profileData) {
-            setProfile(profileData);
-            setPreviewName(nameFor(profileData));
+          if (mounted && p) {
+            setProfile(p);
+            setPreviewName(nameFor(p));
           }
+        } else {
+          setProfile(null);
+          setPreviewName("");
+          setPreviewBio("");
         }
-      } catch (error) {
-        console.error("Error loading user data:", error);
+      } catch (err) {
+        console.error(err);
       } finally {
         if (mounted) setLoading(false);
       }
-    };
+    })();
 
-    loadUserData();
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      
-      const currentUser = session?.user || null;
-      setUser(currentUser);
-      
-      if (currentUser) {
-        const { data: profileData } = await supabase
-          .from("profiles")
-          .select("id, username, display_name, first_name, last_name, avatar_url, city")
-          .eq("id", currentUser.id)
-          .maybeSingle();
-
-        if (mounted && profileData) {
-          setProfile(profileData);
-          setPreviewName(nameFor(profileData));
-        }
-      } else {
-        setProfile(null);
-        setPreviewName("");
-        setPreviewBio("");
-      }
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      const u = session?.user ?? null;
+      setUser(u);
     });
 
     return () => {
       mounted = false;
-      subscription?.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, []);
 
-  const nameFor = (p) => {
-    if (!p) return "Friend";
-    const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
-    return p.display_name?.trim() || full || p.username?.trim() || "Friend";
-  };
+  const avatarInitial =
+    profile?.display_name?.[0] ||
+    profile?.username?.[0] ||
+    user?.email?.[0] ||
+    "U";
 
-  const avatarInitial = profile?.display_name?.[0] || profile?.username?.[0] || user?.email?.[0] || "U";
-
+  // navigation helpers
   const handleNavigateToOnboarding = () => {
-    // Store prefill data and navigate to onboarding
-    localStorage.setItem("dating_prefill", JSON.stringify({ 
-      name: previewName, 
-      bio: previewBio 
-    }));
-    // In real app: navigate("/dating/onboarding");
-    alert("Navigating to onboarding wizard...");
+    localStorage.setItem(
+      "dating_prefill",
+      JSON.stringify({ name: previewName, bio: previewBio })
+    );
+    navigate("/dating/onboarding");
   };
 
-  const handleSignUp = () => {
-    // In real app: navigate("/signup");
-    alert("Navigating to sign up...");
-  };
-
-  const handleSignIn = () => {
-    // In real app: navigate("/login");
-    alert("Navigating to sign in...");
-  };
+  const handleSignUp = () => navigate("/signup");
+  const handleSignIn = () => navigate("/login");
 
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
-      {/* Animated Background */}
+      {/* animated background */}
       <div className="fixed inset-0 z-0">
         <div className="absolute inset-0 bg-gradient-to-br from-purple-900/30 via-fuchsia-900/20 to-cyan-900/30" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_80%,_rgba(120,119,198,0.3),_transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,_rgba(255,119,198,0.3),_transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_40%_40%,_rgba(120,219,255,0.2),_transparent_50%)]" />
-        
-        {/* Floating Particles */}
         {[...Array(20)].map((_, i) => (
           <div
             key={i}
@@ -171,19 +130,18 @@ const SplikzDatingHome = () => {
               left: `${Math.random() * 100}%`,
               top: `${Math.random() * 100}%`,
               animationDelay: `${Math.random() * 3}s`,
-              animationDuration: `${2 + Math.random() * 3}s`
+              animationDuration: `${2 + Math.random() * 3}s`,
             }}
           />
         ))}
       </div>
 
-      {/* Hero Section */}
+      {/* hero */}
       <section className="relative z-10 min-h-screen flex items-center">
         <div className="max-w-7xl mx-auto px-4 py-20">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
-            {/* Left Content */}
+            {/* left */}
             <div className="space-y-8">
-              {/* Brand Header */}
               <div className="flex items-center gap-4">
                 <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center shadow-lg shadow-fuchsia-500/25">
                   <Heart className="h-8 w-8 text-white" />
@@ -192,26 +150,27 @@ const SplikzDatingHome = () => {
                   <h1 className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-white via-fuchsia-200 to-purple-200 bg-clip-text text-transparent">
                     Splikz Dating
                   </h1>
-                  <p className="text-zinc-400 text-lg">The 3-second connection revolution</p>
+                  <p className="text-zinc-400 text-lg">
+                    The 3-second connection revolution
+                  </p>
                 </div>
               </div>
 
-              {/* Main Headline */}
               <div className="space-y-6">
                 <h2 className="text-5xl lg:text-6xl font-bold leading-tight">
-                  Find your
+                  Find your{" "}
                   <span className="bg-gradient-to-r from-fuchsia-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent">
-                    {" "}perfect match{" "}
-                  </span>
+                    perfect match
+                  </span>{" "}
                   in 3 seconds
                 </h2>
-                
+
                 <p className="text-xl text-zinc-300 leading-relaxed max-w-2xl">
-                  Skip the endless scrolling. Share your authentic self through 3-second video intros 
-                  and connect with people who truly vibe with your energy.
+                  Skip the endless scrolling. Share your authentic self through
+                  3-second video intros and connect with people who truly vibe
+                  with your energy.
                 </p>
 
-                {/* Key Features */}
                 <div className="flex gap-8 pt-4">
                   <div className="text-center">
                     <div className="text-2xl font-bold text-fuchsia-400">3s</div>
@@ -228,21 +187,21 @@ const SplikzDatingHome = () => {
                 </div>
               </div>
 
-              {/* CTA Buttons */}
+              {/* CTAs */}
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
                 {!user ? (
                   <>
-                    <Button 
-                      size="lg" 
+                    <Button
+                      size="lg"
                       className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 h-14 px-8 text-lg font-semibold shadow-lg shadow-fuchsia-500/25"
                       onClick={handleSignUp}
                     >
                       Start dating for free
                       <ArrowRight className="ml-2 h-5 w-5" />
                     </Button>
-                    <Button 
-                      size="lg" 
-                      variant="outline" 
+                    <Button
+                      size="lg"
+                      variant="outline"
                       className="h-14 px-8 text-lg border-white/20 text-white hover:bg-white/10 backdrop-blur-sm"
                       onClick={handleSignIn}
                     >
@@ -259,113 +218,9 @@ const SplikzDatingHome = () => {
                     <Sparkles className="ml-2 h-5 w-5" />
                   </Button>
                 )}
-
-      {/* Dating Video Upload Modal */}
-      {showVideoUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <Card className="w-full max-w-lg bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
-            <CardHeader className="border-b border-zinc-800 pb-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-xl text-white flex items-center gap-2">
-                    <Camera className="h-5 w-5 text-fuchsia-500" />
-                    Add your 3-second intro
-                  </CardTitle>
-                  <p className="text-zinc-400 mt-1">Show your personality in 3 seconds</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowVideoUpload(false)}
-                  className="text-zinc-400 hover:text-white"
-                >
-                  <X className="h-5 w-5" />
-                </Button>
-              </div>
-            </CardHeader>
-            
-            <CardContent className="p-6">
-              <div className="space-y-6">
-                {/* Upload Area */}
-                <div className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center bg-gradient-to-br from-fuchsia-500/5 to-purple-500/5">
-                  <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Camera className="h-8 w-8 text-white" />
-                  </div>
-                  <h3 className="text-white font-medium mb-2">Upload your 3-second intro</h3>
-                  <p className="text-zinc-400 text-sm mb-4">
-                    MP4, MOV, WebM supported. We'll automatically trim to 3 seconds.
-                  </p>
-                  
-                  <div className="flex flex-col gap-3">
-                    <Button 
-                      className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
-                    >
-                      <Upload className="h-4 w-4 mr-2" />
-                      Choose video file
-                    </Button>
-                    
-                    <div className="text-zinc-500 text-xs">or</div>
-                    
-                    <Button 
-                      variant="outline" 
-                      className="border-zinc-600 text-zinc-300 hover:bg-zinc-800"
-                    >
-                      <Video className="h-4 w-4 mr-2" />
-                      Record with camera
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Tips */}
-                <div className="bg-zinc-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-medium mb-3 flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-yellow-400" />
-                    Tips for a great intro
-                  </h4>
-                  <ul className="space-y-2 text-sm text-zinc-300">
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 flex-shrink-0" />
-                      <span>Smile and say hi - let your personality shine</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 flex-shrink-0" />
-                      <span>Good lighting makes all the difference</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 flex-shrink-0" />
-                      <span>Keep it natural - authenticity beats perfection</span>
-                    </li>
-                  </ul>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-3">
-                  <Button
-                    variant="outline"
-                    className="flex-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                    onClick={() => setShowVideoUpload(false)}
-                  >
-                    Skip for now
-                  </Button>
-                  <Button
-                    className="flex-1 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
-                    onClick={() => {
-                      // After video upload, continue to full onboarding
-                      setShowVideoUpload(false);
-                      handleNavigateToOnboarding();
-                    }}
-                  >
-                    Continue
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
               </div>
 
-              {/* Trust Indicators */}
+              {/* trust indicators */}
               {!user && (
                 <div className="flex items-center gap-6 pt-6 text-sm text-zinc-400">
                   <div className="flex items-center gap-2">
@@ -374,7 +229,7 @@ const SplikzDatingHome = () => {
                   </div>
                   <div className="flex items-center gap-2">
                     <Lock className="h-4 w-4 text-blue-400" />
-                    <span>End-to-end encrypted</span>
+                    <span>Privacy-first</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <CheckCircle className="h-4 w-4 text-fuchsia-400" />
@@ -384,51 +239,45 @@ const SplikzDatingHome = () => {
               )}
             </div>
 
-            {/* Right Content - Interactive Demo */}
+            {/* right phone demo */}
             <div className="relative">
               <div className="relative max-w-sm mx-auto">
-                {/* Phone Frame */}
                 <div className="relative bg-zinc-900 rounded-[3rem] p-4 shadow-2xl border border-zinc-700">
                   <div className="bg-black rounded-[2.5rem] overflow-hidden">
-                    {/* Status Bar */}
                     <div className="flex justify-between items-center px-6 py-4 text-white text-sm">
                       <span className="font-medium">9:41</span>
                       <div className="flex gap-1">
-                        <div className="w-4 h-2 bg-white rounded-sm"></div>
-                        <div className="w-4 h-2 bg-white rounded-sm"></div>
-                        <div className="w-4 h-2 bg-white/50 rounded-sm"></div>
+                        <div className="w-4 h-2 bg-white rounded-sm" />
+                        <div className="w-4 h-2 bg-white rounded-sm" />
+                        <div className="w-4 h-2 bg-white/50 rounded-sm" />
                       </div>
                     </div>
 
-                    {/* App Content */}
                     <div className="px-4 pb-8">
-                      {/* Profile Card */}
                       <div className="relative rounded-2xl overflow-hidden h-96 mb-4">
                         <img
                           src="https://images.unsplash.com/photo-1494790108755-2616c96b2131?w=400&h=600&fit=crop&crop=face"
                           alt="Dating profile"
                           className="w-full h-full object-cover"
                         />
-                        
-                        {/* Video Play Overlay */}
+
                         <div className="absolute inset-0 bg-black/20">
                           <button
                             onClick={() => setIsVideoPlaying(!isVideoPlaying)}
                             className="absolute top-4 right-4 bg-black/50 backdrop-blur-sm rounded-full p-2"
                           >
-                            {isVideoPlaying ? 
-                              <Volume2 className="h-4 w-4 text-white" /> : 
+                            {isVideoPlaying ? (
+                              <Volume2 className="h-4 w-4 text-white" />
+                            ) : (
                               <Play className="h-4 w-4 text-white" />
-                            }
+                            )}
                           </button>
-                          
-                          {/* 3-second indicator */}
+
                           <div className="absolute top-4 left-4 bg-fuchsia-500/90 backdrop-blur-sm rounded-full px-3 py-1">
                             <span className="text-white text-xs font-medium">3s</span>
                           </div>
                         </div>
 
-                        {/* Profile Info Overlay */}
                         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
                           <h3 className="text-white font-semibold text-lg">Sarah, 28</h3>
                           <p className="text-white/80 text-sm flex items-center gap-1">
@@ -438,7 +287,6 @@ const SplikzDatingHome = () => {
                         </div>
                       </div>
 
-                      {/* Action Buttons */}
                       <div className="flex justify-center gap-4">
                         <button className="h-14 w-14 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center">
                           <X className="h-6 w-6 text-white" />
@@ -454,7 +302,6 @@ const SplikzDatingHome = () => {
                   </div>
                 </div>
 
-                {/* Floating Elements */}
                 <div className="absolute -top-4 -left-4 bg-green-500 rounded-full p-3 animate-pulse">
                   <MessageCircle className="h-5 w-5 text-white" />
                 </div>
@@ -470,7 +317,7 @@ const SplikzDatingHome = () => {
         </div>
       </section>
 
-      {/* Features Section */}
+      {/* features */}
       {!user && (
         <section className="relative z-10 py-20 border-t border-white/5">
           <div className="max-w-7xl mx-auto px-4">
@@ -486,36 +333,44 @@ const SplikzDatingHome = () => {
                 {
                   icon: Video,
                   title: "3-Second Video Intros",
-                  description: "Skip the small talk. Show your personality instantly with authentic video moments that capture your real energy.",
+                  description:
+                    "Skip the small talk. Show your personality instantly with authentic video moments that capture your real energy.",
                   gradient: "from-fuchsia-500/20 to-purple-500/20",
-                  border: "border-fuchsia-500/30"
+                  border: "border-fuchsia-500/30",
                 },
                 {
                   icon: Zap,
                   title: "Instant Chemistry",
-                  description: "Our AI matches you based on energy compatibility, not just photos. Find people who truly vibe with you.",
+                  description:
+                    "Our AI matches you based on energy compatibility, not just photos. Find people who truly vibe with you.",
                   gradient: "from-cyan-500/20 to-blue-500/20",
-                  border: "border-cyan-500/30"
+                  border: "border-cyan-500/30",
                 },
                 {
                   icon: Shield,
                   title: "Verified & Safe",
-                  description: "Every profile is verified. Report inappropriate behavior instantly. Your safety is our top priority.",
+                  description:
+                    "Every profile is verified. Report inappropriate behavior instantly. Your safety is our top priority.",
                   gradient: "from-green-500/20 to-emerald-500/20",
-                  border: "border-green-500/30"
-                }
-              ].map((feature, index) => {
-                const IconComponent = feature.icon;
+                  border: "border-green-500/30",
+                },
+              ].map((f, i) => {
+                const Icon = f.icon as any;
                 return (
-                  <Card key={index} className={`bg-gradient-to-br ${feature.gradient} border ${feature.border} backdrop-blur-sm hover:scale-105 transition-transform duration-300`}>
+                  <Card
+                    key={i}
+                    className={`bg-gradient-to-br ${f.gradient} border ${f.border} backdrop-blur-sm hover:scale-105 transition-transform duration-300`}
+                  >
                     <CardHeader className="text-center pb-4">
                       <div className="h-16 w-16 mx-auto mb-4 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center">
-                        <IconComponent className="h-8 w-8 text-white" />
+                        <Icon className="h-8 w-8 text-white" />
                       </div>
-                      <CardTitle className="text-white text-xl">{feature.title}</CardTitle>
+                      <CardTitle className="text-white text-xl">{f.title}</CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-zinc-300 text-center leading-relaxed">{feature.description}</p>
+                      <p className="text-zinc-300 text-center leading-relaxed">
+                        {f.description}
+                      </p>
                     </CardContent>
                   </Card>
                 );
@@ -525,15 +380,17 @@ const SplikzDatingHome = () => {
         </section>
       )}
 
-      {/* Quick Start Modal */}
+      {/* quick start modal */}
       {user && showQuickStart && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <Card className="w-full max-w-2xl bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
             <CardHeader className="border-b border-zinc-800 pb-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-2xl text-white">Quick start your dating profile</CardTitle>
-                  <p className="text-zinc-400 mt-1">We'll prefill from your Splikz profile</p>
+                  <CardTitle className="text-2xl text-white">
+                    Quick start your dating profile
+                  </CardTitle>
+                  <p className="text-zinc-400 mt-1">We’ll prefill from your Splikz profile</p>
                 </div>
                 <Button
                   variant="ghost"
@@ -545,10 +402,9 @@ const SplikzDatingHome = () => {
                 </Button>
               </div>
             </CardHeader>
-            
+
             <CardContent className="p-8">
               <div className="space-y-6">
-                {/* Profile Preview */}
                 <div className="flex items-center gap-4 p-4 bg-zinc-800/50 rounded-xl">
                   <Avatar className="h-16 w-16 ring-2 ring-fuchsia-500/30">
                     <AvatarImage src={profile?.avatar_url} alt={nameFor(profile)} />
@@ -558,11 +414,12 @@ const SplikzDatingHome = () => {
                   </Avatar>
                   <div>
                     <h3 className="text-white font-semibold text-lg">{nameFor(profile)}</h3>
-                    <p className="text-zinc-400">@{profile?.username || user?.email?.split("@")[0] || "you"}</p>
+                    <p className="text-zinc-400">
+                      @{profile?.username || user?.email?.split("@")[0] || "you"}
+                    </p>
                   </div>
                 </div>
 
-                {/* Form Fields */}
                 <div className="grid md:grid-cols-2 gap-6">
                   <div>
                     <Label className="text-zinc-300 font-medium">Dating display name</Label>
@@ -580,7 +437,7 @@ const SplikzDatingHome = () => {
                       <Input
                         className="pl-10 bg-zinc-800 border-zinc-700 text-white h-12"
                         placeholder="Your city"
-                        defaultValue="San Francisco, CA"
+                        defaultValue={profile?.city || ""}
                       />
                     </div>
                   </div>
@@ -596,7 +453,6 @@ const SplikzDatingHome = () => {
                   />
                 </div>
 
-                {/* Premium Features Teaser */}
                 <div className="bg-gradient-to-r from-fuchsia-500/10 to-purple-500/10 border border-fuchsia-500/20 rounded-xl p-4">
                   <div className="flex items-center gap-3 mb-3">
                     <div className="h-8 w-8 rounded-full bg-gradient-to-r from-fuchsia-500 to-purple-500 flex items-center justify-center">
@@ -624,7 +480,6 @@ const SplikzDatingHome = () => {
                   </div>
                 </div>
 
-                {/* Action Buttons */}
                 <div className="space-y-3">
                   <Button
                     size="lg"
@@ -637,7 +492,7 @@ const SplikzDatingHome = () => {
                     <Camera className="mr-2 h-4 w-4" />
                     Add 3-second intro first
                   </Button>
-                  
+
                   <Button
                     variant="outline"
                     size="lg"
@@ -647,7 +502,7 @@ const SplikzDatingHome = () => {
                     Skip video, continue setup
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
-                  
+
                   <Button
                     variant="ghost"
                     size="sm"
@@ -663,47 +518,154 @@ const SplikzDatingHome = () => {
         </div>
       )}
 
-      {/* Success Stories Section */}
+      {/* video upload modal */}
+      {showVideoUpload && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <Card className="w-full max-w-lg bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
+            <CardHeader className="border-b border-zinc-800 pb-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-xl text-white flex items-center gap-2">
+                    <Camera className="h-5 w-5 text-fuchsia-500" />
+                    Add your 3-second intro
+                  </CardTitle>
+                  <p className="text-zinc-400 mt-1">Show your personality in 3 seconds</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowVideoUpload(false)}
+                  className="text-zinc-400 hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-6">
+              <div className="space-y-6">
+                <div className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center bg-gradient-to-br from-fuchsia-500/5 to-purple-500/5">
+                  <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Camera className="h-8 w-8 text-white" />
+                  </div>
+                  <h3 className="text-white font-medium mb-2">Upload your 3-second intro</h3>
+                  <p className="text-zinc-400 text-sm mb-4">
+                    MP4, MOV, WebM supported. We’ll automatically trim to 3 seconds.
+                  </p>
+
+                  <div className="flex flex-col gap-3">
+                    <Button className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500">
+                      <Upload className="h-4 w-4 mr-2" />
+                      Choose video file
+                    </Button>
+
+                    <div className="text-zinc-500 text-xs">or</div>
+
+                    <Button variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-800">
+                      <Video className="h-4 w-4 mr-2" />
+                      Record with camera
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="bg-zinc-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-medium mb-3 flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-yellow-400" />
+                    Tips for a great intro
+                  </h4>
+                  <ul className="space-y-2 text-sm text-zinc-300">
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 flex-shrink-0" />
+                      <span>Smile and say hi — let your personality shine</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 flex-shrink-0" />
+                      <span>Good lighting makes all the difference</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 flex-shrink-0" />
+                      <span>Keep it natural — authenticity beats perfection</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                    onClick={() => setShowVideoUpload(false)}
+                  >
+                    Skip for now
+                  </Button>
+                  <Button
+                    className="flex-1 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
+                    onClick={() => {
+                      setShowVideoUpload(false);
+                      handleNavigateToOnboarding();
+                    }}
+                  >
+                    Continue
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* success stories */}
       {!user && (
         <section className="relative z-10 py-20">
           <div className="max-w-7xl mx-auto px-4">
             <div className="text-center mb-16">
               <h2 className="text-4xl font-bold mb-4">Real connections, real stories</h2>
-              <p className="text-xl text-zinc-400">Join thousands who found love through 3-second moments</p>
+              <p className="text-xl text-zinc-400">
+                Join others who found love through 3-second moments
+              </p>
             </div>
 
             <div className="grid md:grid-cols-3 gap-8">
               {[
                 {
-                  image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=300&h=300&fit=crop&crop=face",
+                  image:
+                    "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=300&h=300&fit=crop&crop=face",
                   name: "Emma & Jake",
-                  story: "Matched through our 3-second video intros. His laugh in that tiny clip told me everything I needed to know.",
-                  time: "Together 8 months"
+                  story:
+                    "Matched through 3-second intros. His laugh in that tiny clip told me everything.",
+                  time: "Together 8 months",
                 },
                 {
-                  image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&h=300&fit=crop&crop=face",
+                  image:
+                    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&h=300&fit=crop&crop=face",
                   name: "Marcus & Riley",
-                  story: "The energy matching feature is incredible. We both love late-night coffee runs and jazz music.",
-                  time: "Engaged!"
+                  story:
+                    "Energy matching is incredible. We both love late-night coffee and jazz.",
+                  time: "Engaged!",
                 },
                 {
-                  image: "https://images.unsplash.com/photo-1494790108755-2616c96b2131?w=300&h=300&fit=crop&crop=face",
+                  image:
+                    "https://images.unsplash.com/photo-1494790108755-2616c96b2131?w=300&h=300&fit=crop&crop=face",
                   name: "Sarah & Alex",
-                  story: "Finally, a dating app that shows personality first. We connected over our shared love for hiking.",
-                  time: "Together 1 year"
-                }
-              ].map((story, index) => (
-                <Card key={index} className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm hover:bg-zinc-900/80 transition-colors">
+                  story:
+                    "Finally, a dating app that shows personality first. We connected over hiking.",
+                  time: "Together 1 year",
+                },
+              ].map((s, i) => (
+                <Card
+                  key={i}
+                  className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm hover:bg-zinc-900/80 transition-colors"
+                >
                   <CardContent className="p-6 text-center">
                     <img
-                      src={story.image}
-                      alt={story.name}
+                      src={s.image}
+                      alt={s.name}
                       className="w-20 h-20 rounded-full mx-auto mb-4 object-cover ring-2 ring-fuchsia-500/30"
                     />
-                    <h3 className="text-white font-semibold text-lg mb-2">{story.name}</h3>
-                    <p className="text-zinc-300 mb-3">"{story.story}"</p>
+                    <h3 className="text-white font-semibold text-lg mb-2">{s.name}</h3>
+                    <p className="text-zinc-300 mb-3">"{s.story}"</p>
                     <Badge className="bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/30">
-                      {story.time}
+                      {s.time}
                     </Badge>
                   </CardContent>
                 </Card>
@@ -713,28 +675,30 @@ const SplikzDatingHome = () => {
         </section>
       )}
 
-      {/* Final CTA */}
+      {/* final CTA */}
       {!user && (
-        <section className="relative z-10 py-20 border-t border-white/5">
+        <section className="relative z-10 py-20 border-top border-white/5">
           <div className="max-w-4xl mx-auto px-4 text-center">
             <h2 className="text-5xl font-bold mb-6">
-              Your perfect match is 
+              Your perfect match is{" "}
               <span className="bg-gradient-to-r from-fuchsia-400 to-purple-400 bg-clip-text text-transparent">
-                {" "}3 seconds away
+                3 seconds away
               </span>
             </h2>
             <p className="text-xl text-zinc-300 mb-8 max-w-2xl mx-auto">
-              Join millions who've discovered that authentic connections happen in moments, not messages.
+              Join now — authentic connections happen in moments, not messages.
             </p>
-            <Button 
-              size="lg" 
+            <Button
+              size="lg"
               className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 h-16 px-12 text-xl font-semibold shadow-lg shadow-fuchsia-500/25"
               onClick={handleSignUp}
             >
               Start your love story today
               <Heart className="ml-3 h-6 w-6" />
             </Button>
-            <p className="text-sm text-zinc-500 mt-4">Free to join • No credit card required</p>
+            <p className="text-sm text-zinc-500 mt-4">
+              Free to join • No credit card required
+            </p>
           </div>
         </section>
       )}
