@@ -1,33 +1,34 @@
 // src/pages/Dashboard/Bookmarks.tsx
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Database } from "@/types/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bookmark, BookmarkX, Search, Filter } from "lucide-react";
+import { Bookmark, BookmarkX, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-type Supabase = Database;
 type BookmarkedSplik = {
   id: string;
   splik_id: string;
   created_at: string;
-  splik: {
+  spliks: {
     id: string;
     title: string | null;
     description: string | null;
     thumbnail_url: string | null;
+    video_url: string | null;
     created_at: string;
-    creator: {
+    user_id: string;
+    profiles: {
       id: string;
       username: string | null;
       display_name: string | null;
       avatar_url: string | null;
-    };
-  };
+    } | null;
+  } | null;
 };
 
 export default function BookmarksPage() {
@@ -36,6 +37,7 @@ export default function BookmarksPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filteredBookmarks, setFilteredBookmarks] = useState<BookmarkedSplik[]>([]);
+  const [activeTab, setActiveTab] = useState("recent");
 
   // Get current user
   useEffect(() => {
@@ -60,35 +62,56 @@ export default function BookmarksPage() {
   }, [user]);
 
   useEffect(() => {
-    // Filter bookmarks based on search query
+    // Filter and sort bookmarks based on search query and active tab
+    let filtered = bookmarks;
+
+    // Apply search filter
     if (searchQuery.trim()) {
-      const filtered = bookmarks.filter(bookmark =>
-        bookmark.splik.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        bookmark.splik.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        bookmark.splik.creator.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        bookmark.splik.creator.display_name?.toLowerCase().includes(searchQuery.toLowerCase())
+      filtered = bookmarks.filter(bookmark =>
+        bookmark.spliks?.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        bookmark.spliks?.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        bookmark.spliks?.profiles?.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        bookmark.spliks?.profiles?.display_name?.toLowerCase().includes(searchQuery.toLowerCase())
       );
-      setFilteredBookmarks(filtered);
-    } else {
-      setFilteredBookmarks(bookmarks);
     }
-  }, [searchQuery, bookmarks]);
+
+    // Apply sorting based on active tab
+    if (activeTab === "recent") {
+      filtered = [...filtered].sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    } else if (activeTab === "oldest") {
+      filtered = [...filtered].sort((a, b) => 
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+    } else if (activeTab === "title") {
+      filtered = [...filtered].sort((a, b) => 
+        (a.spliks?.title || "").localeCompare(b.spliks?.title || "")
+      );
+    }
+
+    setFilteredBookmarks(filtered);
+  }, [searchQuery, bookmarks, activeTab]);
 
   const fetchBookmarks = async () => {
     try {
-      const { data, error } = await supabase
+      console.log("Fetching bookmarks for user:", user?.id);
+      
+      const { data: bookmarkData, error: bookmarkError } = await supabase
         .from("bookmarks")
         .select(`
           id,
           splik_id,
           created_at,
-          splik:spliks(
+          spliks (
             id,
             title,
             description,
             thumbnail_url,
+            video_url,
             created_at,
-            creator:profiles(
+            user_id,
+            profiles (
               id,
               username,
               display_name,
@@ -97,10 +120,12 @@ export default function BookmarksPage() {
           )
         `)
         .eq("user_id", user?.id)
-        .order("created_at", { ascending: false });
+        .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setBookmarks(data || []);
+      console.log("Bookmark query result:", { data: bookmarkData, error: bookmarkError });
+
+      if (bookmarkError) throw bookmarkError;
+      setBookmarks(bookmarkData || []);
     } catch (error) {
       console.error("Error fetching bookmarks:", error);
     } finally {
@@ -147,7 +172,7 @@ export default function BookmarksPage() {
         </p>
       </div>
 
-      {/* Search and Filter Bar */}
+      {/* Search Bar */}
       <div className="flex gap-4 mb-6">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
@@ -164,106 +189,118 @@ export default function BookmarksPage() {
         </Badge>
       </div>
 
-      {/* Bookmarks Grid */}
-      {filteredBookmarks.length === 0 ? (
-        <Card className="text-center py-12">
-          <CardContent>
-            <Bookmark className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">
-              {searchQuery ? "No bookmarks found" : "No bookmarks yet"}
-            </h3>
-            <p className="text-muted-foreground mb-4">
-              {searchQuery
-                ? "Try adjusting your search terms"
-                : "Start bookmarking spliks to save them for later"
-              }
-            </p>
-            {!searchQuery && (
-              <Link to="/home">
-                <Button>Explore Spliks</Button>
-              </Link>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredBookmarks.map((bookmark) => (
-            <Card key={bookmark.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-              <div className="aspect-video relative bg-muted">
-                {bookmark.splik.thumbnail_url ? (
-                  <img
-                    src={bookmark.splik.thumbnail_url}
-                    alt={bookmark.splik.title || "Splik thumbnail"}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-full">
-                    <div className="text-4xl text-muted-foreground">📹</div>
-                  </div>
-                )}
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  className="absolute top-2 right-2"
-                  onClick={() => removeBookmark(bookmark.splik_id)}
-                >
-                  <BookmarkX className="h-4 w-4" />
-                </Button>
-              </div>
+      {/* Tabs for sorting */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
+        <TabsList>
+          <TabsTrigger value="recent">Most Recent</TabsTrigger>
+          <TabsTrigger value="oldest">Oldest First</TabsTrigger>
+          <TabsTrigger value="title">By Title</TabsTrigger>
+        </TabsList>
 
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base line-clamp-2">
-                  <Link
-                    to={`/splik/${bookmark.splik_id}`}
-                    className="hover:text-primary transition-colors"
-                  >
-                    {bookmark.splik.title || "Untitled Splik"}
+        <TabsContent value={activeTab} className="mt-6">
+          {filteredBookmarks.length === 0 ? (
+            <Card className="text-center py-12">
+              <CardContent>
+                <Bookmark className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-semibold mb-2">
+                  {searchQuery ? "No bookmarks found" : "No bookmarks yet"}
+                </h3>
+                <p className="text-muted-foreground mb-4">
+                  {searchQuery
+                    ? "Try adjusting your search terms"
+                    : "Start bookmarking spliks to save them for later"
+                  }
+                </p>
+                {!searchQuery && (
+                  <Link to="/home">
+                    <Button>Explore Spliks</Button>
                   </Link>
-                </CardTitle>
-              </CardHeader>
-
-              <CardContent className="space-y-3">
-                {bookmark.splik.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2">
-                    {bookmark.splik.description}
-                  </p>
                 )}
-
-                {/* Creator Info */}
-                <div className="flex items-center gap-2">
-                  {bookmark.splik.creator.avatar_url ? (
-                    <img
-                      src={bookmark.splik.creator.avatar_url}
-                      alt={bookmark.splik.creator.display_name || "Creator"}
-                      className="w-6 h-6 rounded-full"
-                    />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
-                      {(bookmark.splik.creator.display_name || bookmark.splik.creator.username || "?")[0].toUpperCase()}
-                    </div>
-                  )}
-                  <Link
-                    to={`/creator/${bookmark.splik.creator.username}`}
-                    className="text-sm font-medium hover:text-primary transition-colors"
-                  >
-                    {bookmark.splik.creator.display_name || bookmark.splik.creator.username}
-                  </Link>
-                </div>
-
-                {/* Timestamps */}
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>
-                    Created {formatDistanceToNow(new Date(bookmark.splik.created_at), { addSuffix: true })}
-                  </span>
-                  <span>
-                    Saved {formatDistanceToNow(new Date(bookmark.created_at), { addSuffix: true })}
-                  </span>
-                </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
-      )}
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredBookmarks.map((bookmark) => {
+                if (!bookmark.spliks) return null;
+                
+                return (
+                  <Card key={bookmark.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+                    <div className="aspect-video relative bg-muted">
+                      {bookmark.spliks.thumbnail_url ? (
+                        <img
+                          src={bookmark.spliks.thumbnail_url}
+                          alt={bookmark.spliks.title || "Splik thumbnail"}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex items-center justify-center h-full">
+                          <div className="text-4xl text-muted-foreground">📹</div>
+                        </div>
+                      )}
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm"
+                        onClick={() => removeBookmark(bookmark.splik_id)}
+                      >
+                        <BookmarkX className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base line-clamp-2">
+                        <Link
+                          to={`/splik/${bookmark.splik_id}`}
+                          className="hover:text-primary transition-colors"
+                        >
+                          {bookmark.spliks.title || "Untitled Splik"}
+                        </Link>
+                      </CardTitle>
+                    </CardHeader>
+
+                    <CardContent className="space-y-3">
+                      {bookmark.spliks.description && (
+                        <p className="text-sm text-muted-foreground line-clamp-2">
+                          {bookmark.spliks.description}
+                        </p>
+                      )}
+
+                      {/* Creator Info */}
+                      <div className="flex items-center gap-2">
+                        {bookmark.spliks.profiles?.avatar_url ? (
+                          <img
+                            src={bookmark.spliks.profiles.avatar_url}
+                            alt={bookmark.spliks.profiles.display_name || "Creator"}
+                            className="w-6 h-6 rounded-full"
+                          />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
+                            {(bookmark.spliks.profiles?.display_name || bookmark.spliks.profiles?.username || "?")[0].toUpperCase()}
+                          </div>
+                        )}
+                        <Link
+                          to={`/creator/${bookmark.spliks.profiles?.username || bookmark.spliks.user_id}`}
+                          className="text-sm font-medium hover:text-primary transition-colors"
+                        >
+                          {bookmark.spliks.profiles?.display_name || bookmark.spliks.profiles?.username || "Unknown User"}
+                        </Link>
+                      </div>
+
+                      {/* Timestamp */}
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>
+                          Saved {formatDistanceToNow(new Date(bookmark.created_at), { addSuffix: true })}
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
