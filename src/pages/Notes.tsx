@@ -1,4 +1,3 @@
-
 // src/pages/Notes.tsx
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -33,6 +32,9 @@ type NoteRow = {
   sender_avatar_url?: string | null;
 };
 
+// 🔁 lifetime for read notes
+const DELETE_MS = 15_000; // 15 seconds
+
 export default function NotesPage() {
   const [searchParams] = useSearchParams();
 
@@ -52,7 +54,7 @@ export default function NotesPage() {
   const [replying, setReplying] = useState<Record<string, boolean>>({});
   const [replyText, setReplyText] = useState<Record<string, string>>({});
 
-  // notes read this session (so we can delete them after 5s / on leave)
+  // notes read this session (so we can delete them after 15s / on leave)
   const readThisSession = useRef<Set<string>>(new Set());
   const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -278,7 +280,7 @@ export default function NotesPage() {
 
       setInbox(enrichedNotes);
 
-      // 4) Mark unread as read and schedule deletion in 5s
+      // 4) Mark unread as read and schedule deletion in 15s
       const unread = enrichedNotes.filter((n) => !n.read_at);
       if (unread.length) {
         const ids = unread.map((n) => n.id);
@@ -297,7 +299,7 @@ export default function NotesPage() {
           if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
           deleteTimeoutRef.current = setTimeout(() => {
             deleteReadNow();
-          }, 5000);
+          }, DELETE_MS);
         }
       }
     } catch (error) {
@@ -361,15 +363,16 @@ export default function NotesPage() {
   );
 
   const hasInbox = inbox.length > 0;
+  const seconds = DELETE_MS / 1000;
 
   const disclaimer = useMemo(
     () => (
       <div className="rounded-md border border-yellow-300/40 bg-yellow-500/10 p-3 text-sm">
         <strong>Heads up:</strong> Notes disappear after you read them. We automatically
-        delete read notes after 5 seconds, and also when you leave or refresh this page.
+        delete read notes after {seconds} seconds, and also when you leave or refresh this page.
       </div>
     ),
-    [],
+    [seconds],
   );
 
   if (!me) {
@@ -390,7 +393,7 @@ export default function NotesPage() {
         <h1 className="text-xl font-semibold">Send a Note</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Pick a creator and send a short, one-off note. When they read it, it gets automatically
-          deleted after 5 seconds. They can reply before it disappears.
+          deleted after {seconds} seconds. They can reply before it disappears.
         </p>
 
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(260px,320px)_1fr_auto]">
@@ -583,7 +586,7 @@ export default function NotesPage() {
                 >
                   {n.read_at
                     ? readThisSession.current.has(n.id)
-                      ? "Read (will be deleted in 5 seconds)"
+                      ? `Read (will be deleted in ${seconds} seconds)`
                       : "Read (from previous session)"
                     : "Unread"}
                 </div>
