@@ -71,11 +71,12 @@ import PrayersSearchPage from "./pages/PrayersSearch";
 import NotFound from "./pages/NotFound";
 import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalContext";
 
-// ✅ Promote page (use alias so the path resolves on Linux builds)
+// ✅ Promote page
 import Promote from "@/pages/Promote";
 
-// ✅ NEW: Splikz Dating (page only; routes here)
-import DatingHome from "./pages/Dating/DatingHome";
+// ✅ Splikz Dating
+import DatingHome from "./pages/Dating/DatingHome"; // Capital 'D' folder
+import DatingOnboardingWizard from "./pages/dating/DatingOnboardingWizard"; // <-- add this (lowercase 'd' folder)
 
 const queryClient = new QueryClient();
 
@@ -191,10 +192,8 @@ const App = () => (
 
               {/* Dashboard */}
               <Route path="/dashboard" element={<CreatorDashboard />} />
-              {/* ✅ New Reactions System Routes */}
               <Route path="/dashboard/bookmarks" element={<Bookmarks />} />
               <Route path="/dashboard/boosts" element={<Boosts />} />
-              {/* ⚠️ Legacy route - consider removing after migration */}
               <Route path="/dashboard/favorites" element={<Favorites />} />
 
               {/* Profiles & videos */}
@@ -212,6 +211,7 @@ const App = () => (
 
               {/* ✅ Splikz Dating */}
               <Route path="/dating" element={<DatingHome />} />
+              <Route path="/dating/onboarding" element={<DatingOnboardingWizard />} /> {/* <-- added */}
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
