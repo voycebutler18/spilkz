@@ -242,19 +242,29 @@ const Signup = () => {
       if (error) throw error;
 
       if (data.user) {
-        // Create profile row
-        const { error: profileError } = await supabase.from("profiles").insert({
-          id: data.user.id,
-          first_name: firstName,
-          last_name: lastName,
-          age: ageNum,
-          city,
-          username: normUsername, // stored normalized
-          display_name: `${firstName} ${lastName}`,
-        });
+        // Create profile row - CORRECTED VERSION
+        const normHandle = normalizeUsername(username);
+
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .upsert(
+            {
+              id: data.user.id,
+              first_name: firstName,
+              last_name: lastName,
+              age: ageNum,
+              city,
+              // store normalized handle
+              username: normHandle,
+              // make sure something visible shows up in feeds immediately
+              display_name: `${firstName} ${lastName}`.trim() || `@${normHandle}`,
+              // optional: set avatar_url later via uploader
+            },
+            { onConflict: "id" } // safe if a row already exists
+          );
 
         if (profileError) {
-          // If your DB has a unique constraint and another user grabbed it in between
+          // If the username was taken in the split second between check & insert
           if ((profileError as any).code === "23505") {
             toast({
               title: "Username just got taken",
@@ -451,7 +461,7 @@ const Signup = () => {
                   />
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  For safety, your DOB helps us verify age and can’t be changed later.
+                  For safety, your DOB helps us verify age and can't be changed later.
                 </p>
               </div>
 
