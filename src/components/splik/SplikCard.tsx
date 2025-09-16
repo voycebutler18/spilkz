@@ -393,16 +393,16 @@ export default function SplikCard({
   return (
     <div
       ref={cardRef}
-      className="rounded-xl bg-card/60 ring-1 ring-border/60 overflow-hidden"
+      className="relative w-full h-screen bg-black overflow-hidden md:h-auto md:rounded-xl md:bg-card/60 md:ring-1 md:ring-border/60"
     >
-      {/* Media */}
-      <div className="relative bg-black">
+      {/* Media - Full Screen on Mobile, Card on Desktop */}
+      <div className="relative bg-black md:rounded-t-xl overflow-hidden">
         {hasVideo ? (
           <>
             <video
               ref={videoRef}
               poster={splik.thumbnail_url || undefined}
-              className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
+              className="block w-full h-screen object-cover bg-black md:h-[560px] lg:h-[640px]"
               src={shouldLoad && splik.video_url ? splik.video_url : ""}
               playsInline
               muted
@@ -432,142 +432,269 @@ export default function SplikCard({
               }
             />
 
-            {/* Mute toggle */}
+            {/* Mobile Overlay UI - Right Side (TikTok Style) */}
+            <div className="absolute right-3 bottom-20 flex flex-col items-center space-y-4 z-10 md:hidden">
+              {/* Creator Avatar + Follow */}
+              <div className="relative">
+                <Link to={creatorHref}>
+                  <img
+                    src={avatarUrl}
+                    alt={name}
+                    className="w-12 h-12 rounded-full border-2 border-white object-cover"
+                  />
+                </Link>
+                {!isCreator && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const u = await ensureAuth();
+                        // Simple follow toggle logic
+                        const { data: existingFollow } = await supabase
+                          .from("follows")
+                          .select("id")
+                          .eq("follower_id", u.id)
+                          .eq("following_id", splik.user_id)
+                          .maybeSingle();
+                        
+                        if (existingFollow) {
+                          await supabase
+                            .from("follows")
+                            .delete()
+                            .eq("follower_id", u.id)
+                            .eq("following_id", splik.user_id);
+                        } else {
+                          await supabase
+                            .from("follows")
+                            .insert([{ follower_id: u.id, following_id: splik.user_id }]);
+                        }
+                      } catch (error) {
+                        console.error("Follow error:", error);
+                      }
+                    }}
+                    className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-6 h-6 rounded-full bg-red-500 border-2 border-white flex items-center justify-center text-xs font-bold text-white"
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+
+              {/* Boost */}
+              <button
+                onClick={toggleHype}
+                className="flex flex-col items-center space-y-1"
+              >
+                <div className={cn(
+                  "w-12 h-12 rounded-full flex items-center justify-center",
+                  hasHyped ? "bg-orange-500" : "bg-white/20 backdrop-blur-sm"
+                )}>
+                  <TrendingUp className={cn(
+                    "w-6 h-6",
+                    hasHyped ? "text-white" : "text-white"
+                  )} />
+                </div>
+                <span className="text-white text-xs font-semibold">
+                  {hypeCount > 0 ? (hypeCount > 999 ? `${Math.floor(hypeCount/1000)}K` : hypeCount) : ""}
+                </span>
+              </button>
+
+              {/* Bookmark */}
+              <button
+                onClick={toggleSave}
+                className="flex flex-col items-center space-y-1"
+              >
+                <div className={cn(
+                  "w-12 h-12 rounded-full flex items-center justify-center",
+                  isSaved ? "bg-yellow-500" : "bg-white/20 backdrop-blur-sm"
+                )}>
+                  {isSaved ? (
+                    <BookmarkCheck className="w-6 h-6 text-white" />
+                  ) : (
+                    <Bookmark className="w-6 h-6 text-white" />
+                  )}
+                </div>
+              </button>
+
+              {/* Share */}
+              <button
+                onClick={onShare}
+                className="flex flex-col items-center space-y-1"
+              >
+                <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                  <Share2 className="w-6 h-6 text-white" />
+                </div>
+              </button>
+            </div>
+
+            {/* Mobile Bottom Content Info */}
+            <div className="absolute bottom-6 left-4 right-20 z-10 md:hidden">
+              <div className="space-y-2">
+                <Link 
+                  to={creatorHref}
+                  className="text-white font-semibold text-sm"
+                >
+                  @{profile?.username || "user"}
+                </Link>
+                {splik.title && (
+                  <p className="text-white text-sm line-clamp-2">
+                    {splik.title}
+                  </p>
+                )}
+                {splik.description && (
+                  <p className="text-white/80 text-sm line-clamp-3">
+                    {splik.description}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Mute toggle - Mobile: bottom right, Desktop: bottom right of video */}
             <button
               onClick={onToggleMute}
-              className="absolute right-3 bottom-3 rounded-full bg-black/70 hover:bg-black/80 p-2 ring-1 ring-white/30"
+              className="absolute bottom-6 right-4 md:right-3 md:bottom-3 w-10 h-10 md:w-8 md:h-8 rounded-full bg-black/70 hover:bg-black/80 flex items-center justify-center ring-1 ring-white/30 z-10"
               aria-label={isMuted ? "Unmute" : "Mute"}
             >
               {isMuted ? (
-                <VolumeX className="h-5 w-5 text-white" />
+                <VolumeX className="h-5 w-5 md:h-4 md:w-4 text-white" />
               ) : (
-                <Volume2 className="h-5 w-5 text-white" />
+                <Volume2 className="h-5 w-5 md:h-4 md:w-4 text-white" />
               )}
             </button>
+
+            {/* Play/Pause Indicator for Mobile */}
+            {!isPlaying && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none md:hidden">
+                <div className="w-16 h-16 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
+                  <div className="w-6 h-6 border-l-8 border-white border-transparent ml-1" />
+                </div>
+              </div>
+            )}
           </>
         ) : (
           // Photo-only
           <img
             src={splik.thumbnail_url || ""}
             alt={splik.title || "Photo"}
-            className="block w-full h-[560px] sm:h-[640px] object-cover bg-black"
+            className="block w-full h-screen object-cover bg-black md:h-[560px] lg:h-[640px]"
             loading="lazy"
           />
         )}
       </div>
 
-      {/* Creator info */}
-      <div className="flex items-center gap-3 px-4 pt-3">
-        <Link
-          to={creatorHref}
-          className="shrink-0 hover:opacity-80 transition-opacity"
-        >
-          <img
-            src={avatarUrl}
-            alt={name}
-            className="h-9 w-9 rounded-full ring-2 ring-primary/20 object-cover"
-          />
-        </Link>
-        <div className="min-w-0 flex-1">
+      {/* Desktop Layout - Creator info and actions below video */}
+      <div className="hidden md:block">
+        {/* Creator info */}
+        <div className="flex items-center gap-3 px-4 pt-3">
           <Link
             to={creatorHref}
-            className="block font-medium hover:text-primary transition-colors truncate"
+            className="shrink-0 hover:opacity-80 transition-opacity"
           >
-            {name}
-          </Link>
-          {splik.title && (
-            <p className="text-sm text-muted-foreground truncate">
-              {splik.title}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="px-4 pb-4 pt-3">
-        <div className="flex items-center gap-2">
-          {/* Follow only if NOT creator */}
-          {!isCreator && (
-            <FollowButton
-              profileId={splik.user_id}
-              username={profile?.username || undefined}
-              size="sm"
-              variant="outline"
+            <img
+              src={avatarUrl}
+              alt={name}
+              className="h-9 w-9 rounded-full ring-2 ring-primary/20 object-cover"
             />
-          )}
-
-          {/* ✅ Boost (renamed from Hype) */}
-          <Button
-            variant={hasHyped ? "default" : "outline"}
-            size="sm"
-            className={cn(
-              "gap-2",
-              hasHyped && "bg-orange-500 hover:bg-orange-600 text-white"
-            )}
-            onClick={toggleHype}
-            aria-pressed={hasHyped}
-            title="Boost this content"
-          >
-            <TrendingUp className={cn("h-4 w-4", hasHyped && "text-white")} />
-            {hasHyped ? "Boosted" : "Boost"} ({hypeCount})
-          </Button>
-
-          {/* ✅ Bookmark (renamed from Save) */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={toggleSave}
-            aria-pressed={isSaved}
-            title="Bookmark this content"
-          >
-            {isSaved ? (
-              <>
-                <BookmarkCheck className="h-4 w-4" />
-                Bookmarked
-              </>
-            ) : (
-              <>
-                <Bookmark className="h-4 w-4" />
-                Bookmark
-              </>
-            )}
-          </Button>
-
-          {/* Send a note */}
-          <Button
-            asChild
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            title="Send a note to the creator"
-          >
+          </Link>
+          <div className="min-w-0 flex-1">
             <Link
-              to={`/notes?to=${splik.user_id}&msg=${encodeURIComponent(
-                `About your video "${splik.title || ""}": `
-              )}`}
+              to={creatorHref}
+              className="block font-medium hover:text-primary transition-colors truncate"
             >
-              Send a note
+              {name}
             </Link>
-          </Button>
+            {splik.title && (
+              <p className="text-sm text-muted-foreground truncate">
+                {splik.title}
+              </p>
+            )}
+          </div>
+        </div>
 
-          <div className="ml-auto">
+        {/* Desktop Actions */}
+        <div className="px-4 pb-4 pt-3">
+          <div className="flex items-center gap-2">
+            {/* Follow only if NOT creator */}
+            {!isCreator && (
+              <FollowButton
+                profileId={splik.user_id}
+                username={profile?.username || undefined}
+                size="sm"
+                variant="outline"
+              />
+            )}
+
+            {/* Boost */}
+            <Button
+              variant={hasHyped ? "default" : "outline"}
+              size="sm"
+              className={cn(
+                "gap-2",
+                hasHyped && "bg-orange-500 hover:bg-orange-600 text-white"
+              )}
+              onClick={toggleHype}
+              aria-pressed={hasHyped}
+              title="Boost this content"
+            >
+              <TrendingUp className={cn("h-4 w-4", hasHyped && "text-white")} />
+              {hasHyped ? "Boosted" : "Boost"} ({hypeCount})
+            </Button>
+
+            {/* Bookmark */}
             <Button
               variant="outline"
               size="sm"
               className="gap-2"
-              onClick={onShare}
+              onClick={toggleSave}
+              aria-pressed={isSaved}
+              title="Bookmark this content"
             >
-              <Share2 className="h-4 w-4" /> Share
+              {isSaved ? (
+                <>
+                  <BookmarkCheck className="h-4 w-4" />
+                  Bookmarked
+                </>
+              ) : (
+                <>
+                  <Bookmark className="h-4 w-4" />
+                  Bookmark
+                </>
+              )}
             </Button>
-          </div>
-        </div>
 
-        {splik.description && (
-          <p className="mt-3 text-sm text-muted-foreground">
-            {splik.description}
-          </p>
-        )}
+            {/* Send a note */}
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              title="Send a note to the creator"
+            >
+              <Link
+                to={`/notes?to=${splik.user_id}&msg=${encodeURIComponent(
+                  `About your video "${splik.title || ""}": `
+                )}`}
+              >
+                Send a note
+              </Link>
+            </Button>
+
+            <div className="ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={onShare}
+              >
+                <Share2 className="h-4 w-4" /> Share
+              </Button>
+            </div>
+          </div>
+
+          {splik.description && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {splik.description}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
