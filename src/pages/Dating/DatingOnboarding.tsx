@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
-/* ------------ constants (same as before) ------------- */
+/* ------------ constants ------------- */
 const GENDER_IDENTITIES = [
   { id: "man", label: "Man", icon: "👨" },
   { id: "woman", label: "Woman", icon: "👩" },
@@ -141,7 +141,7 @@ const INTEREST_CATEGORIES = [
   },
 ];
 
-/* ---------- DOB helpers (same as before) ---------- */
+/* ---------- DOB helpers ---------- */
 const today = new Date();
 const MAX_YEAR = today.getFullYear() - 18;
 const MIN_YEAR = 1900;
@@ -191,7 +191,7 @@ const DatingOnboardingWizard: React.FC = () => {
   const [formData, setFormData] = useState({
     name: "",
     city: "",
-    age: "",
+    age: "",              // derived from dob
     dob: "",
     bio: "",
     gender: "",
@@ -266,7 +266,7 @@ const DatingOnboardingWizard: React.FC = () => {
     setFormData((p) => ({ ...p, videoIntro: { url, file } }));
   };
 
-  // -------- PUBLISH: save to Supabase + navigate to Discover ----------
+  // -------- PUBLISH: save to Supabase ---------- //
   const publishProfile = async () => {
     try {
       setSaving(true);
@@ -275,6 +275,14 @@ const DatingOnboardingWizard: React.FC = () => {
       if (!user) {
         setSaving(false);
         navigate("/login");
+        return;
+      }
+
+      // DOB validation: must be 18+
+      const ageNum = Number(ageFromISO(formData.dob));
+      if (!formData.dob || !ageNum || ageNum < 18) {
+        setSaving(false);
+        alert("You must be 18+ and include a valid birthday.");
         return;
       }
 
@@ -295,7 +303,7 @@ const DatingOnboardingWizard: React.FC = () => {
         );
       }
 
-      // save profile
+      // save profile (only columns that exist)
       const { error } = await supabase.from("dating_profiles").upsert(
         {
           user_id: user.id,
@@ -311,7 +319,6 @@ const DatingOnboardingWizard: React.FC = () => {
           relationship_type: formData.relationshipType || null,
           interests: formData.interests,
           avatar_url: photoUrls[0] || null,
-          photo_urls: photoUrls,
           video_intro_url: videoUrl,
           updated_at: new Date().toISOString(),
         },
@@ -319,18 +326,19 @@ const DatingOnboardingWizard: React.FC = () => {
       );
       if (error) throw error;
 
-      // done -> go to Discover
-      navigate("/dating/discover", { replace: true });
-    } catch (e) {
+      // done -> go to Dating home (route exists)
+      setSaving(false);
+      navigate("/dating", { replace: true });
+    } catch (e: any) {
       console.error(e);
       setSaving(false);
-      alert("Could not publish profile. Please try again.");
+      alert(e?.message || "Could not publish profile. Please try again.");
     }
   };
 
   const progress = Math.round((currentStep / totalSteps) * 100);
 
-  /* ---------- UI bits (progress, cards, preview etc.) ---------- */
+  /* ---------- UI bits ---------- */
   const StepIndicator = () => (
     <div className="w-full max-w-4xl mx-auto mb-8">
       <div className="flex items-center justify-between mb-4">
@@ -485,19 +493,15 @@ const DatingOnboardingWizard: React.FC = () => {
     </div>
   );
 
-  /* ---------- steps (Step 1 collapsed for brevity changes) ---------- */
+  /* ---------- steps ---------- */
   const renderStep = () => {
     switch (currentStep) {
       case 1: {
-        const years: string[] = [];
-        for (let y = MAX_YEAR; y >= MIN_YEAR; y--) years.push(String(y));
         const maxDays =
           dobYear && dobMonth ? daysInMonth(parseInt(dobYear), parseInt(dobMonth)) : 31;
         const days = Array.from({ length: maxDays }, (_, i) =>
           String(i + 1).padStart(2, "0")
         );
-        const tooYoung =
-          dobYear && dobMonth && dobDay ? parseInt(dobYear) > MAX_YEAR : false;
 
         return (
           <StepCard title="Let's start with the basics" subtitle="Tell us a bit about yourself">
@@ -652,13 +656,10 @@ const DatingOnboardingWizard: React.FC = () => {
                 <div>
                   <Label className="text-zinc-300 text-sm font-medium">Age</Label>
                   <Input
-                    inputMode="numeric"
                     value={formData.age}
-                    onChange={(e) =>
-                      handleInput("age", e.target.value.replace(/[^\d]/g, "").slice(0, 3))
-                    }
+                    readOnly
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
-                    placeholder="Your age"
+                    placeholder="—"
                   />
                 </div>
               </div>
