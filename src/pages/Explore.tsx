@@ -868,7 +868,7 @@ const Explore = () => {
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-5 w-5 text-primary" />
                   <p className="text-sm md:text-base font-medium">
-                    Join Splikz to follow creators, see full profiles, and post your own 3-second videos.
+                    Join Splikz to follow creators, see full profiles, and post your own 3-second videos. All Profiles are hidden until you sign up.
                   </p>
                 </div>
                 <div className="flex gap-2 md:ml-auto">
