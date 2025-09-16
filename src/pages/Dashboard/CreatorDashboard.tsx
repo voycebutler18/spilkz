@@ -95,19 +95,20 @@ interface CommentRow {
   user_avatar_url?: string | null;
 }
 
-/* ----------------------------- Real-time Count Helpers ----------------------------- */
+/* ----------------------------- Count Helpers (use real tables) ----------------------------- */
 async function fetchBoostCounts(splikIds: string[]) {
   const counts: Record<string, number> = {};
   if (splikIds.length === 0) return counts;
 
   try {
-    const { data } = await supabase
-      .from("boosts")
+    const { data, error } = await supabase
+      .from("hype_reactions") // ✅ real boosts
       .select("splik_id")
       .in("splik_id", splikIds);
+    if (error) throw error;
 
-    (data || []).forEach((boost: any) => {
-      const id = boost.splik_id as string;
+    (data || []).forEach((row: any) => {
+      const id = row.splik_id as string;
       counts[id] = (counts[id] || 0) + 1;
     });
   } catch (error) {
@@ -121,13 +122,14 @@ async function fetchBookmarkCounts(splikIds: string[]) {
   if (splikIds.length === 0) return counts;
 
   try {
-    const { data } = await supabase
-      .from("bookmarks")
+    const { data, error } = await supabase
+      .from("favorites") // ✅ real bookmarks
       .select("splik_id")
       .in("splik_id", splikIds);
+    if (error) throw error;
 
-    (data || []).forEach((bookmark: any) => {
-      const id = bookmark.splik_id as string;
+    (data || []).forEach((row: any) => {
+      const id = row.splik_id as string;
       counts[id] = (counts[id] || 0) + 1;
     });
   } catch (error) {
@@ -141,13 +143,14 @@ async function fetchCommentCounts(splikIds: string[]) {
   if (splikIds.length === 0) return counts;
 
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("comments")
       .select("splik_id")
       .in("splik_id", splikIds);
+    if (error) throw error;
 
-    (data || []).forEach((comment: any) => {
-      const id = comment.splik_id as string;
+    (data || []).forEach((row: any) => {
+      const id = row.splik_id as string;
       counts[id] = (counts[id] || 0) + 1;
     });
   } catch (error) {
@@ -158,11 +161,12 @@ async function fetchCommentCounts(splikIds: string[]) {
 
 async function fetchFollowerCount(userId: string) {
   try {
-    const { count } = await supabase
-      .from("followers")
+    const { count, error } = await supabase
+      .from("user_follows") // ✅ real follows
       .select("*", { count: "exact", head: true })
       .eq("following_id", userId);
-  return count || 0;
+    if (error) throw error;
+    return count || 0;
   } catch (error) {
     console.error("Error fetching follower count:", error);
     return 0;
@@ -709,10 +713,10 @@ const CreatorDashboard = () => {
           updateStats();
         }
       )
-      // Boost changes
+      // Boost (hype) changes
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "boosts" },
+        { event: "INSERT", schema: "public", table: "hype_reactions" },
         (payload) => {
           const boost = payload.new as any;
           setSpliks((prev) =>
@@ -725,7 +729,7 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "boosts" },
+        { event: "DELETE", schema: "public", table: "hype_reactions" },
         (payload) => {
           const boost = payload.old as any;
           setSpliks((prev) =>
@@ -741,7 +745,7 @@ const CreatorDashboard = () => {
       // Bookmark changes
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "bookmarks" },
+        { event: "INSERT", schema: "public", table: "favorites" },
         (payload) => {
           const bookmark = payload.new as any;
           setSpliks((prev) =>
@@ -756,7 +760,7 @@ const CreatorDashboard = () => {
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "bookmarks" },
+        { event: "DELETE", schema: "public", table: "favorites" },
         (payload) => {
           const bookmark = payload.old as any;
           setSpliks((prev) =>
@@ -803,14 +807,14 @@ const CreatorDashboard = () => {
       // Follower changes for this user
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "followers", filter: `following_id=eq.${uid}` },
+        { event: "INSERT", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
         () => {
           setStats((prev) => ({ ...prev, followers: prev.followers + 1 }));
         }
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "followers", filter: `following_id=eq.${uid}` },
+        { event: "DELETE", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
         () => {
           setStats((prev) => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
         }
@@ -879,7 +883,6 @@ const CreatorDashboard = () => {
     if (!currentUserId) return;
 
     try {
-      // Get follower count
       const followerCount = await fetchFollowerCount(currentUserId);
 
       setSpliks((currentSpliks) => {
