@@ -173,7 +173,7 @@ export default function SplikCard({
         // Check follow status if not creator
         if (!isCreator) {
           const { data: followRow } = await supabase
-            .from("follows")
+            .from("followers")
             .select("id")
             .eq("follower_id", user.id)
             .eq("following_id", splik.user_id)
@@ -350,7 +350,7 @@ export default function SplikCard({
       if (isFollowing) {
         // Unfollow
         const result = await supabase
-          .from("follows")
+          .from("followers")
           .delete()
           .eq("follower_id", u.id)
           .eq("following_id", splik.user_id);
@@ -369,7 +369,7 @@ export default function SplikCard({
       } else {
         // Follow
         const result = await supabase
-          .from("follows")
+          .from("followers")
           .insert([{ 
             follower_id: u.id, 
             following_id: splik.user_id 
