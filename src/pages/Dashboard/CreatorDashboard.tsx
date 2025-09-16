@@ -1,14 +1,10 @@
-// src/pages/Dashboard/CreatorDashboard.tsx
+// src/components/dashboard/CreatorDashboard.tsx
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,18 +21,8 @@ import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
-  Video,
-  Users,
-  TrendingUp,
-  Settings,
-  MessageCircle,
-  Shield,
-  Trash2,
-  Plus,
-  Volume2,
-  VolumeX,
-  BarChart3,
-  Bookmark,
+  Video, Users, TrendingUp, Settings, MessageCircle, Shield, Trash2, Plus,
+  Volume2, VolumeX, BarChart3, Bookmark,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -48,9 +34,9 @@ interface Profile {
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
-  followers_count?: number;
-  following_count?: number;
-  spliks_count?: number;
+  followers_count: number;
+  following_count: number;
+  spliks_count: number;
   followers_private?: boolean;
   following_private?: boolean;
 }
@@ -60,15 +46,15 @@ interface SplikRow {
   user_id: string;
   title: string | null;
   description: string | null;
-  video_url: string | null;
-  thumbnail_url: string | null;
+  video_url: string | null;      // null for photos
+  thumbnail_url: string | null;  // for photos this is the image itself
   created_at: string;
-  boosts_count?: number;
-  comments_count?: number;
-  bookmarks_count?: number;
-  trim_start?: number | null;
-  trim_end?: number | null;
-  mime_type?: string | null;
+  likes_count?: number | null;   // keeping original name for hype_reactions
+  comments_count?: number | null;
+  bookmarks_count?: number | null; // adding bookmarks
+  trim_start?: number | null;    // videos only
+  trim_end?: number | null;      // videos only
+  mime_type?: string | null;     // optional, helpful to distinguish photo/video
   profile?: {
     username?: string | null;
     display_name?: string | null;
@@ -79,9 +65,9 @@ interface SplikRow {
 interface DashboardStats {
   totalSpliks: number;
   followers: number;
-  totalBoosts: number;
-  avgBoostsPerPost: number;
-  totalBookmarks: number;
+  totalBoosts: number;  // renamed from totalReactions for modern look
+  avgBoostsPerPost: number;  // renamed from avgReactionsPerVideo
+  totalBookmarks: number;  // adding bookmarks
 }
 
 interface CommentRow {
@@ -95,90 +81,54 @@ interface CommentRow {
   user_avatar_url?: string | null;
 }
 
-/* ----------------------------- Count Helpers (use real tables) ----------------------------- */
-async function fetchBoostCounts(splikIds: string[]) {
+/* ----------------------------- Helpers for counts ----------------------------- */
+async function fetchHypeCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
-  if (splikIds.length === 0) return counts;
-
   try {
-    const { data, error } = await supabase
-      .from("hype_reactions") // ✅ real boosts
+    const { data } = await supabase
+      .from("boosts")
       .select("splik_id")
-      .in("splik_id", splikIds);
-    if (error) throw error;
+      .in("splik_id", ids);
 
-    (data || []).forEach((row: any) => {
-      const id = row.splik_id as string;
-      counts[id] = (counts[id] || 0) + 1;
+    (data || []).forEach((r: any) => {
+      const id = r.splik_id as string;
+      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
     });
-  } catch (error) {
-    console.error("Error fetching boost counts:", error);
-  }
+  } catch {}
   return counts;
 }
 
-async function fetchBookmarkCounts(splikIds: string[]) {
+async function fetchBookmarkCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
-  if (splikIds.length === 0) return counts;
-
   try {
-    const { data, error } = await supabase
-      .from("favorites") // ✅ real bookmarks
+    const { data } = await supabase
+      .from("bookmarks")
       .select("splik_id")
-      .in("splik_id", splikIds);
-    if (error) throw error;
+      .in("splik_id", ids);
 
-    (data || []).forEach((row: any) => {
-      const id = row.splik_id as string;
-      counts[id] = (counts[id] || 0) + 1;
+    (data || []).forEach((r: any) => {
+      const id = r.splik_id as string;
+      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
     });
-  } catch (error) {
-    console.error("Error fetching bookmark counts:", error);
-  }
+  } catch {}
   return counts;
 }
 
-async function fetchCommentCounts(splikIds: string[]) {
+async function fetchCommentCountsFor(ids: string[]) {
   const counts: Record<string, number> = {};
-  if (splikIds.length === 0) return counts;
-
   try {
-    const { data, error } = await supabase
-      .from("comments")
-      .select("splik_id")
-      .in("splik_id", splikIds);
-    if (error) throw error;
-
-    (data || []).forEach((row: any) => {
-      const id = row.splik_id as string;
-      counts[id] = (counts[id] || 0) + 1;
+    const { data } = await supabase.from("comments").select("splik_id").in("splik_id", ids);
+    (data || []).forEach((r: any) => {
+      const id = r.splik_id as string;
+      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
     });
-  } catch (error) {
-    console.error("Error fetching comment counts:", error);
-  }
+  } catch {}
   return counts;
-}
-
-async function fetchFollowerCount(userId: string) {
-  try {
-    const { count, error } = await supabase
-      .from("user_follows") // ✅ real follows
-      .select("*", { count: "exact", head: true })
-      .eq("following_id", userId);
-    if (error) throw error;
-    return count || 0;
-  } catch (error) {
-    console.error("Error fetching follower count:", error);
-    return 0;
-  }
 }
 
 /* ----------------------------- Comments Manager ----------------------------- */
 function CommentsManager({
-  open,
-  onClose,
-  splik,
-  onCountChange,
+  open, onClose, splik, onCountChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -211,7 +161,6 @@ function CommentsManager({
     if (!open) return;
     fetchComments();
 
-    // Subscribe ONLY to this post's comment inserts/deletes
     const ch = supabase
       .channel(`comments-${splik.id}`)
       .on(
@@ -242,11 +191,7 @@ function CommentsManager({
 
   const handleDelete = async (commentId: string) => {
     try {
-      const { error } = await supabase
-        .from("comments")
-        .delete()
-        .eq("id", commentId)
-        .eq("splik_id", splik.id);
+      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
       if (error) throw error;
       toast.success("Comment deleted");
     } catch (e) {
@@ -311,13 +256,11 @@ function CommentsManager({
 
 /* ----------------------------- Feed Item ----------------------------- */
 function CreatorFeedItem({
-  splik,
-  onDelete,
-  onCountChange,
+  splik, onDelete, onCommentCountAdjust,
 }: {
   splik: SplikRow;
   onDelete: (id: string) => void;
-  onCountChange: (id: string, type: "boosts" | "comments" | "bookmarks", delta: number) => void;
+  onCommentCountAdjust: (id: string, delta: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -343,20 +286,16 @@ function CreatorFeedItem({
     v.setAttribute("muted", "true");
     v.controls = false;
     v.preload = "metadata";
-    (v as any).disablePictureInPicture = true;
+    v.disablePictureInPicture = true;
     // @ts-expect-error
     v.disableRemotePlayback = true;
 
     const onLoaded = () => {
-      try {
-        v.currentTime = start;
-      } catch {}
+      try { v.currentTime = start; } catch {}
     };
     const onTimeUpdate = () => {
       if (v.currentTime >= loopEnd || v.currentTime < start) {
-        try {
-          v.currentTime = start;
-        } catch {}
+        try { v.currentTime = start; } catch {}
       }
     };
 
@@ -365,9 +304,7 @@ function CreatorFeedItem({
     return () => {
       v.removeEventListener("loadedmetadata", onLoaded);
       v.removeEventListener("timeupdate", onTimeUpdate);
-      try {
-        v.pause();
-      } catch {}
+      try { v.pause(); } catch {}
     };
   }, [isPhoto, start, loopEnd]);
 
@@ -377,17 +314,12 @@ function CreatorFeedItem({
     if (!v) return;
 
     if (isPlaying) {
-      try {
-        v.pause();
-      } catch {}
+      try { v.pause(); } catch {}
       setIsPlaying(false);
     } else {
-      try {
-        v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01));
-      } catch {}
+      try { v.currentTime = Math.max(start, Math.min(v.currentTime, loopEnd - 0.01)); } catch {}
       v.muted = isMuted;
-      if (isMuted) v.setAttribute("muted", "true");
-      else v.removeAttribute("muted");
+      if (isMuted) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
       try {
         await v.play();
         setIsPlaying(true);
@@ -405,8 +337,7 @@ function CreatorFeedItem({
     if (!v) return;
     const next = !isMuted;
     v.muted = next;
-    if (next) v.setAttribute("muted", "true");
-    else v.removeAttribute("muted");
+    if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
     setIsMuted(next);
   };
 
@@ -442,7 +373,7 @@ function CreatorFeedItem({
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-1">
                       <TrendingUp className="h-4 w-4 text-orange-400" />
-                      <span>{splik.boosts_count || 0}</span>
+                      <span>{splik.likes_count || 0}</span>
                     </div>
                     <button
                       onClick={(e) => {
@@ -471,7 +402,7 @@ function CreatorFeedItem({
                 poster={splik.thumbnail_url || undefined}
                 className="absolute inset-0 w-full h-full object-cover"
                 muted
-                playsInline
+                playsInLine
                 // @ts-expect-error
                 webkit-playsinline="true"
                 preload="metadata"
@@ -529,7 +460,7 @@ function CreatorFeedItem({
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-1">
                       <TrendingUp className="h-4 w-4 text-orange-400" />
-                      <span>{splik.boosts_count || 0}</span>
+                      <span>{splik.likes_count || 0}</span>
                     </div>
                     <button
                       onClick={(e) => {
@@ -561,7 +492,9 @@ function CreatorFeedItem({
           <h4 className="font-semibold text-white">
             {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
           </h4>
-          {splik.description && <p className="text-sm text-gray-400 mt-1">{splik.description}</p>}
+          {splik.description && (
+            <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
+          )}
           <div className="mt-2 text-xs text-gray-500">
             {new Date(splik.created_at).toLocaleDateString()}
             {!isPhoto && (
@@ -586,7 +519,7 @@ function CreatorFeedItem({
             open={showComments}
             onClose={() => setShowComments(false)}
             splik={splik}
-            onCountChange={(delta) => onCountChange(splik.id, "comments", delta)}
+            onCountChange={(delta) => onCommentCountAdjust(splik.id, delta)}
           />
         )}
       </div>
@@ -596,18 +529,21 @@ function CreatorFeedItem({
 
 /* ----------------------------- Feed ----------------------------- */
 function CreatorFeed({
-  spliks,
-  onDelete,
-  onCountChange,
+  spliks, onDelete, onCommentCountAdjust,
 }: {
   spliks: SplikRow[];
   onDelete: (id: string) => void;
-  onCountChange: (id: string, type: "boosts" | "comments" | "bookmarks", delta: number) => void;
+  onCommentCountAdjust: (id: string, delta: number) => void;
 }) {
   return (
     <div className="space-y-8">
       {spliks.map((s) => (
-        <CreatorFeedItem key={s.id} splik={s} onDelete={onDelete} onCountChange={onCountChange} />
+        <CreatorFeedItem
+          key={s.id}
+          splik={s}
+          onDelete={onDelete}
+          onCommentCountAdjust={onCommentCountAdjust}
+        />
       ))}
     </div>
   );
@@ -626,9 +562,9 @@ const CreatorDashboard = () => {
   const [stats, setStats] = useState<DashboardStats>({
     totalSpliks: 0,
     followers: 0,
-    totalBoosts: 0,
-    avgBoostsPerPost: 0,
-    totalBookmarks: 0,
+    totalBoosts: 0,  // renamed for modern look
+    avgBoostsPerPost: 0,  // renamed for modern look
+    totalBookmarks: 0,  // adding bookmarks
   });
 
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -671,9 +607,7 @@ const CreatorDashboard = () => {
 
     return () => {
       if (channelCleanup.current) {
-        try {
-          channelCleanup.current();
-        } catch {}
+        try { channelCleanup.current(); } catch {}
         channelCleanup.current = null;
       }
     };
@@ -683,25 +617,28 @@ const CreatorDashboard = () => {
   /* ---------------------------- Realtime ---------------------------- */
   const setupRealtime = (uid: string) => {
     if (channelCleanup.current) {
-      try {
-        channelCleanup.current();
-      } catch {}
+      try { channelCleanup.current(); } catch {}
       channelCleanup.current = null;
     }
 
     const ch = supabase
-      .channel("creator-dashboard-realtime")
-      // Spliks changes (only current user's posts)
+      .channel("creator-dashboard")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
         (payload) => {
           const row = payload.new as SplikRow;
-          setSpliks((prev) => [
-            { ...row, boosts_count: 0, comments_count: 0, bookmarks_count: 0 },
-            ...prev,
-          ]);
-          updateStats();
+          setSpliks((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
+          recomputeStatsFromList((prev) => [{ ...row, profile: prev[0]?.profile ?? null }, ...prev]);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "spliks", filter: `user_id=eq.${uid}` },
+        (payload) => {
+          const row = payload.new as SplikRow;
+          setSpliks((prev) => prev.map((s) => (s.id === row.id ? { ...s, ...row } : s)));
+          recomputeStatsFromList((prev) => prev.map((s) => (s.id === row.id ? { ...s, ...row } : s)));
         }
       )
       .on(
@@ -710,113 +647,110 @@ const CreatorDashboard = () => {
         (payload) => {
           const deletedId = (payload.old as any)?.id as string;
           setSpliks((prev) => prev.filter((s) => s.id !== deletedId));
-          updateStats();
+          recomputeStatsFromList((prev) => prev.filter((s) => s.id !== deletedId));
         }
       )
-      // Boost (hype) changes
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "hype_reactions" },
-        (payload) => {
-          const boost = payload.new as any;
-          setSpliks((prev) =>
-            prev.map((s) =>
-              s.id === boost.splik_id ? { ...s, boosts_count: (s.boosts_count || 0) + 1 } : s
-            )
-          );
-          updateStats();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "hype_reactions" },
-        (payload) => {
-          const boost = payload.old as any;
-          setSpliks((prev) =>
-            prev.map((s) =>
-              s.id === boost.splik_id
-                ? { ...s, boosts_count: Math.max(0, (s.boosts_count || 0) - 1) }
-                : s
-            )
-          );
-          updateStats();
-        }
-      )
-      // Bookmark changes
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "favorites" },
-        (payload) => {
-          const bookmark = payload.new as any;
-          setSpliks((prev) =>
-            prev.map((s) =>
-              s.id === bookmark.splik_id
-                ? { ...s, bookmarks_count: (s.bookmarks_count || 0) + 1 }
-                : s
-            )
-          );
-          updateStats();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "favorites" },
-        (payload) => {
-          const bookmark = payload.old as any;
-          setSpliks((prev) =>
-            prev.map((s) =>
-              s.id === bookmark.splik_id
-                ? { ...s, bookmarks_count: Math.max(0, (s.bookmarks_count || 0) - 1) }
-                : s
-            )
-          );
-          updateStats();
-        }
-      )
-      // Comment changes
+      // comments live updates
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "comments" },
         (payload) => {
-          const comment = payload.new as any;
-          setSpliks((prev) =>
-            prev.map((s) =>
-              s.id === comment.splik_id
-                ? { ...s, comments_count: (s.comments_count || 0) + 1 }
-                : s
-            )
-          );
-          updateStats();
+          const sid = (payload.new as any).splik_id as string;
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            const next = prev.map((s) =>
+              s.id === sid ? { ...s, comments_count: (s.comments_count ?? 0) + 1 } : s
+            );
+            return next;
+          });
+          recomputeStatsFromList((prev) => prev);
         }
       )
       .on(
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "comments" },
         (payload) => {
-          const comment = payload.old as any;
-          setSpliks((prev) =>
-            prev.map((s) =>
-              s.id === comment.splik_id
-                ? { ...s, comments_count: Math.max(0, (s.comments_count || 0) - 1) }
+          const sid = (payload.old as any).splik_id as string;
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            const next = prev.map((s) =>
+              s.id === sid ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) - 1) } : s
+            );
+            return next;
+          });
+          recomputeStatsFromList((prev) => prev);
+        }
+      )
+      // boosts live updates (your actual current table)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "boosts" },
+        (payload) => {
+          const sid = (payload.new as any).splik_id as string;
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            return prev.map((s) =>
+              s.id === sid ? { ...s, likes_count: (s.likes_count ?? 0) + 1 } : s
+            );
+          });
+          recomputeStatsFromList((prev) => prev);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "boosts" },
+        (payload) => {
+          const sid = (payload.old as any).splik_id as string;
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            return prev.map((s) =>
+              s.id === sid
+                ? { ...s, likes_count: Math.max(0, (s.likes_count ?? 0) - 1) }
                 : s
-            )
-          );
-          updateStats();
+            );
+          });
+          recomputeStatsFromList((prev) => prev);
         }
       )
-      // Follower changes for this user
+      // bookmarks live updates (your actual current table)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
-        () => {
-          setStats((prev) => ({ ...prev, followers: prev.followers + 1 }));
+        { event: "INSERT", schema: "public", table: "bookmarks" },
+        (payload) => {
+          const sid = (payload.new as any).splik_id as string;
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            return prev.map((s) =>
+              s.id === sid ? { ...s, bookmarks_count: (s.bookmarks_count ?? 0) + 1 } : s
+            );
+          });
+          recomputeStatsFromList((prev) => prev);
         }
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "user_follows", filter: `following_id=eq.${uid}` },
-        () => {
-          setStats((prev) => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
+        { event: "DELETE", schema: "public", table: "bookmarks" },
+        (payload) => {
+          const sid = (payload.old as any).splik_id as string;
+          setSpliks((prev) => {
+            if (!prev.find((s) => s.id === sid)) return prev;
+            return prev.map((s) =>
+              s.id === sid
+                ? { ...s, bookmarks_count: Math.max(0, (s.bookmarks_count ?? 0) - 1) }
+                : s
+            );
+          });
+          recomputeStatsFromList((prev) => prev);
+        }
+      )
+      // profile updates
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${uid}` },
+        (payload) => {
+          const p = payload.new as Profile;
+          setProfile(p);
+          updateStatsFromProfile(p);
         }
       )
       .subscribe();
@@ -827,11 +761,7 @@ const CreatorDashboard = () => {
   /* ----------------------------- Fetchers ----------------------------- */
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userId)
-        .single();
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
       if (error) throw error;
 
       setProfile(data as Profile);
@@ -841,6 +771,7 @@ const CreatorDashboard = () => {
         bio: data.bio || "",
         avatar_url: data.avatar_url || "",
       });
+      updateStatsFromProfile(data as Profile);
     } catch (e) {
       console.error("Error fetching profile:", e);
     }
@@ -855,85 +786,84 @@ const CreatorDashboard = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
 
-      const splikIds = (rows || []).map((r: any) => r.id as string);
-
-      // Fetch all counts in parallel
-      const [boostCounts, bookmarkCounts, commentCounts] = await Promise.all([
-        fetchBoostCounts(splikIds),
-        fetchBookmarkCounts(splikIds),
-        fetchCommentCounts(splikIds),
+      const ids = (rows || []).map((r: any) => r.id as string);
+      const [hypeCounts, commentCounts, bookmarkCounts] = await Promise.all([
+        fetchHypeCountsFor(ids),
+        fetchCommentCountsFor(ids),
+        fetchBookmarkCountsFor(ids),
       ]);
+
+      let prof: Profile | null = null;
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("username, display_name, avatar_url")
+          .eq("id", userId)
+          .single();
+        prof = (data as any) || null;
+      } catch {}
 
       const merged: SplikRow[] = (rows || []).map((r: any) => ({
         ...(r as SplikRow),
-        boosts_count: boostCounts[r.id] || 0,
-        bookmarks_count: bookmarkCounts[r.id] || 0,
-        comments_count: commentCounts[r.id] || 0,
+        profile: prof,
+        likes_count: hypeCounts[r.id] ?? 0,
+        comments_count: commentCounts[r.id] ?? 0,
+        bookmarks_count: bookmarkCounts[r.id] ?? 0,
       }));
 
       setSpliks(merged);
-      updateStats();
+      recomputeStatsFromList(merged);
     } catch (e) {
       console.error("Error fetching posts:", e);
     }
   };
 
-  /* ----------------------------- Stats calculation ----------------------------- */
-  const updateStats = async () => {
-    if (!currentUserId) return;
-
-    try {
-      const followerCount = await fetchFollowerCount(currentUserId);
-
-      setSpliks((currentSpliks) => {
-        const totalSpliks = currentSpliks.length;
-        const totalBoosts = currentSpliks.reduce((acc, s) => acc + (s.boosts_count || 0), 0);
-        const totalBookmarks = currentSpliks.reduce((acc, s) => acc + (s.bookmarks_count || 0), 0);
-        const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
-
-        setStats({
-          totalSpliks,
-          followers: followerCount,
-          totalBoosts,
-          avgBoostsPerPost,
-          totalBookmarks,
-        });
-
-        return currentSpliks;
-      });
-    } catch (error) {
-      console.error("Error updating stats:", error);
-    }
+  /* ------------------------- Stats helpers ------------------------- */
+  const updateStatsFromProfile = (p: Profile) => {
+    setStats((prev) => ({
+      ...prev,
+      followers: p.followers_count ?? 0,
+      totalSpliks: p.spliks_count ?? 0,
+    }));
   };
 
-  /* ----------------------------- Event handlers ----------------------------- */
-  const handleCountChange = (
-    splikId: string,
-    type: "boosts" | "comments" | "bookmarks",
-    delta: number
+  const recomputeStatsFromList = (
+    listOrUpdater: SplikRow[] | ((prev: SplikRow[]) => SplikRow[])
   ) => {
+    setSpliks((prev) => {
+      const list = typeof listOrUpdater === "function" ? (listOrUpdater as any)(prev) : listOrUpdater;
+      const totalBoosts = list.reduce((acc, s) => acc + (s.likes_count || 0), 0) || 0; // hype = boost
+      const totalBookmarks = list.reduce((acc, s) => acc + (s.bookmarks_count || 0), 0) || 0;
+      const totalSpliks = list.length;
+      const avgBoostsPerPost = totalSpliks > 0 ? Math.round(totalBoosts / totalSpliks) : 0;
+
+      setStats((st) => ({
+        ...st,
+        totalSpliks,
+        totalBoosts,
+        avgBoostsPerPost,
+        totalBookmarks,
+      }));
+      return list;
+    });
+  };
+
+  /* ------------------------- Comments count adjust ------------------------- */
+  const handleCommentCountAdjust = (splikId: string, delta: number) => {
     setSpliks((prev) =>
       prev.map((s) =>
-        s.id === splikId
-          ? ({
-              ...s,
-              [`${type}_count`]: Math.max(0, ((s as any)[`${type}_count`] || 0) + delta),
-            } as SplikRow)
-          : s
+        s.id === splikId ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) + delta) } : s
       )
     );
-    updateStats();
+    recomputeStatsFromList((prev) => prev);
   };
 
+  /* ------------------------- Delete post ------------------------- */
   const handleDeleteVideo = async (videoId: string) => {
     if (!currentUserId) return;
 
     try {
-      const { error } = await supabase
-        .from("spliks")
-        .delete()
-        .eq("id", videoId)
-        .eq("user_id", currentUserId);
+      const { error } = await supabase.from("spliks").delete().eq("id", videoId).eq("user_id", currentUserId);
       if (error) throw error;
       toast.success("Post deleted successfully");
     } catch (error) {
@@ -942,6 +872,7 @@ const CreatorDashboard = () => {
     }
   };
 
+  /* ------------------------- Profile update ------------------------- */
   const handleProfileUpdate = async () => {
     if (!currentUserId) return;
     try {
@@ -972,13 +903,10 @@ const CreatorDashboard = () => {
     if (!currentUserId || !profile) return;
     const newValue = !profile[field];
     try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ [field]: newValue })
-        .eq("id", currentUserId);
+      const { error } = await supabase.from("profiles").update({ [field]: newValue }).eq("id", currentUserId);
       if (error) throw error;
 
-      setProfile({ ...(profile as Profile), [field]: newValue } as Profile);
+      setProfile({ ...profile, [field]: newValue });
       toast.success(`${field === "followers_private" ? "Followers" : "Following"} privacy updated`);
     } catch (e) {
       console.error("Error updating privacy settings", e);
@@ -1160,10 +1088,14 @@ const CreatorDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* Posts Feed */}
+          {/* Posts — FEED STYLE */}
           <TabsContent value="videos" className="mt-8">
             {spliks.length > 0 ? (
-              <CreatorFeed spliks={spliks} onDelete={handleDeleteVideo} onCountChange={handleCountChange} />
+              <CreatorFeed
+                spliks={spliks}
+                onDelete={handleDeleteVideo}
+                onCommentCountAdjust={handleCommentCountAdjust}
+              />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
                 <Video className="h-16 w-16 mx-auto text-gray-600 mb-6" />
@@ -1182,9 +1114,7 @@ const CreatorDashboard = () => {
             <Card className="bg-gray-900 border-gray-800">
               <CardHeader>
                 <CardTitle className="text-white">Performance Overview</CardTitle>
-                <CardDescription className="text-gray-400">
-                  Track your content performance and growth
-                </CardDescription>
+                <CardDescription className="text-gray-400">Track your content performance and growth</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1193,29 +1123,23 @@ const CreatorDashboard = () => {
                       <p className="text-sm text-gray-400">Total Boosts</p>
                       <p className="text-2xl font-bold text-white">{stats.totalBoosts}</p>
                     </div>
-                    <Badge variant="secondary" className="bg-orange-900 text-orange-300">
-                      Live
-                    </Badge>
+                    <Badge variant="secondary" className="bg-orange-900 text-orange-300">Live</Badge>
                   </div>
-
+                  
                   <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
                     <div>
                       <p className="text-sm text-gray-400">Total Bookmarks</p>
                       <p className="text-2xl font-bold text-white">{stats.totalBookmarks}</p>
                     </div>
-                    <Badge variant="secondary" className="bg-blue-900 text-blue-300">
-                      Live
-                    </Badge>
+                    <Badge variant="secondary" className="bg-blue-900 text-blue-300">Live</Badge>
                   </div>
-
+                  
                   <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg">
                     <div>
                       <p className="text-sm text-gray-400">Followers</p>
                       <p className="text-2xl font-bold text-white">{stats.followers}</p>
                     </div>
-                    <Badge variant="secondary" className="bg-green-900 text-green-300">
-                      Live
-                    </Badge>
+                    <Badge variant="secondary" className="bg-green-900 text-green-300">Live</Badge>
                   </div>
                 </div>
 
@@ -1240,15 +1164,11 @@ const CreatorDashboard = () => {
                         value={formData.avatar_url || profile?.avatar_url}
                         onChange={(url) => setFormData((f) => ({ ...f, avatar_url: url }))}
                       />
-                      <p className="text-xs text-gray-500 mt-2">
-                        JPG/PNG recommended. We'll compress for faster loading.
-                      </p>
+                      <p className="text-xs text-gray-500 mt-2">JPG/PNG recommended. We'll compress for faster loading.</p>
                     </div>
 
                     <div>
-                      <Label htmlFor="username" className="text-gray-300">
-                        Username
-                      </Label>
+                      <Label htmlFor="username" className="text-gray-300">Username</Label>
                       <Input
                         id="username"
                         value={formData.username}
@@ -1259,9 +1179,7 @@ const CreatorDashboard = () => {
                     </div>
 
                     <div>
-                      <Label htmlFor="display_name" className="text-gray-300">
-                        Display Name
-                      </Label>
+                      <Label htmlFor="display_name" className="text-gray-300">Display Name</Label>
                       <Input
                         id="display_name"
                         value={formData.display_name}
@@ -1272,9 +1190,7 @@ const CreatorDashboard = () => {
                     </div>
 
                     <div>
-                      <Label htmlFor="bio" className="text-gray-300">
-                        Bio
-                      </Label>
+                      <Label htmlFor="bio" className="text-gray-300">Bio</Label>
                       <Textarea
                         id="bio"
                         value={formData.bio}
