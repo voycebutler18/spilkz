@@ -141,8 +141,9 @@ export default function SplikCard({
 
       try {
         if (initialIsSaved === undefined) {
+          // ✅ Updated to use new bookmarks table instead of favorites
           const { count } = await supabase
-            .from("favorites")
+            .from("bookmarks")
             .select("id", { head: true, count: "exact" })
             .eq("user_id", user.id)
             .eq("splik_id", splik.id);
@@ -150,18 +151,20 @@ export default function SplikCard({
         }
 
         if (initialHasHyped === undefined) {
-          const { data: hypeRow } = await supabase
-            .from("hype_reactions")
+          // ✅ Updated to use new boosts table instead of hype_reactions
+          const { data: boostRow } = await supabase
+            .from("boosts")
             .select("id")
             .eq("user_id", user.id)
             .eq("splik_id", splik.id)
             .maybeSingle();
-          if (!cancelled) setHasHyped(!!hypeRow);
+          if (!cancelled) setHasHyped(!!boostRow);
         }
 
         if (initialHypeCount === undefined && splik.hype_count == null) {
+          // ✅ Updated to count from boosts table
           const { count } = await supabase
-            .from("hype_reactions")
+            .from("boosts")
             .select("id", { head: true, count: "exact" })
             .eq("splik_id", splik.id);
           if (!cancelled) setHypeCount(count ?? 0);
@@ -287,17 +290,19 @@ export default function SplikCard({
         // optimistic
         setHasHyped(false);
         setHypeCount((n) => Math.max(0, n - 1));
+        // ✅ Updated to use new boosts table
         await supabase
-          .from("hype_reactions")
+          .from("boosts")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
       } else {
         setHasHyped(true);
         setHypeCount((n) => n + 1);
+        // ✅ Updated to use new boosts table
         await supabase
-          .from("hype_reactions")
-          .insert({ splik_id: splik.id, user_id: u.id, amount: 1 });
+          .from("boosts")
+          .insert({ splik_id: splik.id, user_id: u.id });
       }
     } catch {
       /* ignore; UI already rolled */
@@ -309,15 +314,17 @@ export default function SplikCard({
       const u = await ensureAuth();
       if (isSaved) {
         setIsSaved(false);
+        // ✅ Updated to use new bookmarks table
         await supabase
-          .from("favorites")
+          .from("bookmarks")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
       } else {
         setIsSaved(true);
+        // ✅ Updated to use new bookmarks table
         await supabase
-          .from("favorites")
+          .from("bookmarks")
           .insert([{ splik_id: splik.id, user_id: u.id }], {
             onConflict: "user_id,splik_id",
             ignoreDuplicates: true,
@@ -463,7 +470,7 @@ export default function SplikCard({
             />
           )}
 
-          {/* Hype */}
+          {/* ✅ Boost (renamed from Hype) */}
           <Button
             variant={hasHyped ? "default" : "outline"}
             size="sm"
@@ -473,28 +480,30 @@ export default function SplikCard({
             )}
             onClick={toggleHype}
             aria-pressed={hasHyped}
+            title="Boost this content"
           >
             <Flame className={cn("h-4 w-4", hasHyped && "text-white")} />
             {hypeCount}
           </Button>
 
-          {/* Save */}
+          {/* ✅ Bookmark (renamed from Save) */}
           <Button
             variant="outline"
             size="sm"
             className="gap-2"
             onClick={toggleSave}
             aria-pressed={isSaved}
+            title="Bookmark this content"
           >
             {isSaved ? (
               <>
                 <BookmarkCheck className="h-4 w-4" />
-                Saved
+                Bookmarked
               </>
             ) : (
               <>
                 <Bookmark className="h-4 w-4" />
-                Save
+                Bookmark
               </>
             )}
           </Button>
