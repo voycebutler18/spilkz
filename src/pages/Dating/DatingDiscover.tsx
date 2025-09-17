@@ -680,15 +680,23 @@ const DatingDiscover: React.FC = () => {
                   </div>
                 </div>
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setProfileOpen(true)}
-                  title="View full profile"
-                  className="absolute bottom-4 right-4 text-white/80 hover:text-white hover:bg-white/10"
-                >
-                  <Info className="h-4 w-4" />
-                </Button>
+                {/* Tap to view more indicator */}
+                <div className="absolute bottom-20 left-0 right-0 flex justify-center">
+                  <Button
+                    onClick={() => setProfileOpen(true)}
+                    className="bg-black/60 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium transition-all"
+                  >
+                    <Info className="h-4 w-4 mr-2" />
+                    View full profile
+                  </Button>
+                </div>
+
+                {/* Subtle tap hint */}
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                  <div className="bg-black/40 backdrop-blur-sm border border-white/20 rounded-full px-3 py-1 text-white/70 text-xs animate-pulse">
+                    Tap to see more
+                  </div>
+                </div>
               </div>
             </Card>
 
