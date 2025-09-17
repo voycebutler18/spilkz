@@ -1,24 +1,24 @@
 // src/pages/Dating/DatingDiscover.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { 
-  Heart, 
-  X, 
-  MapPin, 
-  Play, 
-  Sparkles, 
-  Loader2, 
+import {
+  Heart,
+  X,
+  MapPin,
+  Play,
+  Sparkles,
+  Loader2,
   Settings,
   MessageCircle,
   Star,
   Info,
   ChevronLeft,
   Filter,
-  Zap
+  Zap,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -31,18 +31,81 @@ type DatingProfile = {
   photos: string[];
   video_intro_url: string | null;
   city: string | null;
-  gender: string;
-  distance?: number; // km away
+  gender: string | null;
+  location_lat?: number | null;
+  location_lng?: number | null;
+  distance?: number; // km, computed client-side
+};
+
+type MyProfile = {
+  user_id: string;
+  seeking: string[] | null;
+  max_distance: number | null;
+  min_age: number | null;
+  max_age: number | null;
+  location_lat: number | null;
+  location_lng: number | null;
 };
 
 const SEEKING_OPTIONS = [
   "Men",
-  "Women", 
+  "Women",
   "Non-binary folks",
   "Trans men",
   "Trans women",
   "Everyone",
 ];
+
+const labelForGender = (g: string | null | undefined) => {
+  const v = (g || "").toLowerCase();
+  if (v === "man" || v === "male" || v === "m" || v === "men") return "Men";
+  if (v === "woman" || v === "female" || v === "f" || v === "women") return "Women";
+  if (v === "non-binary" || v === "nonbinary" || v === "nb") return "Non-binary folks";
+  if (v === "trans man" || v === "trans-man" || v === "trans_men" || v === "trans men") return "Trans men";
+  if (v === "trans woman" || v === "trans-woman" || v === "trans_women" || v === "trans women") return "Trans women";
+  return "Everyone";
+};
+
+const kmDistance = (
+  lat1?: number | null,
+  lon1?: number | null,
+  lat2?: number | null,
+  lon2?: number | null
+) => {
+  if (
+    lat1 == null ||
+    lon1 == null ||
+    lat2 == null ||
+    lon2 == null ||
+    isNaN(lat1) ||
+    isNaN(lon1) ||
+    isNaN(lat2) ||
+    isNaN(lon2)
+  )
+    return undefined;
+
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371; // km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+};
+
+const matchesSeeking = (mySeeking: string[] | null | undefined, theirGender: string | null) => {
+  if (!mySeeking || mySeeking.length === 0) return true;
+  if (mySeeking.includes("Everyone")) return true;
+  const gLabel = labelForGender(theirGender);
+  return mySeeking.includes(gLabel);
+};
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 const DatingDiscover: React.FC = () => {
   const navigate = useNavigate();
@@ -54,229 +117,328 @@ const DatingDiscover: React.FC = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [actionInProgress, setActionInProgress] = useState(false);
 
-  // Preferences state
+  // My profile + preferences
+  const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [seeking, setSeeking] = useState<string[]>([]);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [maxDistance, setMaxDistance] = useState(50);
-  const [ageRange, setAgeRange] = useState([18, 50]);
+  const [ageRange, setAgeRange] = useState<[number, number]>([18, 50]);
 
-  // Card interaction state
-  const [cardStyle, setCardStyle] = useState<any>({});
-  const [isDragging, setIsDragging] = useState(false);
+  // Drag / swipe state
+  const [cardStyle, setCardStyle] = useState<React.CSSProperties>({});
+  const isDraggingRef = useRef(false);
+  const startXRef = useRef(0);
 
-  // Fetch current user and their dating profile
+  // ─────────────────────────────────────────────
+  // Init: gate + load my profile + fetch candidates
+  // ─────────────────────────────────────────────
   useEffect(() => {
-    const initializeUser = async () => {
+    let alive = true;
+
+    (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         navigate("/login", { replace: true });
         return;
       }
-      
+      if (!alive) return;
+
       setCurrentUser(user);
 
-      // Check if user has dating profile
+      // MUST have dating profile, otherwise go onboard
       const { data: profile, error } = await supabase
-        .from('dating_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+        .from("dating_profiles")
+        .select(
+          "user_id,seeking,max_distance,min_age,max_age,location_lat,location_lng"
+        )
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      if (error || !profile) {
+      if (error) console.error(error);
+
+      if (!profile) {
         navigate("/dating/onboarding", { replace: true });
         return;
       }
 
-      // Load user preferences
-      setSeeking(profile.seeking || []);
-      setMaxDistance(profile.max_distance || 50);
-      setAgeRange([profile.min_age || 18, profile.max_age || 50]);
+      const mine: MyProfile = {
+        user_id: profile.user_id,
+        seeking: profile.seeking ?? [],
+        max_distance: profile.max_distance ?? 50,
+        min_age: profile.min_age ?? 18,
+        max_age: profile.max_age ?? 50,
+        location_lat: profile.location_lat ?? null,
+        location_lng: profile.location_lng ?? null,
+      };
 
-      // Fetch potential matches
-      await fetchMatches(user.id);
+      setMyProfile(mine);
+      setSeeking(mine.seeking || []);
+      setMaxDistance(mine.max_distance || 50);
+      setAgeRange([mine.min_age || 18, mine.max_age || 50]);
+
+      await fetchMatches(user.id, mine);
+      if (!alive) return;
       setLoading(false);
-    };
+    })();
 
-    initializeUser();
+    return () => {
+      alive = false;
+    };
   }, [navigate]);
 
-  // Fetch potential matches
-  const fetchMatches = async (userId: string) => {
+  // ─────────────────────────────────────────────
+  // Fetch candidates (RPC if present → fallback)
+  // ─────────────────────────────────────────────
+  const fetchMatches = async (userId: string, mine: MyProfile) => {
     try {
-      // This would call your database function to get potential matches
-      // For now, simulating with a direct query
-      const { data, error } = await supabase
-        .from('dating_profiles')
-        .select('*')
-        .neq('user_id', userId)
-        .eq('is_active', true)
-        .limit(20);
+      // First, get already actioned users (like OR pass)
+      const { data: actions } = await supabase
+        .from("dating_likes")
+        .select("liked_id,action")
+        .eq("liker_id", userId);
 
-      if (error) throw error;
+      const excludeIds = new Set((actions || []).map((a: any) => a.liked_id));
 
-      // Filter out users we've already liked/passed
-      const { data: previousActions } = await supabase
-        .from('dating_likes')
-        .select('liked_id')
-        .eq('liker_id', userId);
+      // Try RPC if you've created it (dating_candidates)
+      let rows: any[] | null = null;
+      try {
+        const { data, error } = await supabase.rpc("dating_candidates", {
+          p_user_id: userId,
+          p_limit: 50,
+        });
+        if (!error && Array.isArray(data)) {
+          rows = data as any[];
+        }
+      } catch {
+        // Ignore RPC failure; we’ll fallback below
+      }
 
-      const actionedUserIds = previousActions?.map(a => a.liked_id) || [];
-      const filteredProfiles = (data || []).filter(
-        profile => !actionedUserIds.includes(profile.user_id)
-      );
+      if (!rows) {
+        // Fallback: pull from dating_profiles (active only), exclude me
+        const { data, error } = await supabase
+          .from("dating_profiles")
+          .select(
+            "user_id,name,age,bio,photos,video_intro_url,city,gender,location_lat,location_lng,is_active"
+          )
+          .eq("is_active", true)
+          .neq("user_id", userId)
+          .limit(100);
 
-      setProfiles(filteredProfiles as DatingProfile[]);
-    } catch (error) {
-      console.error('Error fetching matches:', error);
+        if (error) throw error;
+        rows = data || [];
+      }
+
+      // Client-side filters: seeking, age range, distance, exclude actioned
+      const filtered = rows
+        .filter((r) => !excludeIds.has(r.user_id))
+        .filter((r) => {
+          const age = Number(r.age) || 0;
+          if (age < (mine.min_age || 18) || age > (mine.max_age || 50)) return false;
+          return matchesSeeking(mine.seeking, r.gender);
+        })
+        .map((r) => {
+          const dist = kmDistance(
+            mine.location_lat,
+            mine.location_lng,
+            r.location_lat,
+            r.location_lng
+          );
+          return { ...r, distance: dist } as DatingProfile;
+        })
+        .filter((r) => {
+          if (mine.location_lat == null || mine.location_lng == null) return true;
+          if (r.distance == null) return true; // keep if unknown
+          return r.distance <= (mine.max_distance || 50);
+        });
+
+      // Nice ordering: closest first, then with video/photo first
+      filtered.sort((a, b) => {
+        const av = a.video_intro_url ? 0 : 1;
+        const bv = b.video_intro_url ? 0 : 1;
+        if (av !== bv) return av - bv;
+        const ap = a.photos?.length ? 0 : 1;
+        const bp = b.photos?.length ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        const ad = a.distance ?? 99999;
+        const bd = b.distance ?? 99999;
+        return ad - bd;
+      });
+
+      setProfiles(filtered);
+      setCurrentIndex(0);
+    } catch (err) {
+      console.error("Error fetching matches:", err);
       toast({
         title: "Error loading matches",
         description: "Please try refreshing the page.",
-        variant: "destructive"
+        variant: "destructive",
       });
     }
   };
 
-  // Handle swipe action
-  const handleAction = async (action: 'like' | 'pass') => {
-    if (actionInProgress || currentIndex >= profiles.length) return;
-    
+  // ─────────────────────────────────────────────
+  // Actions: like / pass (+ mutual like check)
+  // ─────────────────────────────────────────────
+  const handleAction = async (action: "like" | "pass") => {
+    if (actionInProgress || currentIndex >= profiles.length || !currentUser) return;
+
     setActionInProgress(true);
-    const currentProfile = profiles[currentIndex];
+    const current = profiles[currentIndex];
 
     try {
-      // Record the action
-      const { error } = await supabase
-        .from('dating_likes')
-        .insert({
-          liker_id: currentUser.id,
-          liked_id: currentProfile.user_id,
-          action: action
-        });
-
+      const { error } = await supabase.from("dating_likes").insert({
+        liker_id: currentUser.id,
+        liked_id: current.user_id,
+        action,
+      });
       if (error) throw error;
 
-      // Check for mutual like
-      if (action === 'like') {
-        const { data: mutualLike } = await supabase
-          .from('dating_likes')
-          .select('id')
-          .eq('liker_id', currentProfile.user_id)
-          .eq('liked_id', currentUser.id)
-          .eq('action', 'like')
-          .single();
+      if (action === "like") {
+        const { data: back } = await supabase
+          .from("dating_likes")
+          .select("id")
+          .eq("liker_id", current.user_id)
+          .eq("liked_id", currentUser.id)
+          .eq("action", "like")
+          .maybeSingle();
 
-        if (mutualLike) {
+        if (back) {
           toast({
             title: "It's a Match! 🎉",
-            description: `You and ${currentProfile.name} liked each other!`,
+            description: `You and ${current.name} liked each other`,
           });
-          // Could open match modal here
+          // Optional: open match modal / navigate to hearts
         }
       }
 
-      // Move to next profile
-      setCurrentIndex(prev => prev + 1);
+      setCurrentIndex((i) => i + 1);
       setCardStyle({});
-      
-    } catch (error) {
-      console.error('Error processing action:', error);
+    } catch (err) {
+      console.error("Error processing action:", err);
       toast({
         title: "Something went wrong",
         description: "Please try again.",
-        variant: "destructive"
+        variant: "destructive",
       });
     } finally {
       setActionInProgress(false);
     }
   };
 
-  // Handle mouse/touch events for drag gesture
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    const startX = e.clientX;
-    
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      const deltaX = e.clientX - startX;
-      const rotation = deltaX * 0.1;
-      const opacity = Math.abs(deltaX) > 100 ? 0.7 : 1;
-      
+  // ─────────────────────────────────────────────
+  // Drag/swipe (mouse + touch) + keyboard
+  // ─────────────────────────────────────────────
+  const handleStart = (clientX: number) => {
+    isDraggingRef.current = true;
+    startXRef.current = clientX;
+    setCardStyle((s) => ({ ...s, transition: "none" }));
+  };
+  const handleMove = (clientX: number) => {
+    if (!isDraggingRef.current) return;
+    const deltaX = clientX - startXRef.current;
+    const rotation = deltaX * 0.08;
+    const opacity = Math.min(1, 1 - Math.min(Math.abs(deltaX) / 1000, 0.3));
+    setCardStyle({
+      transform: `translateX(${deltaX}px) rotate(${rotation}deg)`,
+      opacity,
+      transition: "none",
+      cursor: "grabbing",
+    });
+  };
+  const handleEnd = (clientX: number) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    const deltaX = clientX - startXRef.current;
+
+    if (Math.abs(deltaX) > 120) {
+      if (deltaX > 0) handleAction("like");
+      else handleAction("pass");
+    } else {
       setCardStyle({
-        transform: `translateX(${deltaX}px) rotate(${rotation}deg)`,
-        opacity: opacity,
-        transition: 'none'
+        transform: "translateX(0px) rotate(0deg)",
+        opacity: 1,
+        transition: "all 0.25s ease-out",
+        cursor: "grab",
       });
-    };
-    
-    const handleMouseUp = (e: MouseEvent) => {
-      const deltaX = e.clientX - startX;
-      setIsDragging(false);
-      
-      if (Math.abs(deltaX) > 100) {
-        // Trigger action based on direction
-        if (deltaX > 0) {
-          handleAction('like');
-        } else {
-          handleAction('pass');
-        }
-      } else {
-        // Snap back to center
-        setCardStyle({
-          transform: 'translateX(0px) rotate(0deg)',
-          opacity: 1,
-          transition: 'all 0.3s ease-out'
-        });
-      }
-      
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-    
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    }
   };
 
+  const onMouseDown = (e: React.MouseEvent) => handleStart(e.clientX);
+  const onMouseMove = (e: React.MouseEvent) => handleMove(e.clientX);
+  const onMouseUp = (e: React.MouseEvent) => handleEnd(e.clientX);
+  const onMouseLeave = (e: React.MouseEvent) => {
+    if (isDraggingRef.current) handleEnd(e.clientX);
+  };
+
+  const onTouchStart = (e: React.TouchEvent) => handleStart(e.touches[0].clientX);
+  const onTouchMove = (e: React.TouchEvent) => handleMove(e.touches[0].clientX);
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const t = e.changedTouches[0];
+    handleEnd(t?.clientX ?? startXRef.current);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") handleAction("pass");
+      if (e.key === "ArrowRight") handleAction("like");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [profiles, currentIndex, actionInProgress]); // deps ok
+
+  // ─────────────────────────────────────────────
   // Save preferences
+  // ─────────────────────────────────────────────
   const savePreferences = async () => {
     if (!currentUser) return;
     setSavingPrefs(true);
-    
+
     try {
       const { error } = await supabase
-        .from('dating_profiles')
+        .from("dating_profiles")
         .update({
-          seeking: seeking,
+          seeking,
           max_distance: maxDistance,
           min_age: ageRange[0],
-          max_age: ageRange[1]
+          max_age: ageRange[1],
         })
-        .eq('user_id', currentUser.id);
+        .eq("user_id", currentUser.id);
 
       if (error) throw error;
-      
+
       setPrefsOpen(false);
       toast({
         title: "Preferences saved",
         description: "Your matching preferences have been updated.",
       });
-      
-      // Refresh matches with new criteria
-      await fetchMatches(currentUser.id);
-      setCurrentIndex(0);
-      
-    } catch (error) {
-      console.error('Error saving preferences:', error);
+
+      if (myProfile) {
+        const updated: MyProfile = {
+          ...myProfile,
+          seeking,
+          max_distance: maxDistance,
+          min_age: ageRange[0],
+          max_age: ageRange[1],
+        };
+        setMyProfile(updated);
+        await fetchMatches(currentUser.id, updated);
+      }
+    } catch (err) {
+      console.error("Error saving preferences:", err);
       toast({
         title: "Error saving preferences",
         description: "Please try again.",
-        variant: "destructive"
+        variant: "destructive",
       });
     } finally {
       setSavingPrefs(false);
     }
   };
 
+  // ─────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-black to-fuchsia-900 flex items-center justify-center">
@@ -284,15 +446,15 @@ const DatingDiscover: React.FC = () => {
           <Loader2 className="h-12 w-12 animate-spin text-fuchsia-500" />
           <div className="text-center">
             <h2 className="text-xl font-semibold mb-2">Finding your matches</h2>
-            <p className="text-zinc-400">Looking for amazing people nearby...</p>
+            <p className="text-zinc-400">Looking for amazing people nearby…</p>
           </div>
         </div>
       </div>
     );
   }
 
-  const currentProfile = profiles[currentIndex];
   const hasProfiles = currentIndex < profiles.length;
+  const currentProfile = hasProfiles ? profiles[currentIndex] : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-black to-fuchsia-900">
@@ -312,7 +474,9 @@ const DatingDiscover: React.FC = () => {
               <div>
                 <h1 className="text-xl font-bold text-white">Discover</h1>
                 <p className="text-sm text-zinc-400">
-                  {hasProfiles ? `${profiles.length - currentIndex} profiles remaining` : 'All caught up!'}
+                  {hasProfiles
+                    ? `${profiles.length - currentIndex} profiles remaining`
+                    : "All caught up!"}
                 </p>
               </div>
             </div>
@@ -327,15 +491,15 @@ const DatingDiscover: React.FC = () => {
                 <Filter className="h-4 w-4 mr-2" />
                 Filters
               </Button>
-              
-              <Link to="/dating/matches">
-                <Button 
-                  variant="outline" 
+
+              <Link to="/dating/hearts">
+                <Button
+                  variant="outline"
                   size="sm"
                   className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
                 >
                   <Heart className="h-4 w-4 mr-2" />
-                  Matches
+                  My Hearts
                 </Button>
               </Link>
             </div>
@@ -343,21 +507,21 @@ const DatingDiscover: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main */}
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {!hasProfiles ? (
-          // No more profiles
           <Card className="bg-black/40 border-zinc-700 backdrop-blur text-center">
             <CardContent className="p-12">
               <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Star className="h-10 w-10 text-white" />
               </div>
-              
+
               <h2 className="text-2xl font-bold text-white mb-4">You're all caught up!</h2>
               <p className="text-zinc-400 mb-8 max-w-md mx-auto">
-                No more profiles match your current preferences. Try adjusting your filters or check back later for new people.
+                No more profiles match your current preferences. Try adjusting your filters or check
+                back later for new people.
               </p>
-              
+
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <Button
                   onClick={() => setPrefsOpen(true)}
@@ -366,30 +530,35 @@ const DatingDiscover: React.FC = () => {
                   <Settings className="h-4 w-4 mr-2" />
                   Adjust Filters
                 </Button>
-                
-                <Link to="/dating/matches">
-                  <Button 
+
+                <Link to="/dating/hearts">
+                  <Button
                     variant="outline"
                     className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 w-full"
                   >
                     <MessageCircle className="h-4 w-4 mr-2" />
-                    View Matches
+                    View Hearts
                   </Button>
                 </Link>
               </div>
             </CardContent>
           </Card>
         ) : (
-          // Profile Card
           <div className="relative">
-            <Card 
-              className="bg-black/40 border-zinc-700 backdrop-blur overflow-hidden cursor-grab active:cursor-grabbing select-none"
+            <Card
+              className="bg-black/40 border-zinc-700 backdrop-blur overflow-hidden select-none"
               style={cardStyle}
-              onMouseDown={handleMouseDown}
+              onMouseDown={onMouseDown}
+              onMouseMove={onMouseMove}
+              onMouseUp={onMouseUp}
+              onMouseLeave={onMouseLeave}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
             >
-              {/* Profile Image/Video */}
-              <div className="relative h-[600px] bg-gradient-to-b from-zinc-800 to-zinc-900">
-                {currentProfile.video_intro_url ? (
+              {/* Media */}
+              <div className="relative h-[600px] bg-gradient-to-b from-zinc-800 to-zinc-900 cursor-grab">
+                {currentProfile?.video_intro_url ? (
                   <>
                     <video
                       src={currentProfile.video_intro_url}
@@ -404,7 +573,7 @@ const DatingDiscover: React.FC = () => {
                       3s intro
                     </Badge>
                   </>
-                ) : currentProfile.photos && currentProfile.photos.length > 0 ? (
+                ) : currentProfile?.photos?.length ? (
                   <img
                     src={currentProfile.photos[0]}
                     alt={currentProfile.name}
@@ -413,28 +582,26 @@ const DatingDiscover: React.FC = () => {
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <Avatar className="h-32 w-32">
+                      <AvatarImage />
                       <AvatarFallback className="text-4xl bg-zinc-800 text-zinc-300">
-                        {currentProfile.name.charAt(0)}
+                        {currentProfile?.name?.charAt(0) || "U"}
                       </AvatarFallback>
                     </Avatar>
                   </div>
                 )}
 
-                {/* Photo indicator dots */}
-                {currentProfile.photos && currentProfile.photos.length > 1 && (
+                {/* Photo dots */}
+                {currentProfile?.photos && currentProfile.photos.length > 1 && (
                   <div className="absolute top-4 right-4 flex gap-1">
                     {currentProfile.photos.slice(0, 6).map((_, i) => (
-                      <div 
-                        key={i} 
-                        className="w-2 h-2 rounded-full bg-white/40 backdrop-blur"
-                      />
+                      <div key={i} className="w-2 h-2 rounded-full bg-white/40 backdrop-blur" />
                     ))}
                   </div>
                 )}
 
                 {/* Distance badge */}
-                {currentProfile.distance && (
-                  <Badge 
+                {typeof currentProfile?.distance === "number" && (
+                  <Badge
                     variant="secondary"
                     className="absolute top-4 right-4 bg-black/60 text-white border-0 backdrop-blur"
                   >
@@ -443,29 +610,27 @@ const DatingDiscover: React.FC = () => {
                   </Badge>
                 )}
 
-                {/* Gradient overlay */}
+                {/* Gradient + info */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-
-                {/* Profile info overlay */}
                 <div className="absolute bottom-0 left-0 right-0 p-6">
                   <div className="text-white space-y-2">
                     <div className="flex items-center gap-3">
                       <h2 className="text-3xl font-bold">
-                        {currentProfile.name}
+                        {currentProfile?.name}
                         <span className="text-2xl font-normal text-zinc-300 ml-2">
-                          {currentProfile.age}
+                          {currentProfile?.age}
                         </span>
                       </h2>
                     </div>
-                    
-                    {currentProfile.city && (
+
+                    {currentProfile?.city && (
                       <div className="flex items-center gap-1 text-zinc-300">
                         <MapPin className="h-4 w-4" />
                         <span>{currentProfile.city}</span>
                       </div>
                     )}
-                    
-                    {currentProfile.bio && (
+
+                    {currentProfile?.bio && (
                       <p className="text-white/90 text-sm leading-relaxed mt-3 line-clamp-3">
                         {currentProfile.bio}
                       </p>
@@ -473,7 +638,6 @@ const DatingDiscover: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Info button */}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -484,11 +648,11 @@ const DatingDiscover: React.FC = () => {
               </div>
             </Card>
 
-            {/* Action Buttons */}
+            {/* Actions */}
             <div className="flex items-center justify-center gap-8 mt-6">
               <Button
                 size="lg"
-                onClick={() => handleAction('pass')}
+                onClick={() => handleAction("pass")}
                 disabled={actionInProgress}
                 className="h-16 w-16 rounded-full bg-white/10 border-2 border-red-500/30 hover:bg-red-500/20 hover:border-red-500/50 transition-all shadow-lg"
                 variant="outline"
@@ -498,7 +662,7 @@ const DatingDiscover: React.FC = () => {
 
               <Button
                 size="lg"
-                onClick={() => handleAction('like')}
+                onClick={() => handleAction("like")}
                 disabled={actionInProgress}
                 className="h-20 w-20 rounded-full bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 shadow-2xl shadow-fuchsia-500/30 border-2 border-fuchsia-400/50 relative overflow-hidden"
               >
@@ -508,7 +672,9 @@ const DatingDiscover: React.FC = () => {
 
               <Button
                 size="lg"
-                onClick={() => {/* Could add super like */}}
+                onClick={() => {
+                  // future: super-like
+                }}
                 className="h-16 w-16 rounded-full bg-white/10 border-2 border-blue-500/30 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all shadow-lg"
                 variant="outline"
               >
@@ -516,7 +682,6 @@ const DatingDiscover: React.FC = () => {
               </Button>
             </div>
 
-            {/* Swipe hints */}
             <div className="flex justify-between items-center mt-6 px-4 text-sm text-zinc-500">
               <div className="flex items-center gap-1">
                 <X className="h-4 w-4 text-red-400" />
@@ -547,26 +712,26 @@ const DatingDiscover: React.FC = () => {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              
+
               <div className="space-y-6">
-                {/* Looking for */}
+                {/* Seeking */}
                 <div>
                   <h4 className="text-white font-medium mb-3">Looking for</h4>
                   <div className="grid grid-cols-2 gap-2">
                     {SEEKING_OPTIONS.map((option) => (
                       <button
                         key={option}
-                        onClick={() => {
-                          setSeeking(prev => 
+                        onClick={() =>
+                          setSeeking((prev) =>
                             prev.includes(option)
-                              ? prev.filter(x => x !== option)
+                              ? prev.filter((x) => x !== option)
                               : [...prev, option]
-                          );
-                        }}
+                          )
+                        }
                         className={`p-3 rounded-lg text-sm text-left transition-colors ${
                           seeking.includes(option)
-                            ? 'bg-gradient-to-r from-fuchsia-600/20 to-purple-600/20 border-fuchsia-500 text-fuchsia-200 border'
-                            : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-600 border'
+                            ? "bg-gradient-to-r from-fuchsia-600/20 to-purple-600/20 border-fuchsia-500 text-fuchsia-200 border"
+                            : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-600 border"
                         }`}
                       >
                         {option}
@@ -582,11 +747,11 @@ const DatingDiscover: React.FC = () => {
                   </h4>
                   <input
                     type="range"
-                    min="1"
-                    max="100"
+                    min={1}
+                    max={200}
                     value={maxDistance}
                     onChange={(e) => setMaxDistance(parseInt(e.target.value))}
-                    className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer slider"
+                    className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
                   />
                 </div>
 
@@ -600,10 +765,12 @@ const DatingDiscover: React.FC = () => {
                       <label className="text-xs text-zinc-400">Min Age</label>
                       <input
                         type="number"
-                        min="18"
-                        max="100"
+                        min={18}
+                        max={100}
                         value={ageRange[0]}
-                        onChange={(e) => setAgeRange([parseInt(e.target.value), ageRange[1]])}
+                        onChange={(e) =>
+                          setAgeRange([clamp(parseInt(e.target.value), 18, ageRange[1]), ageRange[1]])
+                        }
                         className="w-full mt-1 p-2 bg-zinc-800 border border-zinc-700 rounded text-white"
                       />
                     </div>
@@ -611,10 +778,12 @@ const DatingDiscover: React.FC = () => {
                       <label className="text-xs text-zinc-400">Max Age</label>
                       <input
                         type="number"
-                        min="18"
-                        max="100"
+                        min={18}
+                        max={100}
                         value={ageRange[1]}
-                        onChange={(e) => setAgeRange([ageRange[0], parseInt(e.target.value)])}
+                        onChange={(e) =>
+                          setAgeRange([ageRange[0], clamp(parseInt(e.target.value), ageRange[0], 100)])
+                        }
                         className="w-full mt-1 p-2 bg-zinc-800 border border-zinc-700 rounded text-white"
                       />
                     </div>
@@ -631,10 +800,10 @@ const DatingDiscover: React.FC = () => {
                   {savingPrefs ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Saving...
+                      Saving…
                     </>
                   ) : (
-                    'Save Preferences'
+                    "Save Preferences"
                   )}
                 </Button>
                 <Button
