@@ -183,31 +183,31 @@ const DatingOnboardingWizard: React.FC = () => {
     showAge: true,
   });
 
-  // --- 🔒 STOP GLOBAL KEY HANDLERS FROM STEALING FOCUS ---
+  // --- SIMPLIFIED KEY HANDLING - ONLY PREVENT SPECIFIC SHORTCUTS ---
   const rootRef = useRef<HTMLDivElement>(null);
-  const stopKey = (e: React.KeyboardEvent) => e.stopPropagation();
-  const inputCaptureProps = {
-    onKeyDownCapture: stopKey,
-    onKeyUpCapture: stopKey,
-    onKeyPressCapture: stopKey,
-  };
+  
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!rootRef.current) return;
-      const t = e.target as Node | null;
-      if (t && rootRef.current.contains(t)) {
-        // swallow keystrokes from this page before window/global listeners
-        e.stopPropagation();
+      // Only prevent specific problematic shortcuts that might interfere with the form
+      // Don't interfere with normal typing in input fields
+      const target = e.target as HTMLElement;
+      const isInputField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+      
+      // If user is typing in an input field, let them type normally
+      if (isInputField) {
+        return;
+      }
+      
+      // Only prevent specific navigation shortcuts when NOT in input fields
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
       }
     };
-    // capture phase to beat window-level listeners
-    window.addEventListener("keydown", handler, true);
-    window.addEventListener("keypress", handler, true);
-    window.addEventListener("keyup", handler, true);
+    
+    // Use normal event listener, not capture
+    window.addEventListener("keydown", handler);
     return () => {
-      window.removeEventListener("keydown", handler, true);
-      window.removeEventListener("keypress", handler, true);
-      window.removeEventListener("keyup", handler, true);
+      window.removeEventListener("keydown", handler);
     };
   }, []);
   // -------------------------------------------------------
@@ -308,7 +308,7 @@ const DatingOnboardingWizard: React.FC = () => {
         if (formData.seeking.length < 1) return "Pick at least one option for who you want to meet.";
         return null;
       case 5:
-        if (!formData.relationshipType) return "Choose what you’re looking for.";
+        if (!formData.relationshipType) return "Choose what you're looking for.";
         return null;
       case 6:
         if (formData.interests.length < 1) return "Add at least one interest.";
@@ -575,7 +575,6 @@ const DatingOnboardingWizard: React.FC = () => {
                   <Input
                     value={formData.name}
                     onChange={(e) => handleInput("name", e.target.value)}
-                    {...inputCaptureProps}
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                     placeholder="What should people call you?"
                     autoComplete="off"
@@ -589,7 +588,6 @@ const DatingOnboardingWizard: React.FC = () => {
                     <Input
                       value={formData.city}
                       onChange={(e) => handleInput("city", e.target.value)}
-                      {...inputCaptureProps}
                       className="pl-10 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                       placeholder="Where are you based?"
                       autoComplete="off"
@@ -607,7 +605,6 @@ const DatingOnboardingWizard: React.FC = () => {
                       className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
                       value={dobMonth}
                       onChange={(e) => setDobMonth(e.target.value)}
-                      {...inputCaptureProps}
                     >
                       <option value="">Month</option>
                       {MONTHS.map((m) => (
@@ -620,7 +617,6 @@ const DatingOnboardingWizard: React.FC = () => {
                       className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
                       value={dobDay}
                       onChange={(e) => setDobDay(e.target.value)}
-                      {...inputCaptureProps}
                     >
                       <option value="">Day</option>
                       {days.map((d) => (
@@ -633,7 +629,6 @@ const DatingOnboardingWizard: React.FC = () => {
                       className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
                       value={dobYear}
                       onChange={(e) => setDobYear(e.target.value)}
-                      {...inputCaptureProps}
                     >
                       <option value="">Year</option>
                       {Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) => String(MAX_YEAR - i)).map((y) => (
@@ -651,7 +646,6 @@ const DatingOnboardingWizard: React.FC = () => {
                     inputMode="numeric"
                     value={formData.age}
                     onChange={(e) => handleInput("age", e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
-                    {...inputCaptureProps}
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
                     placeholder="Your age"
                     autoComplete="off"
@@ -686,7 +680,6 @@ const DatingOnboardingWizard: React.FC = () => {
                 <Textarea
                   value={formData.bio}
                   onChange={(e) => handleInput("bio", e.target.value.slice(0, 500))}
-                  {...inputCaptureProps}
                   className="mt-2 bg-zinc-900 border-zinc-700 text-white min-h-[120px] resize-none"
                   placeholder="Share your vibe, interests, what makes you unique..."
                   autoComplete="off"
@@ -746,7 +739,6 @@ const DatingOnboardingWizard: React.FC = () => {
                       : formData.pronouns
                   }
                   onChange={(e) => handleInput("pronouns", e.target.value)}
-                  {...inputCaptureProps}
                   className="mt-3 bg-zinc-900 border-zinc-700 text-white"
                   placeholder="Or enter custom pronouns..."
                   autoComplete="off"
@@ -865,7 +857,6 @@ const DatingOnboardingWizard: React.FC = () => {
                       (e.target as HTMLInputElement).value = "";
                     }
                   }}
-                  {...inputCaptureProps}
                   className="bg-zinc-900 border-zinc-700 text-white"
                   placeholder="Type a custom interest and press Enter..."
                   autoComplete="off"
@@ -939,7 +930,7 @@ const DatingOnboardingWizard: React.FC = () => {
                       <Camera className="h-8 w-8 text-white" />
                     </div>
                     <h4 className="text-white font-medium mb-2">Create your signature 3-second intro</h4>
-                    <p className="text-zinc-400 text-sm">We’ll trim to exactly 3 seconds when you publish.</p>
+                    <p className="text-zinc-400 text-sm">We'll trim to exactly 3 seconds when you publish.</p>
                   </label>
                 ) : (
                   <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-700">
@@ -1003,7 +994,7 @@ const DatingOnboardingWizard: React.FC = () => {
                 <Sparkles className="h-8 w-8 text-white" />
               </div>
               <h3 className="text-xl font-bold text-white mb-2">Publishing your profile...</h3>
-              <p className="text-zinc-400 mb-6">We’re saving your info and will trim your video to exactly 3 seconds.</p>
+              <p className="text-zinc-400 mb-6">We're saving your info and will trim your video to exactly 3 seconds.</p>
               <div className="space-y-3">
                 <div className="flex items-center gap-3 text-sm text-zinc-300">
                   <Check className="h-4 w-4 text-green-500" />
