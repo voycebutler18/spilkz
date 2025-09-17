@@ -1,858 +1,995 @@
-// src/pages/Dating/DatingOnboarding.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useEffect, useRef, useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Heart,
-  Camera,
-  Upload,
   X,
-  Plus,
-  Sparkles,
-  ArrowRight,
   MapPin,
-  Loader2,
   Play,
-  CheckCircle,
-  AlertTriangle,
+  Sparkles,
+  Loader2,
+  Settings,
+  MessageCircle,
+  Star,
   Info,
+  ChevronLeft,
+  Filter,
+  Zap,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
 
-/**
- * 3-step onboarding with:
- * - 18+ age gate
- * - Browser geolocation prompt
- * - Real uploads to Supabase Storage (dating_photos / dating_videos)
- * - Redirect to /dating/discover if profile already exists
- */
-
-type SignupData = {
+type DatingProfile = {
+  user_id: string;
   name: string;
-  age: string;
-  gender: string;
-  seeking: string | string[];
-  location: string; // or "lat,lng"
-  city?: string;
+  age: number;
+  bio: string | null;
+  photos: string[] | null;
+  video_intro_url: string | null;
+  city: string | null;
+  gender: string | null;
+  location_lat?: number | null;
+  location_lng?: number | null;
+  distance?: number; // miles (computed client-side)
+
+  // Optional extras from signup (show in full profile)
+  relationship_goal?: string | null;
+  has_kids?: string | null;
+  wants_kids?: string | null;
+  height?: string | null;
+  body_type?: string | null;
+  education?: string | null;
+  religion?: string | null;
+  drinking?: string | null;
+  smoking?: string | null;
+  exercise?: string | null;
+  pets?: string | null;
+  interests?: string[] | null;
+  hobbies?: string[] | null;
 };
 
-type TempPhoto = { id: number; url: string; file: File };
-type TempVideo = { url: string; file: File };
+type MyProfile = {
+  user_id: string;
+  seeking: string[] | null;
+  max_distance: number | null; // miles
+  min_age: number | null;
+  max_age: number | null;
+  location_lat: number | null;
+  location_lng: number | null;
+};
 
-const clamp = (n: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, n));
+const SEEKING_OPTIONS = [
+  "Men",
+  "Women",
+  "Non-binary folks",
+  "Trans men",
+  "Trans women",
+  "Everyone",
+];
 
-const DatingOnboarding: React.FC = () => {
+const labelForGender = (g: string | null | undefined) => {
+  const v = (g || "").toLowerCase();
+  if (["man", "male", "m", "men"].includes(v)) return "Men";
+  if (["woman", "female", "f", "women"].includes(v)) return "Women";
+  if (["non-binary", "nonbinary", "nb"].includes(v)) return "Non-binary folks";
+  if (["trans man", "trans-man", "trans_men", "trans men"].includes(v)) return "Trans men";
+  if (["trans woman", "trans-woman", "trans_women", "trans women"].includes(v)) return "Trans women";
+  return "Everyone";
+};
+
+// Miles between two lat/lngs (rounded)
+const milesBetween = (
+  lat1?: number | null,
+  lon1?: number | null,
+  lat2?: number | null,
+  lon2?: number | null
+) => {
+  if (
+    lat1 == null || lon1 == null || lat2 == null || lon2 == null ||
+    isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)
+  ) return undefined;
+
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const Rkm = 6371; // km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const km = Rkm * c;
+  const miles = km * 0.621371;
+  return Math.round(miles);
+};
+
+const matchesSeeking = (mySeeking: string[] | null | undefined, theirGender: string | null) => {
+  if (!mySeeking || mySeeking.length === 0) return true;
+  if (mySeeking.includes("Everyone")) return true;
+  const gLabel = labelForGender(theirGender);
+  return mySeeking.includes(gLabel);
+};
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+const DatingDiscover: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // ---- routing/profile gate ----
-  const [checking, setChecking] = useState(true);
-
-  // ---- seed from localStorage written by dating home ----
-  const [seed, setSeed] = useState<SignupData | null>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [profiles, setProfiles] = useState<DatingProfile[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [actionInProgress, setActionInProgress] = useState(false);
 
-  // ---- local form state (kept minimal & stable) ----
-  const [bio, setBio] = useState("");
-  const [photos, setPhotos] = useState<TempPhoto[]>([]);
-  const [videoIntro, setVideoIntro] = useState<TempVideo | null>(null);
+  // My profile + preferences
+  const [myProfile, setMyProfile] = useState<MyProfile | null>(null);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const [seeking, setSeeking] = useState<string[]>([]);
+  const [savingPrefs, setSavingPrefs] = useState(false);
+  const [maxDistance, setMaxDistance] = useState(50); // miles
+  const [ageRange, setAgeRange] = useState<[number, number]>([18, 50]);
 
-  // Location state
-  const [locationPermission, setLocationPermission] =
-    useState<"pending" | "granted" | "denied">("pending");
-  const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(
-    null
-  );
-  const [locationError, setLocationError] = useState<string>("");
+  // Full-profile modal
+  const [profileOpen, setProfileOpen] = useState(false);
 
-  // UX state
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [ageVerified, setAgeVerified] = useState(false);
+  // Drag / swipe state
+  const [cardStyle, setCardStyle] = useState<React.CSSProperties>({});
+  const isDraggingRef = useRef(false);
+  const startXRef = useRef(0);
 
   // ─────────────────────────────────────────────
-  // GATE: if logged in + already has dating profile → go to Discover
-  // Otherwise continue onboarding.
+  // Init
   // ─────────────────────────────────────────────
   useEffect(() => {
     let alive = true;
 
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!alive) return;
-
       if (!user) {
-        setChecking(false);
         navigate("/login", { replace: true });
         return;
       }
+      if (!alive) return;
 
       setCurrentUser(user);
 
-      const { data: dp } = await supabase
+      // You must have a dating profile
+      const { data: profile, error } = await supabase
         .from("dating_profiles")
-        .select("user_id")
+        .select("user_id,seeking,max_distance,min_age,max_age,location_lat,location_lng")
         .eq("user_id", user.id)
         .maybeSingle();
 
-      if (!alive) return;
+      if (error) console.error(error);
 
-      if (dp) {
-        navigate("/dating/discover", { replace: true });
+      if (!profile) {
+        navigate("/dating/onboarding", { replace: true });
         return;
       }
 
-      setChecking(false);
-    })();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      const uid = session?.user?.id;
-      if (!uid) return;
-      supabase
-        .from("dating_profiles")
-        .select("user_id")
-        .eq("user_id", uid)
-        .maybeSingle()
-        .then(({ data: dp }) => {
-          if (dp) navigate("/dating/discover", { replace: true });
-        });
-    });
-
-    return () => {
-      alive = false;
-      subscription.unsubscribe();
-    };
-  }, [navigate]);
-
-  // Load seed and verify age (only after gate completes)
-  useEffect(() => {
-    if (checking) return;
-
-    try {
-      const raw = localStorage.getItem("dating_signup_data");
-      if (!raw) {
-        navigate("/dating", { replace: true });
-        return;
-      }
-      const parsed = JSON.parse(raw) as SignupData;
-
-      // Age verification - must be 18+
-      const age = parseInt(parsed.age as string, 10);
-      if (isNaN(age) || age < 18) {
-        toast({
-          title: "Age Restriction",
-          description: "You must be 18 or older to use the dating feature.",
-          variant: "destructive",
-        });
-        navigate("/dating", { replace: true });
-        return;
-      }
-
-      setSeed(parsed);
-      setAgeVerified(true);
-
-      // Auto-request location permission (prompts browser)
-      requestLocation();
-    } catch {
-      navigate("/dating", { replace: true });
-    }
-  }, [checking, navigate, toast]);
-
-  // Request browser geolocation
-  const requestLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationError("Geolocation is not supported by this browser.");
-      setLocationPermission("denied");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setCoordinates({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setLocationPermission("granted");
-        toast({
-          title: "Location enabled",
-          description: "We'll show you people nearby!",
-        });
-      },
-      (error) => {
-        let message = "Location access denied.";
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            message = "Location access denied. Enable location to see people nearby.";
-            break;
-          case error.POSITION_UNAVAILABLE:
-            message = "Location information unavailable.";
-            break;
-          case error.TIMEOUT:
-            message = "Location request timed out.";
-            break;
-        }
-        setLocationError(message);
-        setLocationPermission("denied");
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 300000, // 5 minutes
-      }
-    );
-  };
-
-  // Upload file to Supabase storage
-  const uploadFile = async (file: File, isVideo: boolean = false): Promise<string> => {
-    const bucket = isVideo ? "dating_videos" : "dating_photos";
-    if (!currentUser) throw new Error("Must be logged in to upload");
-
-    const fileExt = file.name.split(".").pop();
-    const fileName = `${currentUser.id}/${Date.now()}.${fileExt}`;
-
-    const { error: uploadError } = await supabase.storage.from(bucket).upload(fileName, file);
-    if (uploadError) throw uploadError;
-
-    const { data } = supabase.storage.from(bucket).getPublicUrl(fileName);
-    return data.publicUrl;
-  };
-
-  // -------- helpers (photos / video) --------
-  const addPhoto = async (file: File) => {
-    if (photos.length >= 6) {
-      toast({
-        title: "Photo limit reached",
-        description: "You can upload up to 6 photos.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload image files only (JPG, PNG, WEBP, GIF).",
-        variant: "destructive",
-      });
-      return;
-    }
-    const maxSize = 10 * 1024 * 1024;
-    if (file.size > maxSize) {
-      toast({
-        title: "File too large",
-        description: "Images must be under 10MB.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setUploading(true);
-    try {
-      const url = URL.createObjectURL(file);
-      setPhotos((prev) => [...prev, { id: Date.now(), url, file }]);
-      toast({
-        title: "Photo added",
-        description: "Photo will be uploaded when you publish your profile.",
-      });
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const removePhoto = (id: number) => {
-    setPhotos((prev) => {
-      const photo = prev.find((p) => p.id === id);
-      if (photo) URL.revokeObjectURL(photo.url);
-      return prev.filter((p) => p.id !== id);
-    });
-  };
-
-  const addVideoIntro = (file: File) => {
-    if (!file.type.startsWith("video/")) {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload video files only (MP4, MOV, WebM).",
-        variant: "destructive",
-      });
-      return;
-    }
-    const maxSize = 50 * 1024 * 1024;
-    if (file.size > maxSize) {
-      toast({
-        title: "File too large",
-        description: "Videos must be under 50MB.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (videoIntro) URL.revokeObjectURL(videoIntro.url);
-
-    const url = URL.createObjectURL(file);
-    setVideoIntro({ url, file });
-    toast({
-      title: "Video added",
-      description: "Video will be processed to 3 seconds when you publish.",
-    });
-  };
-
-  const removeVideoIntro = () => {
-    if (videoIntro) {
-      URL.revokeObjectURL(videoIntro.url);
-      setVideoIntro(null);
-    }
-  };
-
-  // -------- step validation (memo so it doesn't thrash focus) --------
-  const canContinue = useMemo(() => {
-    if (step === 1) return bio.trim().length >= 20;
-    if (step === 2) return photos.length > 0 || !!videoIntro;
-    return true;
-  }, [step, bio, photos.length, videoIntro]);
-
-  const progress = useMemo(() => (step / 3) * 100, [step]);
-
-  const next = () =>
-    step < 3 ? setStep((s) => (clamp(s + 1, 1, 3) as 1 | 2 | 3)) : publish();
-  const prev = () =>
-    step > 1 ? setStep((s) => (clamp(s - 1, 1, 3) as 1 | 2 | 3)) : navigate("/dating");
-
-  // -------- publish (REAL save with uploads) --------
-  async function publish() {
-    if (!seed || !currentUser || !ageVerified) return;
-
-    setSaving(true);
-
-    try {
-      // Upload all photos
-      const uploadedPhotos: string[] = [];
-      for (const photo of photos) {
-        try {
-          const photoUrl = await uploadFile(photo.file, false);
-          uploadedPhotos.push(photoUrl);
-        } catch (error) {
-          console.error("Failed to upload photo:", error);
-          toast({
-            title: "Photo upload failed",
-            description: "Some photos couldn't be uploaded. Continuing anyway.",
-            variant: "destructive",
-          });
-        }
-      }
-
-      // Upload video if present
-      let videoUrl: string | null = null;
-      if (videoIntro) {
-        try {
-          videoUrl = await uploadFile(videoIntro.file, true);
-        } catch (error) {
-          console.error("Failed to upload video:", error);
-          toast({
-            title: "Video upload failed",
-            description:
-              "Video couldn't be uploaded. Profile will be saved without it.",
-            variant: "destructive",
-          });
-        }
-      }
-
-      // Create/Update dating profile
-      const profileData = {
-        user_id: currentUser.id,
-        name: seed.name,
-        age: parseInt(seed.age as string, 10),
-        gender: seed.gender,
-        seeking: Array.isArray(seed.seeking) ? seed.seeking : [seed.seeking],
-        bio: bio.trim(),
-        photos: uploadedPhotos,
-        video_intro_url: videoUrl,
-        location_lat: coordinates?.lat ?? null,
-        location_lng: coordinates?.lng ?? null,
-        city: seed.city || null,
-        location_string: seed.location || null,
-        is_active: true,
-        last_active: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+      const mine: MyProfile = {
+        user_id: profile.user_id,
+        seeking: profile.seeking ?? [],
+        max_distance: profile.max_distance ?? 50,
+        min_age: profile.min_age ?? 18,
+        max_age: profile.max_age ?? 50,
+        location_lat: profile.location_lat ?? null,
+        location_lng: profile.location_lng ?? null,
       };
 
-      const { error: profileError } = await supabase
-        .from("dating_profiles")
-        .upsert(profileData, { onConflict: "user_id" });
+      setMyProfile(mine);
+      setSeeking(mine.seeking || []);
+      setMaxDistance(mine.max_distance || 50);
+      setAgeRange([mine.min_age || 18, mine.max_age || 50]);
 
-      if (profileError) throw profileError;
+      await fetchMatches(user.id, mine);
+      if (!alive) return;
+      setLoading(false);
+    })();
 
-      // Optional flag on profiles table
+    return () => { alive = false; };
+  }, [navigate]);
+
+  // ─────────────────────────────────────────────
+  // Fetch candidates
+  // ─────────────────────────────────────────────
+  const fetchMatches = async (userId: string, mine: MyProfile) => {
+    try {
+      const { data: actions } = await supabase
+        .from("dating_likes")
+        .select("liked_id,action")
+        .eq("liker_id", userId);
+
+      const excludeIds = new Set((actions || []).map((a: any) => a.liked_id));
+
+      let rows: any[] | null = null;
       try {
-        await supabase
-          .from("profiles")
-          .update({ dating_enabled: true })
-          .eq("id", currentUser.id);
-      } catch (e) {
-        console.warn("Could not update dating_enabled flag:", e);
+        const { data, error } = await supabase.rpc("dating_candidates", {
+          p_user_id: userId,
+          p_limit: 50,
+        });
+        if (!error && Array.isArray(data)) rows = data as any[];
+      } catch {}
+
+      if (!rows) {
+        const { data, error } = await supabase
+          .from("dating_profiles")
+          .select(
+            [
+              "user_id","name","age","bio","photos","video_intro_url","city","gender",
+              "location_lat","location_lng","is_active",
+              // include extended fields if present in your table
+              "relationship_goal","has_kids","wants_kids","height","body_type",
+              "education","religion","drinking","smoking","exercise","pets",
+              "interests","hobbies",
+            ].join(",")
+          )
+          .eq("is_active", true)
+          .neq("user_id", userId)
+          .limit(100);
+
+        if (error) throw error;
+        rows = data || [];
       }
 
-      localStorage.removeItem("dating_signup_data");
+      const filtered = rows
+        .filter((r) => !excludeIds.has(r.user_id))
+        .filter((r) => {
+          const age = Number(r.age) || 0;
+          if (age < (mine.min_age || 18) || age > (mine.max_age || 50)) return false;
+          return matchesSeeking(mine.seeking, r.gender);
+        })
+        .map((r) => {
+          const dist = milesBetween(
+            mine.location_lat, mine.location_lng, r.location_lat, r.location_lng
+          );
+          return { ...r, distance: dist } as DatingProfile;
+        })
+        .filter((r) => {
+          if (mine.location_lat == null || mine.location_lng == null) return true;
+          if (r.distance == null) return true;
+          return r.distance <= (mine.max_distance || 50);
+        });
 
-      toast({
-        title: "Profile created!",
-        description: "Welcome to Splikz Dating. Let’s find your match.",
+      // Sort by video/photo first, then nearest
+      filtered.sort((a, b) => {
+        const av = a.video_intro_url ? 0 : 1;
+        const bv = b.video_intro_url ? 0 : 1;
+        if (av !== bv) return av - bv;
+        const ap = a.photos?.length ? 0 : 1;
+        const bp = b.photos?.length ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        const ad = a.distance ?? 99999;
+        const bd = b.distance ?? 99999;
+        return ad - bd;
       });
 
-      navigate("/dating/discover", { replace: true });
-    } catch (error: any) {
-      console.error("Profile creation error:", error);
+      setProfiles(filtered);
+      setCurrentIndex(0);
+    } catch (err) {
+      console.error("Error fetching matches:", err);
       toast({
-        title: "Profile creation failed",
-        description: error?.message || "Something went wrong. Please try again.",
+        title: "Error loading matches",
+        description: "Please try refreshing the page.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // Actions
+  // ─────────────────────────────────────────────
+  const likeOrPass = async (action: "like" | "pass" | "super_like") => {
+    if (actionInProgress || currentIndex >= profiles.length || !currentUser) return;
+
+    setActionInProgress(true);
+    const current = profiles[currentIndex];
+
+    try {
+      const { error } = await supabase.from("dating_likes").insert({
+        liker_id: currentUser.id,
+        liked_id: current.user_id,
+        action, // "like" | "pass" | "super_like"
+      });
+      if (error) throw error;
+
+      // Match check: if they liked OR super_liked me
+      if (action !== "pass") {
+        const { data: back } = await supabase
+          .from("dating_likes")
+          .select("id")
+          .eq("liker_id", current.user_id)
+          .eq("liked_id", currentUser.id)
+          .in("action", ["like", "super_like"])
+          .maybeSingle();
+
+        if (back) {
+          toast({
+            title: "It's a Match! 🎉",
+            description: `You and ${current.name} liked each other`,
+          });
+        } else if (action === "super_like") {
+          toast({
+            title: "Super Like sent ⚡",
+            description: `${current.name} will see you boosted.`,
+          });
+        }
+      }
+
+      setCurrentIndex((i) => i + 1);
+      setCardStyle({});
+      setProfileOpen(false);
+    } catch (err) {
+      console.error("Action error:", err);
+      toast({
+        title: "Something went wrong",
+        description: "Please try again.",
         variant: "destructive",
       });
     } finally {
-      setSaving(false);
+      setActionInProgress(false);
     }
-  }
+  };
 
-  // Loading gates
-  if (checking || !seed || !ageVerified) {
+  // Backwards-compat helpers
+  const handleAction = (a: "like" | "pass") => likeOrPass(a);
+  const handleSuperLike = () => likeOrPass("super_like");
+
+  // ─────────────────────────────────────────────
+  // Drag/swipe + keyboard
+  // ─────────────────────────────────────────────
+  const handleStart = (clientX: number) => {
+    isDraggingRef.current = true;
+    startXRef.current = clientX;
+    setCardStyle((s) => ({ ...s, transition: "none" }));
+  };
+  const handleMove = (clientX: number) => {
+    if (!isDraggingRef.current) return;
+    const deltaX = clientX - startXRef.current;
+    const rotation = deltaX * 0.08;
+    const opacity = Math.min(1, 1 - Math.min(Math.abs(deltaX) / 1000, 0.3));
+    setCardStyle({
+      transform: `translateX(${deltaX}px) rotate(${rotation}deg)`,
+      opacity,
+      transition: "none",
+      cursor: "grabbing",
+    });
+  };
+  const handleEnd = (clientX: number) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    const deltaX = clientX - startXRef.current;
+
+    if (Math.abs(deltaX) > 120) {
+      if (deltaX > 0) handleAction("like");
+      else handleAction("pass");
+    } else {
+      setCardStyle({
+        transform: "translateX(0px) rotate(0deg)",
+        opacity: 1,
+        transition: "all 0.25s ease-out",
+        cursor: "grab",
+      });
+    }
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => handleStart(e.clientX);
+  const onMouseMove = (e: React.MouseEvent) => handleMove(e.clientX);
+  const onMouseUp = (e: React.MouseEvent) => handleEnd(e.clientX);
+  const onMouseLeave = (e: React.MouseEvent) => { if (isDraggingRef.current) handleEnd(e.clientX); };
+
+  const onTouchStart = (e: React.TouchEvent) => handleStart(e.touches[0].clientX);
+  const onTouchMove = (e: React.TouchEvent) => handleMove(e.touches[0].clientX);
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const t = e.changedTouches[0];
+    handleEnd(t?.clientX ?? startXRef.current);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") handleAction("pass");
+      if (e.key === "ArrowRight") handleAction("like");
+      if (e.key.toLowerCase() === "i") setProfileOpen(true); // quick open
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles, currentIndex, actionInProgress]);
+
+  // ─────────────────────────────────────────────
+  // Save preferences
+  // ─────────────────────────────────────────────
+  const savePreferences = async () => {
+    if (!currentUser) return;
+    setSavingPrefs(true);
+
+    try {
+      const { error } = await supabase
+        .from("dating_profiles")
+        .update({
+          seeking,
+          max_distance: maxDistance, // miles
+          min_age: ageRange[0],
+          max_age: ageRange[1],
+        })
+        .eq("user_id", currentUser.id);
+
+      if (error) throw error;
+
+      setPrefsOpen(false);
+      toast({
+        title: "Preferences saved",
+        description: "Your matching preferences have been updated.",
+      });
+
+      if (myProfile) {
+        const updated: MyProfile = {
+          ...myProfile,
+          seeking,
+          max_distance: maxDistance,
+          min_age: ageRange[0],
+          max_age: ageRange[1],
+        };
+        setMyProfile(updated);
+        await fetchMatches(currentUser.id, updated);
+      }
+    } catch (err) {
+      console.error("Error saving preferences:", err);
+      toast({
+        title: "Error saving preferences",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingPrefs(false);
+    }
+  };
+
+  // ─────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────
+  if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="h-8 w-8 text-fuchsia-500 animate-spin" />
+      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-black to-fuchsia-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-white">
+          <Loader2 className="h-12 w-12 animate-spin text-fuchsia-500" />
+          <div className="text-center">
+            <h2 className="text-xl font-semibold mb-2">Finding your matches</h2>
+            <p className="text-zinc-400">Looking for amazing people nearby…</p>
+          </div>
+        </div>
       </div>
     );
   }
 
-  const initials = (seed.name || "?").slice(0, 1).toUpperCase();
+  const hasProfiles = currentIndex < profiles.length;
+  const currentProfile = hasProfiles ? profiles[currentIndex] : null;
+
+  const DetailRow = ({ label, value }: { label: string; value?: string | null }) =>
+    value ? (
+      <div className="flex items-start gap-3">
+        <span className="text-zinc-400 w-36 shrink-0">{label}</span>
+        <span className="text-white">{value}</span>
+      </div>
+    ) : null;
+
+  const PillList = ({ label, items }: { label: string; items?: string[] | null }) =>
+    items && items.length ? (
+      <div>
+        <div className="text-zinc-400 mb-2">{label}</div>
+        <div className="flex flex-wrap gap-2">
+          {items.map((t, i) => (
+            <span key={i} className="text-xs bg-white/10 border border-white/10 rounded-full px-2 py-1 text-white">
+              {t}
+            </span>
+          ))}
+        </div>
+      </div>
+    ) : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-black to-fuchsia-900">
       {/* Header */}
-      <div className="border-b border-zinc-800/50 bg-black/50 backdrop-blur-sm">
+      <div className="border-b border-zinc-800/50 bg-black/50 backdrop-blur-sm sticky top-0 z-40">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <Link to="/dating">
+                <Button variant="ghost" size="sm" className="text-zinc-400 hover:text-white">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </Link>
               <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-fuchsia-600 to-purple-500 flex items-center justify-center">
-                <Heart className="h-5 w-5 text-white" />
+                <Sparkles className="h-5 w-5 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-white">Complete Your Profile</h1>
-                <p className="text-sm text-zinc-400">Step {step} of 3 • Ages 18+</p>
+                <h1 className="text-xl font-bold text-white">Discover</h1>
+                <p className="text-sm text-zinc-400">
+                  {hasProfiles ? `${profiles.length - currentIndex} profiles remaining` : "All caught up!"}
+                </p>
               </div>
             </div>
 
-            <div className="text-sm text-zinc-400">{Math.round(progress)}% complete</div>
-          </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPrefsOpen(true)}
+                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Filters
+              </Button>
 
-          {/* Progress Bar */}
-          <div className="w-full bg-zinc-800 rounded-full h-2 mt-4">
-            <div
-              className="bg-gradient-to-r from-fuchsia-500 to-purple-500 h-2 rounded-full transition-all duration-500"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Location Permission Alert */}
-      {locationPermission === "denied" && (
-        <div className="container mx-auto px-4 pt-4 max-w-5xl">
-          <Alert className="border-yellow-500/20 bg-yellow-500/10">
-            <AlertTriangle className="h-4 w-4 text-yellow-500" />
-            <AlertDescription>
-              <div className="flex items-center justify-between">
-                <div>
-                  <strong>Location access denied:</strong> {locationError}
-                </div>
+              <Link to="/dating/hearts">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={requestLocation}
-                  className="ml-4"
+                  className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
                 >
-                  Try Again
+                  <Heart className="h-4 w-4 mr-2" />
+                  My Hearts
                 </Button>
-              </div>
-            </AlertDescription>
-          </Alert>
-        </div>
-      )}
-
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Main */}
-          <div className="lg:col-span-2 space-y-8">
-            {step === 1 && (
-              <Card className="bg-black/40 border-zinc-700 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-2xl text-white">
-                    Tell us about yourself
-                  </CardTitle>
-                  <p className="text-zinc-400">
-                    Write a short bio (minimum 20 characters). This helps people get to know you.
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="flex items-center gap-4">
-                    <div className="h-16 w-16 rounded-full ring-2 ring-fuchsia-500/40 overflow-hidden">
-                      {photos[0]?.url ? (
-                        <img
-                          src={photos[0].url}
-                          className="h-full w-full object-cover"
-                          alt="avatar"
-                        />
-                      ) : (
-                        <Avatar className="h-16 w-16">
-                          <AvatarImage />
-                          <AvatarFallback className="bg-zinc-800 text-zinc-300">
-                            {initials}
-                          </AvatarFallback>
-                        </Avatar>
-                      )}
-                    </div>
-                    <div>
-                      <div className="text-white font-semibold">
-                        {seed.name}, {seed.age}
-                      </div>
-                      <div className="text-zinc-400 text-sm flex items-center gap-1">
-                        <MapPin className="h-3 w-3" />
-                        {locationPermission === "granted"
-                          ? "Location enabled"
-                          : seed.city || seed.location || "Location pending"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">
-                      Your bio (min 20 chars)
-                    </label>
-                    <Textarea
-                      value={bio}
-                      onChange={(e) => setBio(e.target.value.slice(0, 500))}
-                      className="bg-zinc-900 border-zinc-600 text-white min-h-[160px] resize-none text-base leading-relaxed"
-                      placeholder="Share your vibe, interests, and what you're looking for…"
-                    />
-                    <div className="flex justify-between text-sm mt-2">
-                      <span className={bio.length < 20 ? "text-red-400" : "text-green-400"}>
-                        {bio.length < 20
-                          ? `${20 - bio.length} more characters needed`
-                          : "Looks great!"}
-                      </span>
-                      <span className="text-zinc-500">{bio.length}/500</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {step === 2 && (
-              <Card className="bg-black/40 border-zinc-700 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-2xl text-white">
-                    Add photos & 3-sec intro
-                  </CardTitle>
-                  <p className="text-zinc-400">
-                    Add at least one photo. Video intro is optional but highly recommended.
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-8">
-                  {/* Video */}
-                  <div>
-                    <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                      <Play className="h-5 w-5 text-fuchsia-500" />
-                      3-Second Video Intro
-                      <span className="ml-2 bg-gradient-to-r from-fuchsia-500 to-purple-500 text-white text-xs px-2 py-1 rounded-full">
-                        Recommended
-                      </span>
-                    </h3>
-
-                    {!videoIntro ? (
-                      <div className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-6 text-center bg-gradient-to-br from-fuchsia-500/5 to-purple-500/5">
-                        <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3">
-                          <Camera className="h-7 w-7 text-white" />
-                        </div>
-                        <p className="text-zinc-300 mb-4">
-                          Upload a short clip; we'll trim it to exactly 3 seconds.
-                        </p>
-                        <label className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white rounded-lg cursor-pointer">
-                          <Upload className="h-4 w-4" />
-                          Upload video
-                          <input
-                            type="file"
-                            accept="video/*"
-                            className="hidden"
-                            onChange={(e) =>
-                              e.target.files?.[0] && addVideoIntro(e.target.files[0])
-                            }
-                          />
-                        </label>
-                      </div>
-                    ) : (
-                      <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-700">
-                        <div className="flex items-center gap-4">
-                          <div className="w-20 h-20 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-lg overflow-hidden">
-                            <video
-                              src={videoIntro.url}
-                              className="h-full w-full object-cover"
-                              autoPlay
-                              muted
-                              loop
-                              playsInline
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-white font-medium">Video intro ready</p>
-                            <p className="text-zinc-400 text-sm">Will be trimmed to 3s</p>
-                          </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={removeVideoIntro}
-                            className="border-red-600 text-red-400 hover:bg-red-600 hover:text-white"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Photos */}
-                  <div>
-                    <h3 className="text-white font-semibold mb-3">
-                      Photos ({photos.length}/6)
-                    </h3>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {photos.map((p, i) => (
-                        <div key={p.id} className="relative group">
-                          <img
-                            src={p.url}
-                            alt={`Photo ${i + 1}`}
-                            className="w-full h-40 object-cover rounded-xl"
-                          />
-                          <button
-                            onClick={() => removePhoto(p.id)}
-                            className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Remove"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                          {i === 0 && (
-                            <div className="absolute top-2 left-2 bg-fuchsia-500 text-white text-xs px-2 py-1 rounded-full">
-                              Main
-                            </div>
-                          )}
-                        </div>
-                      ))}
-
-                      {photos.length < 6 && (
-                        <label className="border-2 border-dashed border-zinc-600 rounded-xl h-40 flex flex-col items-center justify-center cursor-pointer hover:border-zinc-500 transition-colors bg-zinc-900/20">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) =>
-                              e.target.files?.[0] && addPhoto(e.target.files[0])
-                            }
-                            className="hidden"
-                          />
-                          {uploading ? (
-                            <Loader2 className="h-8 w-8 text-fuchsia-500 animate-spin" />
-                          ) : (
-                            <>
-                              <Plus className="h-8 w-8 text-zinc-500 mb-2" />
-                              <span className="text-zinc-400 text-sm">Add photo</span>
-                            </>
-                          )}
-                        </label>
-                      )}
-                    </div>
-                    <p className="text-zinc-500 text-sm mt-2">
-                      Tip: Clear, well-lit photos get more matches.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {step === 3 && (
-              <Card className="bg-black/40 border-zinc-700 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-2xl text-white flex items-center gap-2">
-                    <CheckCircle className="h-6 w-6 text-green-500" />
-                    Profile preview
-                  </CardTitle>
-                  <p className="text-zinc-400">
-                    Final check before going live. Only dating users will see your profile.
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-gradient-to-r from-fuchsia-500/10 to-purple-500/10 border border-fuchsia-500/20 rounded-xl p-6 text-center">
-                    <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <Sparkles className="h-8 w-8 text-white" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-white mb-2">You're all set!</h3>
-                    <p className="text-zinc-300 mb-6">
-                      Your profile will be visible only to other dating users nearby.
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="bg-black/20 rounded-lg p-3">
-                        <div className="text-fuchsia-400 font-semibold">✓ Bio</div>
-                        <div className="text-zinc-400">{bio.length} characters</div>
-                      </div>
-                      <div className="bg-black/20 rounded-lg p-3">
-                        <div className="text-purple-400 font-semibold">✓ Photos</div>
-                        <div className="text-zinc-400">{photos.length} added</div>
-                      </div>
-                      <div className="bg-black/20 rounded-lg p-3">
-                        <div
-                          className={
-                            videoIntro
-                              ? "text-green-400 font-semibold"
-                              : "text-zinc-500"
-                          }
-                        >
-                          {videoIntro ? "✓ Video Intro" : "○ Video Intro"}
-                        </div>
-                        <div className="text-zinc-400">
-                          {videoIntro ? "Added" : "Optional"}
-                        </div>
-                      </div>
-                      <div className="bg-black/20 rounded-lg p-3">
-                        <div
-                          className={
-                            locationPermission === "granted"
-                              ? "text-green-400 font-semibold"
-                              : "text-yellow-400 font-semibold"
-                          }
-                        >
-                          {locationPermission === "granted" ? "✓ Location" : "⚠ Location"}
-                        </div>
-                        <div className="text-zinc-400">
-                          {locationPermission === "granted" ? "Enabled" : "Optional"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {locationPermission === "denied" && (
-                      <Alert className="mt-4 border-blue-500/20 bg-blue-500/10">
-                        <Info className="h-4 w-4 text-blue-500" />
-                        <AlertDescription className="text-sm">
-                          Without location, you'll see profiles from a wider area. You can
-                          enable it later in settings.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Navigation */}
-            <div className="flex items-center justify-between">
-              <Button
-                variant="outline"
-                onClick={prev}
-                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-                disabled={saving}
-              >
-                {step === 1 ? "Back to Home" : "Previous"}
-              </Button>
-
-              <Button
-                onClick={next}
-                disabled={!canContinue || saving}
-                className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8 disabled:opacity-50"
-              >
-                {saving ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Creating profile…
-                  </>
-                ) : step === 3 ? (
-                  <>
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    Start matching
-                  </>
-                ) : (
-                  <>
-                    Continue
-                    <ArrowRight className="h-4 w-4 ml-2" />
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {/* Live Preview (sticky) */}
-          <div className="lg:col-span-1">
-            <div className="sticky top-8">
-              <Card className="bg-black/40 border-zinc-700 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-white text-lg">Live Preview</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="bg-zinc-900 rounded-xl p-4">
-                      <div className="text-center mb-4">
-                        <div className="h-20 w-20 mx-auto mb-3 ring-2 ring-fuchsia-500/30 rounded-full overflow-hidden">
-                          {videoIntro ? (
-                            <video
-                              src={videoIntro.url}
-                              className="h-full w-full object-cover"
-                              autoPlay
-                              muted
-                              loop
-                              playsInline
-                            />
-                          ) : photos[0] ? (
-                            <img
-                              src={photos[0].url}
-                              className="h-full w-full object-cover"
-                              alt="Profile"
-                            />
-                          ) : (
-                            <Avatar className="h-20 w-20 mx-auto">
-                              <AvatarImage />
-                              <AvatarFallback className="bg-zinc-800 text-zinc-300">
-                                {initials}
-                              </AvatarFallback>
-                            </Avatar>
-                          )}
-                        </div>
-
-                        <h3 className="text-white font-semibold">
-                          {seed.name}, {seed.age}
-                        </h3>
-                        <p className="text-zinc-400 text-sm flex items-center justify-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          {locationPermission === "granted"
-                            ? "Nearby"
-                            : seed.city || seed.location || "Location pending"}
-                        </p>
-                      </div>
-
-                      {bio && (
-                        <div className="text-sm text-zinc-300 bg-zinc-800/60 rounded-lg p-3">
-                          {bio}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              </Link>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Main */}
+      <div className="container mx-auto px-4 py-8 max-w-2xl">
+        {!hasProfiles ? (
+          <Card className="bg-black/40 border-zinc-700 backdrop-blur text-center">
+            <CardContent className="p-12">
+              <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Star className="h-10 w-10 text-white" />
+              </div>
+
+              <h2 className="text-2xl font-bold text-white mb-4">You're all caught up!</h2>
+              <p className="text-zinc-400 mb-8 max-w-md mx-auto">
+                No more profiles match your current preferences. Try adjusting your filters or check back later for new people.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                <Button
+                  onClick={() => setPrefsOpen(true)}
+                  className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  Adjust Filters
+                </Button>
+
+                <Link to="/dating/hearts">
+                  <Button
+                    variant="outline"
+                    className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 w-full"
+                  >
+                    <MessageCircle className="h-4 w-4 mr-2" />
+                    View Hearts
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="relative">
+            <Card
+              className="bg-black/40 border-zinc-700 backdrop-blur overflow-hidden select-none"
+              style={cardStyle}
+              onMouseDown={onMouseDown}
+              onMouseMove={onMouseMove}
+              onMouseUp={onMouseUp}
+              onMouseLeave={onMouseLeave}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+            >
+              {/* Media */}
+              <div className="relative h-[600px] bg-gradient-to-b from-zinc-800 to-zinc-900 cursor-grab">
+                {currentProfile?.video_intro_url ? (
+                  <>
+                    <video
+                      src={currentProfile.video_intro_url}
+                      className="w-full h-full object-cover"
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                    />
+                    <Badge className="absolute top-4 left-4 bg-gradient-to-r from-fuchsia-600 to-purple-600 border-0">
+                      <Play className="h-3 w-3 mr-1" />
+                      3s intro
+                    </Badge>
+                  </>
+                ) : currentProfile?.photos?.length ? (
+                  <img
+                    src={currentProfile.photos[0]}
+                    alt={currentProfile.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Avatar className="h-32 w-32">
+                      <AvatarImage />
+                      <AvatarFallback className="text-4xl bg-zinc-800 text-zinc-300">
+                        {currentProfile?.name?.charAt(0) || "U"}
+                      </AvatarFallback>
+                    </Avatar>
+                  </div>
+                )}
+
+                {/* Photo dots */}
+                {currentProfile?.photos && currentProfile.photos.length > 1 && (
+                  <div className="absolute top-4 right-4 flex gap-1">
+                    {currentProfile.photos.slice(0, 6).map((_, i) => (
+                      <div key={i} className="w-2 h-2 rounded-full bg-white/40 backdrop-blur" />
+                    ))}
+                  </div>
+                )}
+
+                {/* Distance badge (miles) */}
+                {typeof currentProfile?.distance === "number" && (
+                  <Badge
+                    variant="secondary"
+                    className="absolute top-4 right-4 bg-black/60 text-white border-0 backdrop-blur"
+                  >
+                    <MapPin className="h-3 w-3 mr-1" />
+                    {currentProfile.distance}mi away
+                  </Badge>
+                )}
+
+                {/* Gradient + info */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                <div className="absolute bottom-0 left-0 right-0 p-6">
+                  <div className="text-white space-y-2">
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-3xl font-bold">
+                        {currentProfile?.name}
+                        <span className="text-2xl font-normal text-zinc-300 ml-2">
+                          {currentProfile?.age}
+                        </span>
+                      </h2>
+                    </div>
+
+                    {currentProfile?.city && (
+                      <div className="flex items-center gap-1 text-zinc-300">
+                        <MapPin className="h-4 w-4" />
+                        <span>{currentProfile.city}</span>
+                      </div>
+                    )}
+
+                    {currentProfile?.bio && (
+                      <p className="text-white/90 text-sm leading-relaxed mt-3 line-clamp-3">
+                        {currentProfile.bio}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setProfileOpen(true)}
+                  title="View full profile"
+                  className="absolute bottom-4 right-4 text-white/80 hover:text-white hover:bg-white/10"
+                >
+                  <Info className="h-4 w-4" />
+                </Button>
+              </div>
+            </Card>
+
+            {/* Actions */}
+            <div className="flex items-center justify-center gap-8 mt-6">
+              <Button
+                size="lg"
+                onClick={() => handleAction("pass")}
+                disabled={actionInProgress}
+                className="h-16 w-16 rounded-full bg-white/10 border-2 border-red-500/30 hover:bg-red-500/20 hover:border-red-500/50 transition-all shadow-lg"
+                variant="outline"
+                title="Pass"
+              >
+                <X className="h-8 w-8 text-red-400" />
+              </Button>
+
+              <Button
+                size="lg"
+                onClick={() => handleAction("like")}
+                disabled={actionInProgress}
+                className="h-20 w-20 rounded-full bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 shadow-2xl shadow-fuchsia-500/30 border-2 border-fuchsia-400/50 relative overflow-hidden"
+                title="Like"
+              >
+                <Heart className="h-10 w-10 text-white relative z-10" />
+                <div className="absolute inset-0 bg-gradient-to-t from-white/20 to-transparent" />
+              </Button>
+
+              {/* Super Like (blue) */}
+              <Button
+                size="lg"
+                onClick={handleSuperLike}
+                disabled={actionInProgress}
+                className="h-16 w-16 rounded-full bg-white/10 border-2 border-blue-500/30 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all shadow-lg"
+                variant="outline"
+                title="Super Like"
+                aria-label="Super Like"
+              >
+                <Zap className="h-8 w-8 text-blue-400" />
+              </Button>
+            </div>
+
+            <div className="flex justify-between items-center mt-6 px-4 text-sm text-zinc-500">
+              <div className="flex items-center gap-1">
+                <X className="h-4 w-4 text-red-400" />
+                <span>Swipe left to pass</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>Swipe right to like</span>
+                <Heart className="h-4 w-4 text-fuchsia-400" />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Full Profile Modal */}
+      {profileOpen && currentProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl bg-black/90 border-zinc-700 backdrop-blur overflow-hidden">
+            <CardContent className="p-0">
+              {/* Header media */}
+              <div className="relative h-72 bg-zinc-900">
+                {currentProfile.video_intro_url ? (
+                  <video
+                    src={currentProfile.video_intro_url}
+                    className="w-full h-full object-cover"
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                  />
+                ) : currentProfile.photos?.length ? (
+                  <img
+                    src={currentProfile.photos[0]}
+                    alt={currentProfile.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Avatar className="h-24 w-24">
+                      <AvatarImage />
+                      <AvatarFallback className="text-3xl bg-zinc-800 text-zinc-300">
+                        {currentProfile.name?.charAt(0) || "U"}
+                      </AvatarFallback>
+                    </Avatar>
+                  </div>
+                )}
+
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setProfileOpen(false)}
+                  className="absolute top-3 right-3 text-white/80 hover:text-white hover:bg-white/10"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Name / age / distance */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-2xl font-bold text-white">
+                    {currentProfile.name} <span className="text-zinc-300 font-normal">{currentProfile.age}</span>
+                  </h2>
+                  {typeof currentProfile.distance === "number" && (
+                    <Badge variant="secondary" className="bg-white/10 text-white border-0">
+                      <MapPin className="h-3 w-3 mr-1" />
+                      {currentProfile.distance}mi away
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Bio */}
+                {currentProfile.bio && (
+                  <div className="text-zinc-200">{currentProfile.bio}</div>
+                )}
+
+                {/* Gallery */}
+                {currentProfile.photos?.length ? (
+                  <div>
+                    <div className="text-zinc-400 mb-2">Photos</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {currentProfile.photos.map((p, i) => (
+                        <img key={i} src={p} alt={`Photo ${i + 1}`} className="h-28 w-full object-cover rounded-md" />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Details */}
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <DetailRow label="Looking for" value={currentProfile.relationship_goal || undefined} />
+                  <DetailRow label="Height" value={currentProfile.height || undefined} />
+                  <DetailRow label="Body type" value={currentProfile.body_type || undefined} />
+                  <DetailRow label="Education" value={currentProfile.education || undefined} />
+                  <DetailRow label="Religion" value={currentProfile.religion || undefined} />
+                  <DetailRow label="Drinking" value={currentProfile.drinking || undefined} />
+                  <DetailRow label="Smoking" value={currentProfile.smoking || undefined} />
+                  <DetailRow label="Exercise" value={currentProfile.exercise || undefined} />
+                  <DetailRow label="Kids" value={currentProfile.has_kids || undefined} />
+                  <DetailRow label="Wants kids" value={currentProfile.wants_kids || undefined} />
+                  <DetailRow label="Pets" value={currentProfile.pets || undefined} />
+                </div>
+
+                <PillList label="Interests" items={currentProfile.interests || undefined} />
+                <PillList label="Hobbies" items={currentProfile.hobbies || undefined} />
+
+                {/* Action row inside modal */}
+                <div className="flex items-center justify-center gap-6 pt-2">
+                  <Button
+                    size="lg"
+                    onClick={() => handleAction("pass")}
+                    disabled={actionInProgress}
+                    className="h-14 w-14 rounded-full bg-white/10 border-2 border-red-500/30 hover:bg-red-500/20 hover:border-red-500/50 transition-all"
+                    variant="outline"
+                    title="Pass"
+                  >
+                    <X className="h-7 w-7 text-red-400" />
+                  </Button>
+
+                  <Button
+                    size="lg"
+                    onClick={() => handleAction("like")}
+                    disabled={actionInProgress}
+                    className="h-16 w-16 rounded-full bg-gradient-to-r from-fuchsia-600 to-pink-600 hover:from-fuchsia-500 hover:to-pink-500 border-2 border-fuchsia-400/50 relative overflow-hidden"
+                    title="Like"
+                  >
+                    <Heart className="h-9 w-9 text-white relative z-10" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-white/20 to-transparent" />
+                  </Button>
+
+                  <Button
+                    size="lg"
+                    onClick={handleSuperLike}
+                    disabled={actionInProgress}
+                    className="h-14 w-14 rounded-full bg-white/10 border-2 border-blue-500/30 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all"
+                    variant="outline"
+                    title="Super Like"
+                  >
+                    <Zap className="h-7 w-7 text-blue-400" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Preferences Modal */}
+      {prefsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-lg bg-black/90 border-zinc-700 backdrop-blur">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-semibold text-white">Match Preferences</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPrefsOpen(false)}
+                  className="text-zinc-400 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Seeking */}
+                <div>
+                  <h4 className="text-white font-medium mb-3">Looking for</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {SEEKING_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        onClick={() =>
+                          setSeeking((prev) =>
+                            prev.includes(option)
+                              ? prev.filter((x) => x !== option)
+                              : [...prev, option]
+                          )
+                        }
+                        className={`p-3 rounded-lg text-sm text-left transition-colors ${
+                          seeking.includes(option)
+                            ? "bg-gradient-to-r from-fuchsia-600/20 to-purple-600/20 border-fuchsia-500 text-fuchsia-200 border"
+                            : "bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-600 border"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Distance (miles) */}
+                <div>
+                  <h4 className="text-white font-medium mb-3">
+                    Maximum Distance: {maxDistance} mi
+                  </h4>
+                  <input
+                    type="range"
+                    min={1}
+                    max={200}
+                    value={maxDistance}
+                    onChange={(e) => setMaxDistance(parseInt(e.target.value))}
+                    className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                {/* Age Range */}
+                <div>
+                  <h4 className="text-white font-medium mb-3">
+                    Age Range: {ageRange[0]} - {ageRange[1]}
+                  </h4>
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="text-xs text-zinc-400">Min Age</label>
+                      <input
+                        type="number"
+                        min={18}
+                        max={100}
+                        value={ageRange[0]}
+                        onChange={(e) =>
+                          setAgeRange([clamp(parseInt(e.target.value), 18, ageRange[1]), ageRange[1]])
+                        }
+                        className="w-full mt-1 p-2 bg-zinc-800 border border-zinc-700 rounded text-white"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-zinc-400">Max Age</label>
+                      <input
+                        type="number"
+                        min={18}
+                        max={100}
+                        value={ageRange[1]}
+                        onChange={(e) =>
+                          setAgeRange([ageRange[0], clamp(parseInt(e.target.value), ageRange[0], 100)])
+                        }
+                        className="w-full mt-1 p-2 bg-zinc-800 border border-zinc-700 rounded text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-8">
+                <Button
+                  onClick={savePreferences}
+                  disabled={savingPrefs}
+                  className="flex-1 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500"
+                >
+                  {savingPrefs ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    "Save Preferences"
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setPrefsOpen(false)}
+                  className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
 
-export default DatingOnboarding;
+export default DatingDiscover;
