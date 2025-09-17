@@ -315,25 +315,25 @@ const SplikzDatingHome = () => {
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select height</option>
-                      <option value="4'11\"">4'11"</option>
-                      <option value="5'0\"">5'0"</option>
-                      <option value="5'1\"">5'1"</option>
-                      <option value="5'2\"">5'2"</option>
-                      <option value="5'3\"">5'3"</option>
-                      <option value="5'4\"">5'4"</option>
-                      <option value="5'5\"">5'5"</option>
-                      <option value="5'6\"">5'6"</option>
-                      <option value="5'7\"">5'7"</option>
-                      <option value="5'8\"">5'8"</option>
-                      <option value="5'9\"">5'9"</option>
-                      <option value="5'10\"">5'10"</option>
-                      <option value="5'11\"">5'11"</option>
-                      <option value="6'0\"">6'0"</option>
-                      <option value="6'1\"">6'1"</option>
-                      <option value="6'2\"">6'2"</option>
-                      <option value="6'3\"">6'3"</option>
-                      <option value="6'4\"">6'4"</option>
-                      <option value="6'5\"+">6'5"+</option>
+                      <option value="4'11&quot;">4'11"</option>
+                      <option value="5'0&quot;">5'0"</option>
+                      <option value="5'1&quot;">5'1"</option>
+                      <option value="5'2&quot;">5'2"</option>
+                      <option value="5'3&quot;">5'3"</option>
+                      <option value="5'4&quot;">5'4"</option>
+                      <option value="5'5&quot;">5'5"</option>
+                      <option value="5'6&quot;">5'6"</option>
+                      <option value="5'7&quot;">5'7"</option>
+                      <option value="5'8&quot;">5'8"</option>
+                      <option value="5'9&quot;">5'9"</option>
+                      <option value="5'10&quot;">5'10"</option>
+                      <option value="5'11&quot;">5'11"</option>
+                      <option value="6'0&quot;">6'0"</option>
+                      <option value="6'1&quot;">6'1"</option>
+                      <option value="6'2&quot;">6'2"</option>
+                      <option value="6'3&quot;">6'3"</option>
+                      <option value="6'4&quot;">6'4"</option>
+                      <option value="6'5&quot;+">6'5"+</option>
                     </select>
                   </div>
                   <div>
