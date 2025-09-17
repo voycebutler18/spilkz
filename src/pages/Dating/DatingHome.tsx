@@ -1,34 +1,18 @@
+// src/pages/Dating/DatingHome.tsx
 import React, { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
-
 import {
-  Heart,
-  Play,
-  Star,
-  Shield,
-  Zap,
-  MessageCircle,
-  Camera,
-  Sparkles,
-  ArrowRight,
-  CheckCircle,
-  Lock,
-  MapPin,
-  X,
-  Volume2,
-  Video,
-  Upload,
+  Heart, Play, Star, Shield, Zap, MessageCircle, Camera, Sparkles, ArrowRight,
+  CheckCircle, Lock, MapPin, X, Volume2, Video, Upload
 } from "lucide-react";
 
-// helpers
+// ---- helpers ---------------------------------------------------------------
 const nameFor = (p?: any) => {
   if (!p) return "Friend";
   const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
@@ -40,7 +24,7 @@ const SplikzDatingHome: React.FC = () => {
 
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
-  const [hasDatingProfile, setHasDatingProfile] = useState<boolean>(false);
+  const [hasDatingProfile, setHasDatingProfile] = useState(false);
   const [showQuickStart, setShowQuickStart] = useState(false);
   const [showVideoUpload, setShowVideoUpload] = useState(false);
   const [previewName, setPreviewName] = useState("");
@@ -48,7 +32,7 @@ const SplikzDatingHome: React.FC = () => {
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
   const [loading, setLoading] = useState(true);
 
-  // load user + profile + dating profile existence
+  // Load user + profile + whether a dating profile exists
   useEffect(() => {
     let mounted = true;
 
@@ -63,9 +47,7 @@ const SplikzDatingHome: React.FC = () => {
         if (currentUser) {
           const { data: p } = await supabase
             .from("profiles")
-            .select(
-              "id, username, display_name, first_name, last_name, avatar_url, city"
-            )
+            .select("id, username, display_name, first_name, last_name, avatar_url, city")
             .eq("id", currentUser.id)
             .maybeSingle();
 
@@ -74,7 +56,6 @@ const SplikzDatingHome: React.FC = () => {
             setPreviewName(nameFor(p));
           }
 
-          // check if they already created a dating profile
           const { data: dp } = await supabase
             .from("dating_profiles")
             .select("user_id")
@@ -96,8 +77,7 @@ const SplikzDatingHome: React.FC = () => {
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      const u = session?.user ?? null;
-      setUser(u);
+      setUser(session?.user ?? null);
     });
 
     return () => {
@@ -105,6 +85,14 @@ const SplikzDatingHome: React.FC = () => {
       sub?.subscription?.unsubscribe();
     };
   }, []);
+
+  // ✅ Auto-redirect when ready
+  useEffect(() => {
+    if (loading) return;
+    if (user && hasDatingProfile) {
+      navigate("/dating/discover", { replace: true });
+    }
+  }, [loading, user, hasDatingProfile, navigate]);
 
   const avatarInitial =
     profile?.display_name?.[0] ||
@@ -124,36 +112,26 @@ const SplikzDatingHome: React.FC = () => {
   const handleSignUp = () => navigate("/signup");
   const handleSignIn = () => navigate("/login");
 
+  // While deciding where to send the user, avoid flashing the hero
+  if (!user && loading) {
+    return <div className="min-h-screen bg-black" />;
+  }
+
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">
-      {/* animated background (non-interactive, behind everything) */}
-      <div
-        className="pointer-events-none fixed inset-0 -z-10 select-none"
-        aria-hidden="true"
-      >
+      {/* decorative background must not block clicks */}
+      <div className="pointer-events-none fixed inset-0 -z-10 select-none" aria-hidden="true">
         <div className="absolute inset-0 bg-gradient-to-br from-purple-900/30 via-fuchsia-900/20 to-cyan-900/30" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_80%,_rgba(120,119,198,0.3),_transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_20%,_rgba(255,119,198,0.3),_transparent_50%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_40%_40%,_rgba(120,219,255,0.2),_transparent_50%)]" />
-        {[...Array(20)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute w-1 h-1 bg-white/30 rounded-full animate-pulse"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 3}s`,
-              animationDuration: `${2 + Math.random() * 3}s`,
-            }}
-          />
-        ))}
       </div>
 
-      {/* hero */}
+      {/* hero --------------------------------------------------------------- */}
       <section className="relative z-10 min-h-screen flex items-center">
         <div className="max-w-7xl mx-auto px-4 py-20">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
-            {/* left */}
+            {/* Left column */}
             <div className="space-y-8">
               <div className="flex items-center gap-4">
                 <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center shadow-lg shadow-fuchsia-500/25">
@@ -163,9 +141,7 @@ const SplikzDatingHome: React.FC = () => {
                   <h1 className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-white via-fuchsia-200 to-purple-200 bg-clip-text text-transparent">
                     Splikz Dating
                   </h1>
-                  <p className="text-zinc-400 text-lg">
-                    The 3-second connection revolution
-                  </p>
+                  <p className="text-zinc-400 text-lg">The 3-second connection revolution</p>
                 </div>
               </div>
 
@@ -180,8 +156,7 @@ const SplikzDatingHome: React.FC = () => {
 
                 <p className="text-xl text-zinc-300 leading-relaxed max-w-2xl">
                   Skip the endless scrolling. Share your authentic self through
-                  3-second video intros and connect with people who truly vibe
-                  with your energy.
+                  3-second video intros and connect with people who truly vibe with your energy.
                 </p>
 
                 <div className="flex gap-8 pt-4">
@@ -261,7 +236,7 @@ const SplikzDatingHome: React.FC = () => {
               )}
             </div>
 
-            {/* right phone demo (purely decorative) */}
+            {/* Right phone demo (decorative) */}
             <div className="relative">
               <div className="relative max-w-sm mx-auto">
                 <div className="relative bg-zinc-900 rounded-[3rem] p-4 shadow-2xl border border-zinc-700">
@@ -339,9 +314,7 @@ const SplikzDatingHome: React.FC = () => {
         </div>
       </section>
 
-      {/* features & success stories left as-is ... */}
-
-      {/* quick start modal */}
+      {/* Quick Start modal */}
       {user && !hasDatingProfile && showQuickStart && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <Card className="w-full max-w-2xl bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
@@ -351,9 +324,7 @@ const SplikzDatingHome: React.FC = () => {
                   <CardTitle className="text-2xl text-white">
                     Quick start your dating profile
                   </CardTitle>
-                  <p className="text-zinc-400 mt-1">
-                    We’ll prefill from your Splikz profile
-                  </p>
+                  <p className="text-zinc-400 mt-1">We’ll prefill from your Splikz profile</p>
                 </div>
                 <Button
                   variant="ghost"
@@ -471,7 +442,7 @@ const SplikzDatingHome: React.FC = () => {
         </div>
       )}
 
-      {/* video upload modal */}
+      {/* Video upload modal */}
       {showVideoUpload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <Card className="w-full max-w-lg bg-zinc-900/95 backdrop-blur-sm border-zinc-700 shadow-2xl">
