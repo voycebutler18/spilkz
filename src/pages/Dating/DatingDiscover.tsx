@@ -198,12 +198,20 @@ const DatingDiscover: React.FC = () => {
   // ─────────────────────────────────────────────
   const fetchMatches = async (userId: string, mine: MyProfile) => {
     try {
-      const { data: actions } = await supabase
+      // Get ALL actions (likes AND passes) to exclude from feed
+      const { data: actions, error: actionsError } = await supabase
         .from("dating_likes")
-        .select("liked_id,action")
+        .select("liked_id, action")
         .eq("liker_id", userId);
 
+      if (actionsError) {
+        console.error("Error fetching user actions:", actionsError);
+      }
+
+      // Create set of ALL user IDs that have been acted upon (liked OR passed)
       const excludeIds = new Set((actions || []).map((a: any) => a.liked_id));
+      
+      console.log(`Excluding ${excludeIds.size} profiles from feed:`, Array.from(excludeIds));
 
       let rows: any[] | null = null;
       try {
@@ -235,13 +243,22 @@ const DatingDiscover: React.FC = () => {
         rows = data || [];
       }
 
-      const filtered = rows
-        .filter((r) => !excludeIds.has(r.user_id))
-        .filter((r) => {
-          const age = Number(r.age) || 0;
-          if (age < (mine.min_age || 18) || age > (mine.max_age || 50)) return false;
-          return matchesSeeking(mine.seeking, r.gender);
-        })
+      console.log(`Total profiles before filtering: ${rows.length}`);
+
+      // Apply all filters step by step for debugging
+      const step1 = rows.filter((r) => !excludeIds.has(r.user_id));
+      console.log(`After excluding acted-upon profiles: ${step1.length} (excluded ${rows.length - step1.length})`);
+      
+      const step2 = step1.filter((r) => {
+        const age = Number(r.age) || 0;
+        return age >= (mine.min_age || 18) && age <= (mine.max_age || 50);
+      });
+      console.log(`After age filtering (${mine.min_age}-${mine.max_age}): ${step2.length}`);
+      
+      const step3 = step2.filter((r) => matchesSeeking(mine.seeking, r.gender));
+      console.log(`After gender/seeking filtering: ${step3.length}`);
+
+      const filtered = step3
         .map((r) => {
           const dist = milesBetween(
             mine.location_lat, mine.location_lng, r.location_lat, r.location_lng
@@ -253,6 +270,8 @@ const DatingDiscover: React.FC = () => {
           if (r.distance == null) return true;
           return r.distance <= (mine.max_distance || 50);
         });
+
+      console.log(`After distance filtering: ${filtered.length}`);
 
       // Sort by video/photo first, then nearest
       filtered.sort((a, b) => {
@@ -269,6 +288,9 @@ const DatingDiscover: React.FC = () => {
 
       setProfiles(filtered);
       setCurrentIndex(0);
+      
+      console.log(`Final filtered profiles: ${filtered.length}`);
+      console.log('Profile names:', filtered.map(p => p.name));
     } catch (err) {
       console.error("Error fetching matches:", err);
       toast({
@@ -525,15 +547,16 @@ const DatingDiscover: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPrefsOpen(true)}
-                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-              >
-                <Filter className="h-4 w-4 mr-2" />
-                Filters
-              </Button>
+              <Link to="/dating/profile/edit">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                >
+                  <Settings className="h-4 w-4 mr-2" />
+                  Edit Profile
+                </Button>
+              </Link>
 
               <Link to="/dating/hearts">
                 <Button
@@ -680,23 +703,16 @@ const DatingDiscover: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Tap to view more indicator */}
-                <div className="absolute bottom-20 left-0 right-0 flex justify-center">
-                  <Button
-                    onClick={() => setProfileOpen(true)}
-                    className="bg-black/60 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium transition-all"
-                  >
-                    <Info className="h-4 w-4 mr-2" />
-                    View full profile
-                  </Button>
-                </div>
-
-                {/* Subtle tap hint */}
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                  <div className="bg-black/40 backdrop-blur-sm border border-white/20 rounded-full px-3 py-1 text-white/70 text-xs animate-pulse">
-                    Tap to see more
-                  </div>
-                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setProfileOpen(true)}
+                  title="View full profile"
+                  className="absolute bottom-4 right-4 bg-black/60 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white backdrop-blur-sm px-3 py-2 rounded-lg text-sm font-medium transition-all"
+                >
+                  <Info className="h-4 w-4 mr-2" />
+                  View Profile
+                </Button>
               </div>
             </Card>
 
