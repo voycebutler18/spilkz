@@ -1,5 +1,5 @@
 // src/pages/Dating/DatingOnboarding.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -183,33 +183,8 @@ const DatingOnboardingWizard: React.FC = () => {
     showAge: true,
   });
 
-  // --- SIMPLIFIED KEY HANDLING - ONLY PREVENT SPECIFIC SHORTCUTS ---
+  // --- NO KEY HANDLING TO AVOID FOCUS ISSUES ---
   const rootRef = useRef<HTMLDivElement>(null);
-  
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Only prevent specific problematic shortcuts that might interfere with the form
-      // Don't interfere with normal typing in input fields
-      const target = e.target as HTMLElement;
-      const isInputField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
-      
-      // If user is typing in an input field, let them type normally
-      if (isInputField) {
-        return;
-      }
-      
-      // Only prevent specific navigation shortcuts when NOT in input fields
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ') {
-        e.preventDefault();
-      }
-    };
-    
-    // Use normal event listener, not capture
-    window.addEventListener("keydown", handler);
-    return () => {
-      window.removeEventListener("keydown", handler);
-    };
-  }, []);
   // -------------------------------------------------------
 
   // DOB parts
@@ -255,16 +230,16 @@ const DatingOnboardingWizard: React.FC = () => {
     }
   }, [dobYear, dobMonth, dobDay]);
 
-  const handleInput = (field: string, value: any) =>
-    setFormData((p) => ({ ...p, [field]: value }));
+  const handleInput = useCallback((field: string, value: any) =>
+    setFormData((p) => ({ ...p, [field]: value })), []);
 
-  const toggleArrayItem = (field: "seeking" | "interests", val: string) =>
+  const toggleArrayItem = useCallback((field: "seeking" | "interests", val: string) =>
     setFormData((p) => ({
       ...p,
       [field]: p[field].includes(val)
         ? p[field].filter((x) => x !== val)
         : [...p[field], val],
-    }));
+    })), []);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -287,7 +262,7 @@ const DatingOnboardingWizard: React.FC = () => {
   };
 
   // ---------- validation ----------
-  const stepError: string | null = useMemo(() => {
+  const stepError = useMemo(() => {
     switch (currentStep) {
       case 1: {
         if (!formData.name.trim()) return "Please enter your name.";
@@ -322,13 +297,14 @@ const DatingOnboardingWizard: React.FC = () => {
     }
   }, [currentStep, formData, dobYear, dobMonth, dobDay]);
 
-  const nextStep = () => {
+  const nextStep = useCallback(() => {
     if (!stepError) setCurrentStep((s) => Math.min(totalSteps, s + 1));
-  };
-  const prevStep = () => {
+  }, [stepError, totalSteps]);
+  
+  const prevStep = useCallback(() => {
     if (currentStep === 1) navigate("/dating");
     else setCurrentStep((s) => Math.max(1, s - 1));
-  };
+  }, [currentStep, navigate]);
 
   // -------- PUBLISH ----------
   const publishProfile = async () => {
@@ -573,11 +549,13 @@ const DatingOnboardingWizard: React.FC = () => {
                 <div>
                   <Label className="text-zinc-300 text-sm font-medium">Your name</Label>
                   <Input
+                    key="name-input"
                     value={formData.name}
                     onChange={(e) => handleInput("name", e.target.value)}
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                     placeholder="What should people call you?"
                     autoComplete="off"
+                    autoFocus={false}
                   />
                 </div>
 
@@ -586,11 +564,13 @@ const DatingOnboardingWizard: React.FC = () => {
                   <div className="relative mt-2">
                     <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-zinc-500" />
                     <Input
+                      key="city-input"
                       value={formData.city}
                       onChange={(e) => handleInput("city", e.target.value)}
                       className="pl-10 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                       placeholder="Where are you based?"
                       autoComplete="off"
+                      autoFocus={false}
                     />
                   </div>
                 </div>
@@ -643,12 +623,14 @@ const DatingOnboardingWizard: React.FC = () => {
                 <div>
                   <Label className="text-zinc-300 text-sm font-medium">Age</Label>
                   <Input
+                    key="age-input"
                     inputMode="numeric"
                     value={formData.age}
                     onChange={(e) => handleInput("age", e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
                     placeholder="Your age"
                     autoComplete="off"
+                    autoFocus={false}
                   />
                 </div>
               </div>
@@ -678,11 +660,13 @@ const DatingOnboardingWizard: React.FC = () => {
               <div>
                 <Label className="text-zinc-300 text-sm font-medium">Tell us about yourself</Label>
                 <Textarea
+                  key="bio-textarea"
                   value={formData.bio}
                   onChange={(e) => handleInput("bio", e.target.value.slice(0, 500))}
                   className="mt-2 bg-zinc-900 border-zinc-700 text-white min-h-[120px] resize-none"
                   placeholder="Share your vibe, interests, what makes you unique..."
                   autoComplete="off"
+                  autoFocus={false}
                 />
                 <div className="text-xs text-zinc-500 mt-2 text-right">{formData.bio.length}/500</div>
               </div>
@@ -733,6 +717,7 @@ const DatingOnboardingWizard: React.FC = () => {
                   ))}
                 </div>
                 <Input
+                  key="pronouns-input"
                   value={
                     ["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].includes(formData.pronouns)
                       ? ""
@@ -742,6 +727,7 @@ const DatingOnboardingWizard: React.FC = () => {
                   className="mt-3 bg-zinc-900 border-zinc-700 text-white"
                   placeholder="Or enter custom pronouns..."
                   autoComplete="off"
+                  autoFocus={false}
                 />
               </div>
             </div>
