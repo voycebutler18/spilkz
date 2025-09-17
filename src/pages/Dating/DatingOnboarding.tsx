@@ -25,23 +25,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
 
 /**
- * This onboarding page is 3 simple steps with proper validation:
- * 1) Bio (typing is fully controlled and stable)
- * 2) Media (photos + optional 3s video) - REAL UPLOADS
- * 3) Preview + Publish
- *
- * Now includes:
- * - Age restriction (18+ only)
- * - Browser geolocation
- * - Real file uploads to Supabase
- * - Dating-specific user filtering
+ * 3-step onboarding with:
+ * - 18+ age gate
+ * - Browser geolocation prompt
+ * - Real uploads to Supabase Storage (dating_photos / dating_videos)
+ * - Redirect to /dating/discover if profile already exists
  */
 
 type SignupData = {
   name: string;
   age: string;
   gender: string;
-  seeking: string;
+  seeking: string | string[];
   location: string; // or "lat,lng"
   city?: string;
 };
@@ -56,6 +51,9 @@ const DatingOnboarding: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // ---- routing/profile gate ----
+  const [checking, setChecking] = useState(true);
+
   // ---- seed from localStorage written by dating home ----
   const [seed, setSeed] = useState<SignupData | null>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -66,8 +64,11 @@ const DatingOnboarding: React.FC = () => {
   const [videoIntro, setVideoIntro] = useState<TempVideo | null>(null);
 
   // Location state
-  const [locationPermission, setLocationPermission] = useState<'pending' | 'granted' | 'denied'>('pending');
-  const [coordinates, setCoordinates] = useState<{lat: number, lng: number} | null>(null);
+  const [locationPermission, setLocationPermission] =
+    useState<"pending" | "granted" | "denied">("pending");
+  const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(
+    null
+  );
   const [locationError, setLocationError] = useState<string>("");
 
   // UX state
@@ -76,62 +77,101 @@ const DatingOnboarding: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [ageVerified, setAgeVerified] = useState(false);
 
-  // Get current user
+  // ─────────────────────────────────────────────
+  // GATE: if logged in + already has dating profile → go to Discover
+  // Otherwise continue onboarding.
+  // ─────────────────────────────────────────────
   useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setCurrentUser(user);
-    };
-    getUser();
+    let alive = true;
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setCurrentUser(session?.user ?? null);
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!alive) return;
+
+      if (!user) {
+        setChecking(false);
+        navigate("/login", { replace: true });
+        return;
+      }
+
+      setCurrentUser(user);
+
+      const { data: dp } = await supabase
+        .from("dating_profiles")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (!alive) return;
+
+      if (dp) {
+        navigate("/dating/discover", { replace: true });
+        return;
+      }
+
+      setChecking(false);
+    })();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const uid = session?.user?.id;
+      if (!uid) return;
+      supabase
+        .from("dating_profiles")
+        .select("user_id")
+        .eq("user_id", uid)
+        .maybeSingle()
+        .then(({ data: dp }) => {
+          if (dp) navigate("/dating/discover", { replace: true });
+        });
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Load seed and verify age
-  useEffect(() => {
-    const loadSeed = async () => {
-      try {
-        const raw = localStorage.getItem("dating_signup_data");
-        if (!raw) {
-          navigate("/dating", { replace: true });
-          return;
-        }
-        const parsed = JSON.parse(raw) as SignupData;
-        
-        // Age verification - must be 18+
-        const age = parseInt(parsed.age);
-        if (isNaN(age) || age < 18) {
-          toast({
-            title: "Age Restriction",
-            description: "You must be 18 or older to use the dating feature.",
-            variant: "destructive",
-          });
-          navigate("/dating", { replace: true });
-          return;
-        }
-        
-        setSeed(parsed);
-        setAgeVerified(true);
-        
-        // Auto-request location permission
-        requestLocation();
-      } catch {
-        navigate("/dating", { replace: true });
-      }
+    return () => {
+      alive = false;
+      subscription.unsubscribe();
     };
-    
-    loadSeed();
-  }, [navigate, toast]);
+  }, [navigate]);
+
+  // Load seed and verify age (only after gate completes)
+  useEffect(() => {
+    if (checking) return;
+
+    try {
+      const raw = localStorage.getItem("dating_signup_data");
+      if (!raw) {
+        navigate("/dating", { replace: true });
+        return;
+      }
+      const parsed = JSON.parse(raw) as SignupData;
+
+      // Age verification - must be 18+
+      const age = parseInt(parsed.age as string, 10);
+      if (isNaN(age) || age < 18) {
+        toast({
+          title: "Age Restriction",
+          description: "You must be 18 or older to use the dating feature.",
+          variant: "destructive",
+        });
+        navigate("/dating", { replace: true });
+        return;
+      }
+
+      setSeed(parsed);
+      setAgeVerified(true);
+
+      // Auto-request location permission (prompts browser)
+      requestLocation();
+    } catch {
+      navigate("/dating", { replace: true });
+    }
+  }, [checking, navigate, toast]);
 
   // Request browser geolocation
   const requestLocation = () => {
     if (!navigator.geolocation) {
       setLocationError("Geolocation is not supported by this browser.");
-      setLocationPermission('denied');
+      setLocationPermission("denied");
       return;
     }
 
@@ -141,7 +181,7 @@ const DatingOnboarding: React.FC = () => {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         });
-        setLocationPermission('granted');
+        setLocationPermission("granted");
         toast({
           title: "Location enabled",
           description: "We'll show you people nearby!",
@@ -161,7 +201,7 @@ const DatingOnboarding: React.FC = () => {
             break;
         }
         setLocationError(message);
-        setLocationPermission('denied');
+        setLocationPermission("denied");
       },
       {
         enableHighAccuracy: true,
@@ -173,22 +213,16 @@ const DatingOnboarding: React.FC = () => {
 
   // Upload file to Supabase storage
   const uploadFile = async (file: File, isVideo: boolean = false): Promise<string> => {
-    const bucket = isVideo ? 'dating_videos' : 'dating_photos';
+    const bucket = isVideo ? "dating_videos" : "dating_photos";
     if (!currentUser) throw new Error("Must be logged in to upload");
-    
-    const fileExt = file.name.split('.').pop();
+
+    const fileExt = file.name.split(".").pop();
     const fileName = `${currentUser.id}/${Date.now()}.${fileExt}`;
-    
-    const { error: uploadError } = await supabase.storage
-      .from(bucket)
-      .upload(fileName, file);
-    
+
+    const { error: uploadError } = await supabase.storage.from(bucket).upload(fileName, file);
     if (uploadError) throw uploadError;
-    
-    const { data } = supabase.storage
-      .from(bucket)
-      .getPublicUrl(fileName);
-    
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(fileName);
     return data.publicUrl;
   };
 
@@ -202,9 +236,7 @@ const DatingOnboarding: React.FC = () => {
       });
       return;
     }
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
+    if (!file.type.startsWith("image/")) {
       toast({
         title: "Invalid file type",
         description: "Please upload image files only (JPG, PNG, WEBP, GIF).",
@@ -212,8 +244,6 @@ const DatingOnboarding: React.FC = () => {
       });
       return;
     }
-
-    // Check file size (10MB limit)
     const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
       toast({
@@ -232,12 +262,6 @@ const DatingOnboarding: React.FC = () => {
         title: "Photo added",
         description: "Photo will be uploaded when you publish your profile.",
       });
-    } catch (error) {
-      toast({
-        title: "Error adding photo",
-        description: "Please try again.",
-        variant: "destructive",
-      });
     } finally {
       setUploading(false);
     }
@@ -245,17 +269,14 @@ const DatingOnboarding: React.FC = () => {
 
   const removePhoto = (id: number) => {
     setPhotos((prev) => {
-      const photo = prev.find(p => p.id === id);
-      if (photo) {
-        URL.revokeObjectURL(photo.url);
-      }
+      const photo = prev.find((p) => p.id === id);
+      if (photo) URL.revokeObjectURL(photo.url);
       return prev.filter((p) => p.id !== id);
     });
   };
 
   const addVideoIntro = (file: File) => {
-    // Validate file type
-    if (!file.type.startsWith('video/')) {
+    if (!file.type.startsWith("video/")) {
       toast({
         title: "Invalid file type",
         description: "Please upload video files only (MP4, MOV, WebM).",
@@ -263,8 +284,6 @@ const DatingOnboarding: React.FC = () => {
       });
       return;
     }
-
-    // Check file size (50MB limit)
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
       toast({
@@ -274,10 +293,7 @@ const DatingOnboarding: React.FC = () => {
       });
       return;
     }
-
-    if (videoIntro) {
-      URL.revokeObjectURL(videoIntro.url);
-    }
+    if (videoIntro) URL.revokeObjectURL(videoIntro.url);
 
     const url = URL.createObjectURL(file);
     setVideoIntro({ url, file });
@@ -303,13 +319,15 @@ const DatingOnboarding: React.FC = () => {
 
   const progress = useMemo(() => (step / 3) * 100, [step]);
 
-  const next = () => (step < 3 ? setStep((s) => (clamp(s + 1, 1, 3) as 1 | 2 | 3)) : publish());
-  const prev = () => (step > 1 ? setStep((s) => (clamp(s - 1, 1, 3) as 1 | 2 | 3)) : navigate("/dating"));
+  const next = () =>
+    step < 3 ? setStep((s) => (clamp(s + 1, 1, 3) as 1 | 2 | 3)) : publish();
+  const prev = () =>
+    step > 1 ? setStep((s) => (clamp(s - 1, 1, 3) as 1 | 2 | 3)) : navigate("/dating");
 
   // -------- publish (REAL save with uploads) --------
   async function publish() {
     if (!seed || !currentUser || !ageVerified) return;
-    
+
     setSaving(true);
 
     try {
@@ -338,24 +356,25 @@ const DatingOnboarding: React.FC = () => {
           console.error("Failed to upload video:", error);
           toast({
             title: "Video upload failed",
-            description: "Video couldn't be uploaded. Profile will be saved without it.",
+            description:
+              "Video couldn't be uploaded. Profile will be saved without it.",
             variant: "destructive",
           });
         }
       }
 
-      // Create dating profile
+      // Create/Update dating profile
       const profileData = {
         user_id: currentUser.id,
         name: seed.name,
-        age: parseInt(seed.age),
+        age: parseInt(seed.age as string, 10),
         gender: seed.gender,
-        seeking: Array.isArray(seed.seeking) ? seed.seeking : [seed.seeking], // Ensure it's an array
+        seeking: Array.isArray(seed.seeking) ? seed.seeking : [seed.seeking],
         bio: bio.trim(),
         photos: uploadedPhotos,
         video_intro_url: videoUrl,
-        location_lat: coordinates?.lat || null,
-        location_lng: coordinates?.lng || null,
+        location_lat: coordinates?.lat ?? null,
+        location_lng: coordinates?.lng ?? null,
         city: seed.city || null,
         location_string: seed.location || null,
         is_active: true,
@@ -364,38 +383,35 @@ const DatingOnboarding: React.FC = () => {
         updated_at: new Date().toISOString(),
       };
 
-      // Insert into dating_profiles table
       const { error: profileError } = await supabase
-        .from('dating_profiles')
-        .upsert(profileData);
+        .from("dating_profiles")
+        .upsert(profileData, { onConflict: "user_id" });
 
       if (profileError) throw profileError;
 
-      // Update user's dating_enabled flag if it exists
+      // Optional flag on profiles table
       try {
         await supabase
-          .from('profiles')
+          .from("profiles")
           .update({ dating_enabled: true })
-          .eq('id', currentUser.id);
-      } catch (error) {
-        console.warn("Could not update dating_enabled flag:", error);
+          .eq("id", currentUser.id);
+      } catch (e) {
+        console.warn("Could not update dating_enabled flag:", e);
       }
 
-      // Clean up localStorage
       localStorage.removeItem("dating_signup_data");
 
       toast({
-        title: "Profile created successfully!",
-        description: "Welcome to Splikz Dating! Start discovering amazing people.",
+        title: "Profile created!",
+        description: "Welcome to Splikz Dating. Let’s find your match.",
       });
 
       navigate("/dating/discover", { replace: true });
-
     } catch (error: any) {
       console.error("Profile creation error:", error);
       toast({
         title: "Profile creation failed",
-        description: error.message || "Something went wrong. Please try again.",
+        description: error?.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -403,8 +419,8 @@ const DatingOnboarding: React.FC = () => {
     }
   }
 
-  // Loading state
-  if (!seed || !ageVerified) {
+  // Loading gates
+  if (checking || !seed || !ageVerified) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <Loader2 className="h-8 w-8 text-fuchsia-500 animate-spin" />
@@ -444,7 +460,7 @@ const DatingOnboarding: React.FC = () => {
       </div>
 
       {/* Location Permission Alert */}
-      {locationPermission === 'denied' && (
+      {locationPermission === "denied" && (
         <div className="container mx-auto px-4 pt-4 max-w-5xl">
           <Alert className="border-yellow-500/20 bg-yellow-500/10">
             <AlertTriangle className="h-4 w-4 text-yellow-500" />
@@ -453,9 +469,9 @@ const DatingOnboarding: React.FC = () => {
                 <div>
                   <strong>Location access denied:</strong> {locationError}
                 </div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={requestLocation}
                   className="ml-4"
                 >
@@ -500,11 +516,14 @@ const DatingOnboarding: React.FC = () => {
                       )}
                     </div>
                     <div>
-                      <div className="text-white font-semibold">{seed.name}, {seed.age}</div>
+                      <div className="text-white font-semibold">
+                        {seed.name}, {seed.age}
+                      </div>
                       <div className="text-zinc-400 text-sm flex items-center gap-1">
                         <MapPin className="h-3 w-3" />
-                        {locationPermission === 'granted' ? 'Location enabled' : 
-                         seed.city || seed.location || "Location pending"}
+                        {locationPermission === "granted"
+                          ? "Location enabled"
+                          : seed.city || seed.location || "Location pending"}
                       </div>
                     </div>
                   </div>
@@ -535,7 +554,9 @@ const DatingOnboarding: React.FC = () => {
             {step === 2 && (
               <Card className="bg-black/40 border-zinc-700 backdrop-blur">
                 <CardHeader>
-                  <CardTitle className="text-2xl text-white">Add photos & 3-sec intro</CardTitle>
+                  <CardTitle className="text-2xl text-white">
+                    Add photos & 3-sec intro
+                  </CardTitle>
                   <p className="text-zinc-400">
                     Add at least one photo. Video intro is optional but highly recommended.
                   </p>
@@ -566,7 +587,9 @@ const DatingOnboarding: React.FC = () => {
                             type="file"
                             accept="video/*"
                             className="hidden"
-                            onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])}
+                            onChange={(e) =>
+                              e.target.files?.[0] && addVideoIntro(e.target.files[0])
+                            }
                           />
                         </label>
                       </div>
@@ -602,7 +625,9 @@ const DatingOnboarding: React.FC = () => {
 
                   {/* Photos */}
                   <div>
-                    <h3 className="text-white font-semibold mb-3">Photos ({photos.length}/6)</h3>
+                    <h3 className="text-white font-semibold mb-3">
+                      Photos ({photos.length}/6)
+                    </h3>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       {photos.map((p, i) => (
                         <div key={p.id} className="relative group">
@@ -631,7 +656,9 @@ const DatingOnboarding: React.FC = () => {
                           <input
                             type="file"
                             accept="image/*"
-                            onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])}
+                            onChange={(e) =>
+                              e.target.files?.[0] && addPhoto(e.target.files[0])
+                            }
                             className="hidden"
                           />
                           {uploading ? (
@@ -684,26 +711,41 @@ const DatingOnboarding: React.FC = () => {
                         <div className="text-zinc-400">{photos.length} added</div>
                       </div>
                       <div className="bg-black/20 rounded-lg p-3">
-                        <div className={videoIntro ? "text-green-400 font-semibold" : "text-zinc-500"}>
+                        <div
+                          className={
+                            videoIntro
+                              ? "text-green-400 font-semibold"
+                              : "text-zinc-500"
+                          }
+                        >
                           {videoIntro ? "✓ Video Intro" : "○ Video Intro"}
                         </div>
-                        <div className="text-zinc-400">{videoIntro ? "Added" : "Optional"}</div>
+                        <div className="text-zinc-400">
+                          {videoIntro ? "Added" : "Optional"}
+                        </div>
                       </div>
                       <div className="bg-black/20 rounded-lg p-3">
-                        <div className={locationPermission === 'granted' ? "text-green-400 font-semibold" : "text-yellow-400 font-semibold"}>
-                          {locationPermission === 'granted' ? "✓ Location" : "⚠ Location"}
+                        <div
+                          className={
+                            locationPermission === "granted"
+                              ? "text-green-400 font-semibold"
+                              : "text-yellow-400 font-semibold"
+                          }
+                        >
+                          {locationPermission === "granted" ? "✓ Location" : "⚠ Location"}
                         </div>
                         <div className="text-zinc-400">
-                          {locationPermission === 'granted' ? "Enabled" : "Optional"}
+                          {locationPermission === "granted" ? "Enabled" : "Optional"}
                         </div>
                       </div>
                     </div>
 
-                    {locationPermission === 'denied' && (
+                    {locationPermission === "denied" && (
                       <Alert className="mt-4 border-blue-500/20 bg-blue-500/10">
                         <Info className="h-4 w-4 text-blue-500" />
                         <AlertDescription className="text-sm">
-                          Without location, you'll see profiles from a wider area. You can enable it later in settings.
+                          Without location, you'll see profiles from a wider area. You can
+                          enable it later in settings.
                         </AlertDescription>
                       </Alert>
                     )}
@@ -748,7 +790,7 @@ const DatingOnboarding: React.FC = () => {
             </div>
           </div>
 
-          {/* Live Preview (sticky, lightweight so it won't steal focus) */}
+          {/* Live Preview (sticky) */}
           <div className="lg:col-span-1">
             <div className="sticky top-8">
               <Card className="bg-black/40 border-zinc-700 backdrop-blur">
@@ -790,8 +832,9 @@ const DatingOnboarding: React.FC = () => {
                         </h3>
                         <p className="text-zinc-400 text-sm flex items-center justify-center gap-1">
                           <MapPin className="h-3 w-3" />
-                          {locationPermission === 'granted' ? 'Nearby' :
-                           seed.city || seed.location || "Location pending"}
+                          {locationPermission === "granted"
+                            ? "Nearby"
+                            : seed.city || seed.location || "Location pending"}
                         </p>
                       </div>
 
