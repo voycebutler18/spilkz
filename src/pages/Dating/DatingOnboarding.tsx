@@ -1,4 +1,3 @@
-// src/pages/Dating/DatingOnboarding.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +21,7 @@ import {
   Plus,
   Star,
   Users,
+  Coffee,
   Music2,
   Palette,
   BookOpen,
@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
-/* ------------ constants ------------- */
+/* constants */
 const GENDER_IDENTITIES = [
   { id: "man", label: "Man", icon: "👨" },
   { id: "woman", label: "Woman", icon: "👩" },
@@ -69,31 +69,26 @@ const RELATIONSHIP_TYPES = [
     id: "long_term",
     label: "Long-term relationship",
     desc: "Looking for something serious and meaningful",
-    gradient: "from-red-500/20 to-pink-500/20 border-red-500/30",
   },
   {
     id: "short_term",
     label: "Short-term dating",
     desc: "Casual dating, see what happens naturally",
-    gradient: "from-orange-500/20 to-yellow-500/20 border-orange-500/30",
   },
   {
     id: "friends",
     label: "New friends",
     desc: "Building genuine platonic connections",
-    gradient: "from-blue-500/20 to-cyan-500/20 border-blue-500/30",
   },
   {
     id: "networking",
     label: "Professional networking",
     desc: "Career connections and opportunities",
-    gradient: "from-purple-500/20 to-indigo-500/20 border-purple-500/30",
   },
   {
     id: "unsure",
     label: "Open to possibilities",
     desc: "Still figuring it out, open to connections",
-    gradient: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30",
   },
 ];
 
@@ -122,7 +117,7 @@ const INTEREST_CATEGORIES = [
     name: "Social",
     items: [
       { id: "foodie", label: "Foodie", icon: ChefHat },
-      { id: "coffee", label: "Coffee", icon: Users },
+      { id: "coffee", label: "Coffee", icon: Coffee },
       { id: "travel", label: "Travel", icon: Plane },
       { id: "nightlife", label: "Nightlife", icon: Users },
       { id: "cooking", label: "Cooking", icon: ChefHat },
@@ -140,9 +135,9 @@ const INTEREST_CATEGORIES = [
   },
 ];
 
-/* ---------- DOB helpers ---------- */
+/* DOB helpers */
 const today = new Date();
-const MAX_YEAR = today.getFullYear() - 18; // must be 18+
+const MAX_YEAR = today.getFullYear() - 18;
 const MIN_YEAR = 1900;
 const MONTHS = [
   { v: "01", n: "Jan" }, { v: "02", n: "Feb" }, { v: "03", n: "Mar" },
@@ -150,6 +145,7 @@ const MONTHS = [
   { v: "07", n: "Jul" }, { v: "08", n: "Aug" }, { v: "09", n: "Sep" },
   { v: "10", n: "Oct" }, { v: "11", n: "Nov" }, { v: "12", n: "Dec" },
 ];
+
 const ageFromISO = (iso: string) => {
   if (!iso) return "";
   const d = new Date(iso);
@@ -158,12 +154,12 @@ const ageFromISO = (iso: string) => {
   if (m < 0 || (m === 0 && today.getDate() < d.getDate())) a--;
   return a < 0 || Number.isNaN(a) ? "" : String(a);
 };
-const daysInMonth = (year?: number, month1to12?: number) => {
-  if (!year || !month1to12) return 31; // allow choosing Day first
-  return new Date(year, month1to12, 0).getDate();
-};
 
-/* -------------- storage helpers --------------- */
+function daysInMonth(year: number, month1to12: number) {
+  return new Date(year, month1to12, 0).getDate();
+}
+
+/* storage helper */
 async function uploadToBucket(
   bucket: string,
   file: File,
@@ -182,9 +178,6 @@ async function uploadToBucket(
   return data.publicUrl;
 }
 
-type MediaPhoto = { id: number; url: string; file?: File };
-type VideoIntro = { url: string; file?: File } | null;
-
 const DatingOnboardingWizard: React.FC = () => {
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
@@ -194,7 +187,8 @@ const DatingOnboardingWizard: React.FC = () => {
   const [formData, setFormData] = useState({
     name: "",
     city: "",
-    dob: "",          // ISO; required; drives age
+    age: "",
+    dob: "",
     bio: "",
     gender: "",
     pronouns: "",
@@ -202,20 +196,34 @@ const DatingOnboardingWizard: React.FC = () => {
     seeking: [] as string[],
     relationshipType: "",
     interests: [] as string[],
-    photos: [] as MediaPhoto[],
-    videoIntro: null as VideoIntro,
+    photos: [] as { id: number; url: string; file?: File }[],
+    videoIntro: null as null | { url: string; file?: File },
     showAge: true,
   });
 
-  // DOB parts (order doesn't matter anymore)
-  const [dobDay, setDobDay] = useState("");
-  const [dobMonth, setDobMonth] = useState("");
+  // DOB parts
   const [dobYear, setDobYear] = useState("");
+  const [dobMonth, setDobMonth] = useState("");
+  const [dobDay, setDobDay] = useState("");
 
-  // errors per-step
-  const [showErrors, setShowErrors] = useState(false);
+  // redirect if user already has a dating profile
+  useEffect(() => {
+    (async () => {
+      const { data: au } = await supabase.auth.getUser();
+      const uid = au?.user?.id;
+      if (!uid) return;
+      const { data: dp } = await supabase
+        .from("dating_profiles")
+        .select("user_id")
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (dp) {
+        navigate("/dating/discover", { replace: true });
+      }
+    })();
+  }, [navigate]);
 
-  // prefill name/bio if provided
+  // prefill (name/bio) from localStorage
   useEffect(() => {
     const raw = localStorage.getItem("dating_prefill");
     if (raw) {
@@ -228,15 +236,13 @@ const DatingOnboardingWizard: React.FC = () => {
     }
   }, []);
 
-  // recompute ISO DOB whenever parts change
+  // keep dob and age in sync
   useEffect(() => {
     if (dobYear && dobMonth && dobDay) {
       const iso = `${dobYear}-${dobMonth}-${dobDay}`;
-      setFormData((p) => ({ ...p, dob: iso }));
+      setFormData((p) => ({ ...p, dob: iso, age: ageFromISO(iso) }));
     }
   }, [dobYear, dobMonth, dobDay]);
-
-  const age = useMemo(() => ageFromISO(formData.dob), [formData.dob]);
 
   const handleInput = (field: string, value: any) =>
     setFormData((p) => ({ ...p, [field]: value }));
@@ -249,7 +255,6 @@ const DatingOnboardingWizard: React.FC = () => {
         : [...p[field], val],
     }));
 
-  // media helpers
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -270,70 +275,53 @@ const DatingOnboardingWizard: React.FC = () => {
     setFormData((p) => ({ ...p, videoIntro: { url, file } }));
   };
 
-  /* ---------- VALIDATION: block Next unless each step has minimums ---------- */
-  const isStepValid = (step: number): boolean => {
-    switch (step) {
+  // ---------- validation ----------
+  const stepError: string | null = useMemo(() => {
+    switch (currentStep) {
       case 1: {
-        // required: name, city (you asked to make things mandatory), dob valid >=18
-        if (!formData.name.trim()) return false;
-        if (!formData.city.trim()) return false;
-        if (!formData.dob) return false;
-        const a = Number(age);
-        if (!a || a < 18) return false;
-        return true;
+        if (!formData.name.trim()) return "Please enter your name.";
+        if (!formData.city.trim()) return "Please enter your city.";
+        if (!(dobYear && dobMonth && dobDay)) return "Please enter your full date of birth.";
+        const age = Number(formData.age);
+        if (!age || age < 18) return "You must be 18 or older.";
+        return null;
       }
-      case 2: {
-        // both gender & pronouns required
-        return Boolean(formData.gender) && Boolean(formData.pronouns.trim());
-      }
-      case 3: {
-        // orientation required
-        return Boolean(formData.orientation);
-      }
-      case 4: {
-        // at least one seeking option
-        return formData.seeking.length >= 1;
-      }
-      case 5: {
-        // one relationship type
-        return Boolean(formData.relationshipType);
-      }
-      case 6: {
-        // at least one interest (raise to 3 if you want stricter)
-        return formData.interests.length >= 1;
-      }
-      case 7: {
-        // at least one media: photo OR video
-        return formData.photos.length >= 1 || Boolean(formData.videoIntro);
-      }
+      case 2:
+        if (!formData.gender) return "Please choose your gender identity.";
+        if (!formData.pronouns.trim()) return "Please choose or enter your pronouns.";
+        return null;
+      case 3:
+        if (!formData.orientation) return "Please select your orientation.";
+        return null;
+      case 4:
+        if (formData.seeking.length < 1) return "Pick at least one option for who you want to meet.";
+        return null;
+      case 5:
+        if (!formData.relationshipType) return "Choose what you’re looking for.";
+        return null;
+      case 6:
+        if (formData.interests.length < 1) return "Add at least one interest.";
+        return null;
+      case 7:
+        if (!(formData.photos.length > 0 || formData.videoIntro))
+          return "Add at least one photo or a 3-second video.";
+        return null;
       default:
-        return true;
+        return null;
     }
-  };
+  }, [currentStep, formData, dobYear, dobMonth, dobDay]);
 
   const nextStep = () => {
-    if (!isStepValid(currentStep)) {
-      setShowErrors(true);
-      return;
-    }
-    setShowErrors(false);
-    if (currentStep < totalSteps) setCurrentStep((s) => s + 1);
+    if (!stepError) setCurrentStep((s) => Math.min(totalSteps, s + 1));
   };
-
   const prevStep = () => {
     if (currentStep === 1) navigate("/dating");
-    else {
-      setShowErrors(false);
-      setCurrentStep((s) => s - 1);
-    }
+    else setCurrentStep((s) => Math.max(1, s - 1));
   };
 
   // -------- PUBLISH: save to Supabase + navigate to Discover ----------
   const publishProfile = async () => {
-    if (!isStepValid(7)) {
-      setShowErrors(true);
-      return;
-    }
+    if (stepError) return;
     try {
       setSaving(true);
       const { data: au } = await supabase.auth.getUser();
@@ -344,8 +332,8 @@ const DatingOnboardingWizard: React.FC = () => {
         return;
       }
 
-      // upload media
-      const photoUrls: string[] = [];
+      // upload media (if any)
+      let photoUrls: string[] = [];
       for (const ph of formData.photos) {
         if (ph.file) {
           const u = await uploadToBucket("dating_photos", ph.file, user.id);
@@ -354,7 +342,11 @@ const DatingOnboardingWizard: React.FC = () => {
       }
       let videoUrl: string | null = null;
       if (formData.videoIntro?.file) {
-        videoUrl = await uploadToBucket("dating_videos", formData.videoIntro.file, user.id);
+        videoUrl = await uploadToBucket(
+          "dating_videos",
+          formData.videoIntro.file,
+          user.id
+        );
       }
 
       // save profile
@@ -391,11 +383,12 @@ const DatingOnboardingWizard: React.FC = () => {
 
   const progress = Math.round((currentStep / totalSteps) * 100);
 
-  /* ---------- UI ---------- */
   const StepIndicator = () => (
     <div className="w-full max-w-4xl mx-auto mb-8">
       <div className="flex items-center justify-between mb-4">
-        <div className="text-sm text-zinc-400">Step {currentStep} of {totalSteps}</div>
+        <div className="text-sm text-zinc-400">
+          Step {currentStep} of {totalSteps}
+        </div>
         <div className="text-sm text-zinc-400">{progress}% complete</div>
       </div>
       <div className="w-full bg-zinc-800 rounded-full h-2">
@@ -407,9 +400,6 @@ const DatingOnboardingWizard: React.FC = () => {
     </div>
   );
 
-  const ErrorMsg: React.FC<{ show: boolean; msg: string }> = ({ show, msg }) =>
-    show ? <p className="text-red-400 text-xs mt-2">{msg}</p> : null;
-
   const StepCard: React.FC<{ title: string; subtitle?: string }> = ({
     title,
     subtitle,
@@ -417,7 +407,9 @@ const DatingOnboardingWizard: React.FC = () => {
   }) => (
     <Card className="w-full max-w-4xl mx-auto bg-zinc-950 border-zinc-800 shadow-2xl">
       <CardHeader className="text-center border-b border-zinc-800 pb-6">
-        <CardTitle className="text-2xl font-bold text-white mb-2">{title}</CardTitle>
+        <CardTitle className="text-2xl font-bold text-white mb-2">
+          {title}
+        </CardTitle>
         {subtitle && <p className="text-zinc-400">{subtitle}</p>}
       </CardHeader>
       <CardContent className="p-8">{children}</CardContent>
@@ -425,7 +417,7 @@ const DatingOnboardingWizard: React.FC = () => {
   );
 
   const NavigationButtons = () => (
-    <div className="flex justify-between items-center w-full max-w-4xl mx-auto mt-8">
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 w-full max-w-4xl mx-auto mt-8">
       <Button
         variant="outline"
         onClick={prevStep}
@@ -435,10 +427,14 @@ const DatingOnboardingWizard: React.FC = () => {
         {currentStep === 1 ? "Exit" : "Back"}
       </Button>
 
+      {stepError && (
+        <div className="text-sm text-red-400">{stepError}</div>
+      )}
+
       {currentStep === totalSteps ? (
         <Button
           onClick={publishProfile}
-          disabled={saving}
+          disabled={saving || Boolean(stepError)}
           className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8"
         >
           {saving ? (
@@ -456,7 +452,8 @@ const DatingOnboardingWizard: React.FC = () => {
       ) : (
         <Button
           onClick={nextStep}
-          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8"
+          disabled={Boolean(stepError)}
+          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8 disabled:opacity-60"
         >
           Continue
           <ArrowRight className="h-4 w-4 ml-2" />
@@ -465,7 +462,8 @@ const DatingOnboardingWizard: React.FC = () => {
     </div>
   );
 
-  const ProfilePreview = () => (
+  // Live Preview trimmed to keep focus stable — nothing here grabs focus.
+  const ProfilePreview = React.memo(() => (
     <div className="fixed right-4 top-4 w-80 max-h-[80vh] overflow-y-auto hidden xl:block">
       <Card className="bg-zinc-950/95 backdrop-blur-sm border-zinc-800 shadow-2xl">
         <CardHeader className="border-b border-zinc-800">
@@ -476,9 +474,20 @@ const DatingOnboardingWizard: React.FC = () => {
             <div className="text-center">
               <div className="h-20 w-20 mx-auto mb-3 ring-2 ring-fuchsia-500/30 rounded-full overflow-hidden relative">
                 {formData.videoIntro?.url ? (
-                  <video src={formData.videoIntro.url} className="h-full w-full object-cover" autoPlay muted loop playsInline />
+                  <video
+                    src={formData.videoIntro.url}
+                    className="h-full w-full object-cover"
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                  />
                 ) : formData.photos[0]?.url ? (
-                  <img src={formData.photos[0].url} className="h-full w-full object-cover" alt="main" />
+                  <img
+                    src={formData.photos[0].url}
+                    className="h-full w-full object-cover"
+                    alt="main"
+                  />
                 ) : (
                   <Avatar className="h-20 w-20 mx-auto">
                     <AvatarImage />
@@ -491,7 +500,7 @@ const DatingOnboardingWizard: React.FC = () => {
 
               <h3 className="text-white font-semibold">
                 {formData.name || "Your name"}
-                {formData.showAge && age ? `, ${age}` : ""}
+                {formData.showAge && formData.age ? `, ${formData.age}` : ""}
               </h3>
               <p className="text-zinc-400 text-sm flex items-center justify-center gap-1">
                 <MapPin className="h-3 w-3" />
@@ -500,39 +509,51 @@ const DatingOnboardingWizard: React.FC = () => {
             </div>
 
             {formData.bio && (
-              <div className="text-sm text-zinc-300 bg-zinc-900 rounded-lg p-3">{formData.bio}</div>
+              <div className="text-sm text-zinc-300 bg-zinc-900 rounded-lg p-3">
+                {formData.bio}
+              </div>
             )}
 
             {(formData.photos.length > 0 || formData.videoIntro) && (
               <div className="text-xs text-zinc-500 text-center">
-                {formData.photos.length} photo{formData.photos.length !== 1 ? "s" : ""}{formData.videoIntro && " • Video intro"}
+                {formData.photos.length} photo
+                {formData.photos.length !== 1 ? "s" : ""}
+                {formData.videoIntro && " • Video intro"}
               </div>
             )}
 
             <div className="bg-gradient-to-r from-fuchsia-500/10 to-purple-500/10 border border-fuchsia-500/20 rounded-lg p-3">
               <div className="flex items-center gap-2 mb-2">
-                <div className={`w-3 h-3 rounded-full ${progress >= 100 ? "bg-green-500" : "bg-yellow-500"}`} />
+                <div
+                  className={`w-3 h-3 rounded-full ${
+                    progress >= 100 ? "bg-green-500" : "bg-yellow-500"
+                  }`}
+                />
                 <span className="text-sm text-white font-medium">
                   {progress >= 100 ? "Ready to publish!" : "Keep going..."}
                 </span>
               </div>
-              <div className="text-xs text-zinc-400">Profile strength: {progress}%</div>
+              <div className="text-xs text-zinc-400">
+                Profile strength: {progress}%
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
     </div>
-  );
+  ));
 
-  /* ---------- Steps ---------- */
+  /* steps */
   const renderStep = () => {
     switch (currentStep) {
       case 1: {
-        const years = Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) => String(MAX_YEAR - i));
-        const maxDays = daysInMonth(parseInt(dobYear), parseInt(dobMonth));
-        const dayOptions = Array.from({ length: maxDays }, (_, i) => String(i + 1).padStart(2, "0"));
-        const tooYoung = formData.dob ? Number(age) < 18 : false;
-
+        const maxDays =
+          (dobYear && dobMonth
+            ? daysInMonth(parseInt(dobYear), parseInt(dobMonth))
+            : 31) || 31;
+        const days = Array.from({ length: maxDays }, (_, i) =>
+          String(i + 1).padStart(2, "0")
+        );
         return (
           <StepCard title="Let's start with the basics" subtitle="Tell us a bit about yourself">
             <div className="space-y-6">
@@ -540,9 +561,20 @@ const DatingOnboardingWizard: React.FC = () => {
               <div className="flex flex-col items-center gap-4">
                 <div className="h-32 w-32 rounded-full ring-4 ring-fuchsia-500/30 overflow-hidden relative bg-zinc-900">
                   {formData.videoIntro?.url ? (
-                    <video src={formData.videoIntro.url} className="h-full w-full object-cover" autoPlay muted loop playsInline />
+                    <video
+                      src={formData.videoIntro.url}
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                    />
                   ) : formData.photos[0]?.url ? (
-                    <img src={formData.photos[0].url} className="h-full w-full object-cover" alt="main" />
+                    <img
+                      src={formData.photos[0].url}
+                      className="h-full w-full object-cover"
+                      alt="main"
+                    />
                   ) : (
                     <Avatar className="h-32 w-32">
                       <AvatarImage />
@@ -557,15 +589,32 @@ const DatingOnboardingWizard: React.FC = () => {
                   <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 cursor-pointer hover:border-zinc-600">
                     <Upload className="h-4 w-4" />
                     <span>Upload photo</span>
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])} />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])}
+                    />
                   </label>
+
                   <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white cursor-pointer hover:from-fuchsia-500 hover:to-purple-500">
                     <Camera className="h-4 w-4" />
                     <span>Add 3-sec video</span>
-                    <input type="file" accept="video/*" className="hidden" onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])} />
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])}
+                    />
                   </label>
+
                   {formData.videoIntro && (
-                    <Button variant="outline" size="sm" className="h-10 border-zinc-700 text-zinc-300" onClick={() => handleInput("videoIntro", null)}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10 border-zinc-700 text-zinc-300"
+                      onClick={() => handleInput("videoIntro", null)}
+                    >
                       <X className="h-4 w-4 mr-1" />
                       Remove video
                     </Button>
@@ -589,7 +638,6 @@ const DatingOnboardingWizard: React.FC = () => {
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
                     placeholder="What should people call you?"
                   />
-                  <ErrorMsg show={showErrors && !formData.name.trim()} msg="Name is required." />
                 </div>
 
                 <div>
@@ -603,27 +651,14 @@ const DatingOnboardingWizard: React.FC = () => {
                       placeholder="Where are you based?"
                     />
                   </div>
-                  <ErrorMsg show={showErrors && !formData.city.trim()} msg="City is required." />
                 </div>
               </div>
 
-              {/* DOB + Age (Age is read-only and auto-calculated) */}
+              {/* DOB + Age */}
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <Label className="text-zinc-300 text-sm font-medium">Date of birth</Label>
                   <div className="mt-2 grid grid-cols-3 gap-2">
-                    {/* Day first is fine now */}
-                    <select
-                      className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
-                      value={dobDay}
-                      onChange={(e) => setDobDay(e.target.value)}
-                    >
-                      <option value="">Day</option>
-                      {Array.from({ length: dayOptions.length || 31 }, (_, i) => String(i + 1).padStart(2, "0")).map((d) => (
-                        <option key={d} value={d}>{parseInt(d, 10)}</option>
-                      ))}
-                    </select>
-
                     <select
                       className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
                       value={dobMonth}
@@ -631,31 +666,50 @@ const DatingOnboardingWizard: React.FC = () => {
                     >
                       <option value="">Month</option>
                       {MONTHS.map((m) => (
-                        <option key={m.v} value={m.v}>{m.n}</option>
+                        <option key={m.v} value={m.v}>
+                          {m.n}
+                        </option>
                       ))}
                     </select>
-
+                    <select
+                      className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
+                      value={dobDay}
+                      onChange={(e) => setDobDay(e.target.value)}
+                    >
+                      <option value="">Day</option>
+                      {days.map((d) => (
+                        <option key={d} value={d}>
+                          {parseInt(d, 10)}
+                        </option>
+                      ))}
+                    </select>
                     <select
                       className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
                       value={dobYear}
                       onChange={(e) => setDobYear(e.target.value)}
                     >
                       <option value="">Year</option>
-                      {years.map((y) => (
-                        <option key={y} value={y}>{y}</option>
+                      {Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) =>
+                        String(MAX_YEAR - i)
+                      ).map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
                       ))}
                     </select>
                   </div>
-                  <ErrorMsg show={showErrors && (!formData.dob || tooYoung)} msg={!formData.dob ? "Birthday is required." : "You must be 18 or older."} />
                 </div>
 
                 <div>
                   <Label className="text-zinc-300 text-sm font-medium">Age</Label>
                   <Input
-                    value={age}
-                    readOnly
+                    inputMode="numeric"
+                    value={formData.age}
+                    onChange={(e) =>
+                      handleInput("age", e.target.value.replace(/[^\d]/g, "").slice(0, 3))
+                    }
                     className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
-                    placeholder="Age will appear after DOB"
+                    placeholder="Your age"
                   />
                 </div>
               </div>
@@ -664,26 +718,38 @@ const DatingOnboardingWizard: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-white font-medium">Show my age</div>
-                    <div className="text-zinc-400 text-sm">Age shown: {age || "—"}</div>
+                    <div className="text-zinc-400 text-sm">
+                      Age shown: {formData.age || "—"}
+                    </div>
                   </div>
                   <button
                     onClick={() => handleInput("showAge", !formData.showAge)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${formData.showAge ? "bg-fuchsia-500" : "bg-zinc-600"}`}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      formData.showAge ? "bg-fuchsia-500" : "bg-zinc-600"
+                    }`}
                   >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${formData.showAge ? "translate-x-6" : "translate-x-1"}`} />
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        formData.showAge ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
                   </button>
                 </div>
               </div>
 
               <div>
-                <Label className="text-zinc-300 text-sm font-medium">Tell us about yourself</Label>
+                <Label className="text-zinc-300 text-sm font-medium">
+                  Tell us about yourself
+                </Label>
                 <Textarea
                   value={formData.bio}
                   onChange={(e) => handleInput("bio", e.target.value.slice(0, 500))}
                   className="mt-2 bg-zinc-900 border-zinc-700 text-white min-h-[120px] resize-none"
                   placeholder="Share your vibe, interests, what makes you unique..."
                 />
-                <div className="text-xs text-zinc-500 mt-2 text-right">{formData.bio.length}/500</div>
+                <div className="text-xs text-zinc-500 mt-2 text-right">
+                  {formData.bio.length}/500
+                </div>
               </div>
             </div>
           </StepCard>
@@ -695,15 +761,18 @@ const DatingOnboardingWizard: React.FC = () => {
           <StepCard title="Your identity matters" subtitle="Help us understand who you are">
             <div className="space-y-8">
               <div>
-                <Label className="text-zinc-300 text-lg font-medium mb-4 block">Gender identity</Label>
+                <Label className="text-zinc-300 text-lg font-medium mb-4 block">
+                  Gender identity
+                </Label>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {GENDER_IDENTITIES.map((g) => (
                     <button
                       key={g.id}
                       onClick={() => handleInput("gender", g.id)}
                       className={`p-4 rounded-xl border-2 transition-all text-left ${
-                        formData.gender === g.id ? "border-fuchsia-500 bg-fuchsia-500/10"
-                        : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
+                        formData.gender === g.id
+                          ? "border-fuchsia-500 bg-fuchsia-500/10"
+                          : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
                       }`}
                     >
                       <div className="text-2xl mb-2">{g.icon}</div>
@@ -711,29 +780,34 @@ const DatingOnboardingWizard: React.FC = () => {
                     </button>
                   ))}
                 </div>
-                <ErrorMsg show={showErrors && !formData.gender} msg="Please choose your gender." />
               </div>
 
               <div>
-                <Label className="text-zinc-300 text-lg font-medium mb-4 block">Pronouns</Label>
+                <Label className="text-zinc-300 text-lg font-medium mb-4 block">
+                  Pronouns
+                </Label>
                 <div className="flex flex-wrap gap-3">
-                  {["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => handleInput("pronouns", p)}
-                      className={`px-6 py-3 rounded-full border transition-all ${
-                        formData.pronouns === p
-                          ? "border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-300"
-                          : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600"
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
+                  {["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].map(
+                    (p) => (
+                      <button
+                        key={p}
+                        onClick={() => handleInput("pronouns", p)}
+                        className={`px-6 py-3 rounded-full border transition-all ${
+                          formData.pronouns === p
+                            ? "border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-300"
+                            : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  )}
                 </div>
                 <Input
                   value={
-                    ["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].includes(formData.pronouns)
+                    ["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].includes(
+                      formData.pronouns
+                    )
                       ? ""
                       : formData.pronouns
                   }
@@ -741,7 +815,6 @@ const DatingOnboardingWizard: React.FC = () => {
                   className="mt-3 bg-zinc-900 border-zinc-700 text-white"
                   placeholder="Or enter custom pronouns..."
                 />
-                <ErrorMsg show={showErrors && !formData.pronouns.trim()} msg="Please select or type your pronouns." />
               </div>
             </div>
           </StepCard>
@@ -765,7 +838,6 @@ const DatingOnboardingWizard: React.FC = () => {
                 </button>
               ))}
             </div>
-            <ErrorMsg show={showErrors && !formData.orientation} msg="Please choose an orientation." />
           </StepCard>
         );
 
@@ -787,22 +859,24 @@ const DatingOnboardingWizard: React.FC = () => {
                 </button>
               ))}
             </div>
-            <ErrorMsg show={showErrors && formData.seeking.length < 1} msg="Pick at least one preference." />
           </StepCard>
         );
 
       case 5:
         return (
-          <StepCard title="What are you looking for?" subtitle="Your relationship goals help us find better matches">
+          <StepCard
+            title="What are you looking for?"
+            subtitle="Your relationship goals help us find better matches"
+          >
             <div className="space-y-4">
               {RELATIONSHIP_TYPES.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => handleInput("relationshipType", t.id)}
-                  className={`w-full p-6 rounded-xl border-2 transition-all text-left bg-gradient-to-r ${
+                  className={`w-full p-6 rounded-xl border-2 transition-all text-left ${
                     formData.relationshipType === t.id
                       ? "border-fuchsia-500 bg-fuchsia-500/10"
-                      : `border-zinc-700 bg-zinc-900 hover:border-zinc-600 ${t.gradient}`
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
                   }`}
                 >
                   <div className="flex items-start gap-4">
@@ -817,13 +891,15 @@ const DatingOnboardingWizard: React.FC = () => {
                 </button>
               ))}
             </div>
-            <ErrorMsg show={showErrors && !formData.relationshipType} msg="Choose what you're looking for." />
           </StepCard>
         );
 
       case 6:
         return (
-          <StepCard title="Your interests make you unique" subtitle="Select what you're passionate about">
+          <StepCard
+            title="Your interests make you unique"
+            subtitle="Select what you're passionate about"
+          >
             <div className="space-y-8">
               {INTEREST_CATEGORIES.map((cat) => (
                 <div key={cat.name}>
@@ -879,22 +955,27 @@ const DatingOnboardingWizard: React.FC = () => {
                   ))}
                 </div>
               )}
-
-              <ErrorMsg show={showErrors && formData.interests.length < 1} msg="Pick at least one interest." />
             </div>
           </StepCard>
         );
 
       case 7:
         return (
-          <StepCard title="Add photos and create your video intro" subtitle="Show your personality - video intros get 3x more matches!">
+          <StepCard
+            title="Add photos and create your video intro"
+            subtitle="Show your personality - video intros get 3x more matches!"
+          >
             <div className="space-y-8">
               <div>
                 <h3 className="text-white font-medium text-lg mb-4">Photos (2–6 recommended)</h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {formData.photos.map((photo, idx) => (
                     <div key={photo.id} className="relative group">
-                      <img src={photo.url} alt={`Photo ${idx + 1}`} className="w-full h-48 object-cover rounded-xl" />
+                      <img
+                        src={photo.url}
+                        alt={`Photo ${idx + 1}`}
+                        className="w-full h-48 object-cover rounded-xl"
+                      />
                       <button
                         onClick={() => removePhoto(photo.id)}
                         className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -902,13 +983,20 @@ const DatingOnboardingWizard: React.FC = () => {
                         <X className="h-4 w-4" />
                       </button>
                       {idx === 0 && (
-                        <div className="absolute top-2 left-2 bg-fuchsia-500 text-white text-xs px-2 py-1 rounded-full">Main</div>
+                        <div className="absolute top-2 left-2 bg-fuchsia-500 text-white text-xs px-2 py-1 rounded-full">
+                          Main
+                        </div>
                       )}
                     </div>
                   ))}
                   {formData.photos.length < 6 && (
                     <label className="border-2 border-dashed border-zinc-700 rounded-xl h-48 flex flex-col items-center justify-center cursor-pointer hover:border-zinc-600 transition-colors">
-                      <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])} className="hidden" />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])}
+                        className="hidden"
+                      />
                       {uploadingPhoto ? (
                         <Loader2 className="h-8 w-8 text-fuchsia-500 animate-spin" />
                       ) : (
@@ -933,35 +1021,51 @@ const DatingOnboardingWizard: React.FC = () => {
 
                 {!formData.videoIntro ? (
                   <label className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center cursor-pointer hover:border-fuchsia-500/70 transition-colors">
-                    <input type="file" accept="video/*" className="hidden" onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])} />
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])}
+                    />
                     <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Camera className="h-8 w-8 text-white" />
                     </div>
-                    <h4 className="text-white font-medium mb-2">Create your signature 3-second intro</h4>
-                    <p className="text-zinc-400 text-sm">We’ll trim to exactly 3 seconds when you publish.</p>
+                    <h4 className="text-white font-medium mb-2">
+                      Create your signature 3-second intro
+                    </h4>
+                    <p className="text-zinc-400 text-sm">
+                      We’ll trim to exactly 3 seconds when you publish.
+                    </p>
                   </label>
                 ) : (
                   <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-700">
                     <div className="flex items-center gap-4">
                       <div className="w-16 h-16 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-lg flex items-center justify-center overflow-hidden">
-                        <video src={formData.videoIntro.url} className="h-full w-full object-cover" autoPlay muted loop playsInline />
+                        <video
+                          src={formData.videoIntro.url}
+                          className="h-full w-full object-cover"
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                        />
                       </div>
                       <div className="flex-1">
                         <p className="text-white font-medium">Video intro ready!</p>
                         <p className="text-zinc-400 text-sm">Will be trimmed to 3s</p>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => handleInput("videoIntro", null)} className="border-zinc-700">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleInput("videoIntro", null)}
+                        className="border-zinc-700"
+                      >
                         Re-record
                       </Button>
                     </div>
                   </div>
                 )}
               </div>
-
-              <ErrorMsg
-                show={showErrors && formData.photos.length < 1 && !formData.videoIntro}
-                msg="Add at least one photo or a 3-second video."
-              />
             </div>
           </StepCard>
         );
@@ -972,10 +1076,7 @@ const DatingOnboardingWizard: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-fuchsia-900/20 via-purple-900/10 to-transparent" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-cyan-900/20 via-blue-900/10 to-transparent" />
-
+    <div className="min-h-screen bg-black text-white relative">
       <div className="relative z-10 border-b border-zinc-800/50 bg-black/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center gap-3">
@@ -1000,6 +1101,8 @@ const DatingOnboardingWizard: React.FC = () => {
         </div>
       </div>
 
+      <ProfilePreview />
+
       {saving && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <Card className="bg-zinc-950 border-zinc-700 w-full max-w-md">
@@ -1007,8 +1110,12 @@ const DatingOnboardingWizard: React.FC = () => {
               <div className="h-16 w-16 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Sparkles className="h-8 w-8 text-white" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">Publishing your profile...</h3>
-              <p className="text-zinc-400 mb-6">We’re saving your info and will trim your video to exactly 3 seconds.</p>
+              <h3 className="text-xl font-bold text-white mb-2">
+                Publishing your profile...
+              </h3>
+              <p className="text-zinc-400 mb-6">
+                We’re saving your info and will trim your video to exactly 3 seconds.
+              </p>
               <div className="space-y-3">
                 <div className="flex items-center gap-3 text-sm text-zinc-300">
                   <Check className="h-4 w-4 text-green-500" />
