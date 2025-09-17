@@ -172,7 +172,8 @@ const DatingOnboarding: React.FC = () => {
   };
 
   // Upload file to Supabase storage
-  const uploadFile = async (file: File, bucket: string = 'dating_media'): Promise<string> => {
+  const uploadFile = async (file: File, isVideo: boolean = false): Promise<string> => {
+    const bucket = isVideo ? 'dating_videos' : 'dating_photos';
     if (!currentUser) throw new Error("Must be logged in to upload");
     
     const fileExt = file.name.split('.').pop();
@@ -316,7 +317,7 @@ const DatingOnboarding: React.FC = () => {
       const uploadedPhotos: string[] = [];
       for (const photo of photos) {
         try {
-          const photoUrl = await uploadFile(photo.file, 'dating_media');
+          const photoUrl = await uploadFile(photo.file, false);
           uploadedPhotos.push(photoUrl);
         } catch (error) {
           console.error("Failed to upload photo:", error);
@@ -332,7 +333,7 @@ const DatingOnboarding: React.FC = () => {
       let videoUrl: string | null = null;
       if (videoIntro) {
         try {
-          videoUrl = await uploadFile(videoIntro.file, 'dating_media');
+          videoUrl = await uploadFile(videoIntro.file, true);
         } catch (error) {
           console.error("Failed to upload video:", error);
           toast({
@@ -349,7 +350,7 @@ const DatingOnboarding: React.FC = () => {
         name: seed.name,
         age: parseInt(seed.age),
         gender: seed.gender,
-        seeking: seed.seeking,
+        seeking: Array.isArray(seed.seeking) ? seed.seeking : [seed.seeking], // Ensure it's an array
         bio: bio.trim(),
         photos: uploadedPhotos,
         video_intro_url: videoUrl,
