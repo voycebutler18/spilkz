@@ -1,13 +1,13 @@
+// src/pages/Dating/DatingHome.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { 
-  Heart, 
-  MapPin, 
-  User, 
-  Calendar,
+import {
+  Heart,
+  MapPin,
+  User,
   Users,
   Coffee,
   Music,
@@ -18,12 +18,6 @@ import {
   Dumbbell,
   Palette,
   Mountain,
-  Baby,
-  GraduationCap,
-  Ruler,
-  Wine,
-  Cigarette,
-  ChevronDown,
   Play,
   Sparkles,
   ArrowRight,
@@ -32,14 +26,81 @@ import {
   Zap,
   MessageCircle,
   Star,
-  X
+  X,
+  Loader2,
 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 const SplikzDatingHome = () => {
   const navigate = useNavigate();
+
+  // ─────────────────────────────────────────────────────────────
+  // GATE: If user is signed in AND already has a dating profile,
+  //       skip the landing and go straight to Discover.
+  // ─────────────────────────────────────────────────────────────
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    let alive = true;
+
+    const check = async () => {
+      const { data } = await supabase.auth.getUser();
+      const user = data?.user ?? null;
+
+      if (!alive) return;
+
+      // Not signed in → show the landing/signup
+      if (!user) {
+        setChecking(false);
+        return;
+      }
+
+      // Signed in: does a dating profile exist?
+      const { data: dp } = await supabase
+        .from('dating_profiles')
+        .select('user_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!alive) return;
+
+      if (dp) {
+        navigate('/dating/discover', { replace: true });
+      } else {
+        // no dating profile yet → show landing/signup
+        setChecking(false);
+      }
+    };
+
+    check();
+
+    // Also react to future auth changes (e.g., user logs in from another tab)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const uid = session?.user?.id;
+      if (!uid) return;
+      supabase
+        .from('dating_profiles')
+        .select('user_id')
+        .eq('user_id', uid)
+        .maybeSingle()
+        .then(({ data: dp }) => {
+          if (dp) navigate('/dating/discover', { replace: true });
+        });
+    });
+
+    return () => {
+      alive = false;
+      subscription.unsubscribe();
+    };
+  }, [navigate]);
+
+  // ─────────────────────────────────────────────────────────────
+  // Existing component state/logic
+  // ─────────────────────────────────────────────────────────────
   const [showSignup, setShowSignup] = useState(false);
   const [isVideoPlaying, setIsVideoPlaying] = useState(true);
-  
+
   // Signup form state
   const [formData, setFormData] = useState({
     name: '',
@@ -62,8 +123,8 @@ const SplikzDatingHome = () => {
     smoking: '',
     exercise: '',
     pets: '',
-    interests: [],
-    hobbies: []
+    interests: [] as string[],
+    hobbies: [] as string[],
   });
 
   const INTERESTS = [
@@ -74,63 +135,94 @@ const SplikzDatingHome = () => {
     { id: 'gaming', label: 'Gaming', icon: Gamepad2 },
     { id: 'reading', label: 'Reading', icon: Book },
     { id: 'coffee', label: 'Coffee', icon: Coffee },
-    { id: 'outdoors', label: 'Outdoors', icon: Mountain }
+    { id: 'outdoors', label: 'Outdoors', icon: Mountain },
   ];
 
   const HOBBIES = [
-    'Cooking', 'Photography', 'Dancing', 'Hiking', 'Yoga', 'Writing',
-    'Movies', 'Sports', 'Concerts', 'Museums', 'Volunteering', 'Gardening'
+    'Cooking',
+    'Photography',
+    'Dancing',
+    'Hiking',
+    'Yoga',
+    'Writing',
+    'Movies',
+    'Sports',
+    'Concerts',
+    'Museums',
+    'Volunteering',
+    'Gardening',
   ];
 
   const requestLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setFormData(prev => ({ 
-            ...prev, 
+          setFormData((prev) => ({
+            ...prev,
             locationEnabled: true,
-            location: `${position.coords.latitude}, ${position.coords.longitude}`
+            location: `${position.coords.latitude}, ${position.coords.longitude}`,
           }));
         },
-        (error) => {
+        () => {
           alert('Location access is required to find matches near you.');
-        }
+        },
       );
     }
   };
 
-  const toggleInterest = (interest) => {
-    setFormData(prev => ({
+  const toggleInterest = (interest: string) => {
+    setFormData((prev) => ({
       ...prev,
       interests: prev.interests.includes(interest)
-        ? prev.interests.filter(i => i !== interest)
-        : [...prev.interests, interest]
+        ? prev.interests.filter((i) => i !== interest)
+        : [...prev.interests, interest],
     }));
   };
 
-  const toggleHobby = (hobby) => {
-    setFormData(prev => ({
+  const toggleHobby = (hobby: string) => {
+    setFormData((prev) => ({
       ...prev,
       hobbies: prev.hobbies.includes(hobby)
-        ? prev.hobbies.filter(h => h !== hobby)
-        : [...prev.hobbies, hobby]
+        ? prev.hobbies.filter((h) => h !== hobby)
+        : [...prev.hobbies, hobby],
     }));
   };
 
-  const canSubmit = formData.name && formData.age && formData.gender && 
-                   formData.seeking && formData.locationEnabled && 
-                   formData.relationshipGoal && formData.height && 
-                   formData.bodyType && formData.drinking && 
-                   formData.smoking && formData.exercise;
+  const canSubmit =
+    formData.name &&
+    formData.age &&
+    formData.gender &&
+    formData.seeking &&
+    formData.locationEnabled &&
+    formData.relationshipGoal &&
+    formData.height &&
+    formData.bodyType &&
+    formData.drinking &&
+    formData.smoking &&
+    formData.exercise;
 
   const handleSubmit = () => {
     if (canSubmit) {
-      // Save form data and navigate to photo upload
       localStorage.setItem('dating_signup_data', JSON.stringify(formData));
       navigate('/dating/onboarding');
     }
   };
 
+  // While we’re checking for an existing profile, don’t flash the landing
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="flex items-center gap-2 text-zinc-300">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          Checking your dating profile…
+        </div>
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Signup screen (unchanged)
+  // ─────────────────────────────────────────────────────────────
   if (showSignup) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-black to-fuchsia-900">
@@ -143,7 +235,9 @@ const SplikzDatingHome = () => {
               </div>
               <h1 className="text-3xl font-bold text-white">Join Splikz Dating</h1>
             </div>
-            <p className="text-zinc-300">Find your perfect match with our smart compatibility system</p>
+            <p className="text-zinc-300">
+              Find your perfect match with our smart compatibility system
+            </p>
           </div>
 
           <div className="space-y-8">
@@ -156,20 +250,28 @@ const SplikzDatingHome = () => {
                 </h3>
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Name *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Name *
+                    </label>
                     <Input
                       value={formData.name}
-                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, name: e.target.value }))
+                      }
                       className="bg-zinc-900 border-zinc-600 text-white"
                       placeholder="Your first name"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Age *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Age *
+                    </label>
                     <Input
                       type="number"
                       value={formData.age}
-                      onChange={(e) => setFormData(prev => ({ ...prev, age: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, age: e.target.value }))
+                      }
                       className="bg-zinc-900 border-zinc-600 text-white"
                       placeholder="25"
                       min="18"
@@ -177,10 +279,14 @@ const SplikzDatingHome = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">I am *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      I am *
+                    </label>
                     <select
                       value={formData.gender}
-                      onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, gender: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select gender</option>
@@ -191,10 +297,14 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Looking for *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Looking for *
+                    </label>
                     <select
                       value={formData.seeking}
-                      onChange={(e) => setFormData(prev => ({ ...prev, seeking: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, seeking: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select preference</option>
@@ -207,7 +317,9 @@ const SplikzDatingHome = () => {
 
                 {/* Location */}
                 <div className="mt-4">
-                  <label className="block text-sm font-medium text-zinc-300 mb-2">Location *</label>
+                  <label className="block text-sm font-medium text-zinc-300 mb-2">
+                    Location *
+                  </label>
                   {!formData.locationEnabled ? (
                     <Button
                       onClick={requestLocation}
@@ -235,10 +347,17 @@ const SplikzDatingHome = () => {
                 </h3>
                 <div className="grid md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Distance</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Distance
+                    </label>
                     <select
                       value={formData.searchDistance}
-                      onChange={(e) => setFormData(prev => ({ ...prev, searchDistance: parseInt(e.target.value) }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          searchDistance: parseInt(e.target.value, 10),
+                        }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value={10}>10 miles</option>
@@ -248,12 +367,19 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Age Range</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Age Range
+                    </label>
                     <div className="flex gap-2">
                       <Input
                         type="number"
                         value={formData.ageRangeMin}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ageRangeMin: parseInt(e.target.value) }))}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            ageRangeMin: parseInt(e.target.value, 10),
+                          }))
+                        }
                         className="bg-zinc-900 border-zinc-600 text-white"
                         min="18"
                         max="99"
@@ -262,7 +388,12 @@ const SplikzDatingHome = () => {
                       <Input
                         type="number"
                         value={formData.ageRangeMax}
-                        onChange={(e) => setFormData(prev => ({ ...prev, ageRangeMax: parseInt(e.target.value) }))}
+                        onChange={(e) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            ageRangeMax: parseInt(e.target.value, 10),
+                          }))
+                        }
                         className="bg-zinc-900 border-zinc-600 text-white"
                         min="18"
                         max="99"
@@ -270,10 +401,17 @@ const SplikzDatingHome = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Looking for *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Looking for *
+                    </label>
                     <select
                       value={formData.relationshipGoal}
-                      onChange={(e) => setFormData(prev => ({ ...prev, relationshipGoal: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          relationshipGoal: e.target.value,
+                        }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select goal</option>
@@ -294,10 +432,14 @@ const SplikzDatingHome = () => {
                 <h3 className="text-xl font-semibold text-white mb-4">Personal Details</h3>
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Kids</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Kids
+                    </label>
                     <select
                       value={formData.hasKids}
-                      onChange={(e) => setFormData(prev => ({ ...prev, hasKids: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, hasKids: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select option</option>
@@ -308,39 +450,47 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Height *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Height *
+                    </label>
                     <select
                       value={formData.height}
-                      onChange={(e) => setFormData(prev => ({ ...prev, height: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, height: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select height</option>
-                      <option value="4'11&quot;">4'11"</option>
-                      <option value="5'0&quot;">5'0"</option>
-                      <option value="5'1&quot;">5'1"</option>
-                      <option value="5'2&quot;">5'2"</option>
-                      <option value="5'3&quot;">5'3"</option>
-                      <option value="5'4&quot;">5'4"</option>
-                      <option value="5'5&quot;">5'5"</option>
-                      <option value="5'6&quot;">5'6"</option>
-                      <option value="5'7&quot;">5'7"</option>
-                      <option value="5'8&quot;">5'8"</option>
-                      <option value="5'9&quot;">5'9"</option>
-                      <option value="5'10&quot;">5'10"</option>
-                      <option value="5'11&quot;">5'11"</option>
-                      <option value="6'0&quot;">6'0"</option>
-                      <option value="6'1&quot;">6'1"</option>
-                      <option value="6'2&quot;">6'2"</option>
-                      <option value="6'3&quot;">6'3"</option>
-                      <option value="6'4&quot;">6'4"</option>
+                      <option value='4\'11"'>4'11"</option>
+                      <option value='5\'0"'>5'0"</option>
+                      <option value='5\'1"'>5'1"</option>
+                      <option value='5\'2"'>5'2"</option>
+                      <option value='5\'3"'>5'3"</option>
+                      <option value='5\'4"'>5'4"</option>
+                      <option value='5\'5"'>5'5"</option>
+                      <option value='5\'6"'>5'6"</option>
+                      <option value='5\'7"'>5'7"</option>
+                      <option value='5\'8"'>5'8"</option>
+                      <option value='5\'9"'>5'9"</option>
+                      <option value='5\'10"'>5'10"</option>
+                      <option value='5\'11"'>5'11"</option>
+                      <option value='6\'0"'>6'0"</option>
+                      <option value='6\'1"'>6'1"</option>
+                      <option value='6\'2"'>6'2"</option>
+                      <option value='6\'3"'>6'3"</option>
+                      <option value='6\'4"'>6'4"</option>
                       <option value="6'5&quot;+">6'5"+</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Body Type *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Body Type *
+                    </label>
                     <select
                       value={formData.bodyType}
-                      onChange={(e) => setFormData(prev => ({ ...prev, bodyType: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, bodyType: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select body type</option>
@@ -352,10 +502,14 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Education</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Education
+                    </label>
                     <select
                       value={formData.education}
-                      onChange={(e) => setFormData(prev => ({ ...prev, education: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, education: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select education</option>
@@ -368,10 +522,14 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Religion</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Religion
+                    </label>
                     <select
                       value={formData.religion}
-                      onChange={(e) => setFormData(prev => ({ ...prev, religion: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, religion: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select religion</option>
@@ -388,10 +546,14 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Pets</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Pets
+                    </label>
                     <select
                       value={formData.pets}
-                      onChange={(e) => setFormData(prev => ({ ...prev, pets: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, pets: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select option</option>
@@ -412,10 +574,14 @@ const SplikzDatingHome = () => {
                 <h3 className="text-xl font-semibold text-white mb-4">Lifestyle</h3>
                 <div className="grid md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Drinking *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Drinking *
+                    </label>
                     <select
                       value={formData.drinking}
-                      onChange={(e) => setFormData(prev => ({ ...prev, drinking: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, drinking: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select option</option>
@@ -426,10 +592,14 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Smoking *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Smoking *
+                    </label>
                     <select
                       value={formData.smoking}
-                      onChange={(e) => setFormData(prev => ({ ...prev, smoking: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, smoking: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select option</option>
@@ -440,10 +610,14 @@ const SplikzDatingHome = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">Exercise *</label>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Exercise *
+                    </label>
                     <select
                       value={formData.exercise}
-                      onChange={(e) => setFormData(prev => ({ ...prev, exercise: e.target.value }))}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, exercise: e.target.value }))
+                      }
                       className="w-full bg-zinc-900 border border-zinc-600 rounded-md px-3 py-2 text-white"
                     >
                       <option value="">Select option</option>
@@ -461,9 +635,11 @@ const SplikzDatingHome = () => {
             {/* Interests */}
             <Card className="bg-black/40 border-zinc-700 backdrop-blur">
               <CardContent className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4">Interests (Optional)</h3>
+                <h3 className="text-xl font-semibold text-white mb-4">
+                  Interests (Optional)
+                </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {INTERESTS.map(interest => {
+                  {INTERESTS.map((interest) => {
                     const Icon = interest.icon;
                     const isSelected = formData.interests.includes(interest.id);
                     return (
@@ -471,8 +647,8 @@ const SplikzDatingHome = () => {
                         key={interest.id}
                         onClick={() => toggleInterest(interest.id)}
                         className={`p-3 rounded-lg border transition-all ${
-                          isSelected 
-                            ? 'border-fuchsia-500 bg-fuchsia-500/20 text-fuchsia-300' 
+                          isSelected
+                            ? 'border-fuchsia-500 bg-fuchsia-500/20 text-fuchsia-300'
                             : 'border-zinc-600 hover:border-zinc-500 text-zinc-300'
                         }`}
                       >
@@ -488,17 +664,19 @@ const SplikzDatingHome = () => {
             {/* Hobbies */}
             <Card className="bg-black/40 border-zinc-700 backdrop-blur">
               <CardContent className="p-6">
-                <h3 className="text-xl font-semibold text-white mb-4">Hobbies (Optional)</h3>
+                <h3 className="text-xl font-semibold text-white mb-4">
+                  Hobbies (Optional)
+                </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {HOBBIES.map(hobby => {
+                  {HOBBIES.map((hobby) => {
                     const isSelected = formData.hobbies.includes(hobby);
                     return (
                       <button
                         key={hobby}
                         onClick={() => toggleHobby(hobby)}
                         className={`p-3 rounded-lg border transition-all text-sm ${
-                          isSelected 
-                            ? 'border-purple-500 bg-purple-500/20 text-purple-300' 
+                          isSelected
+                            ? 'border-purple-500 bg-purple-500/20 text-purple-300'
                             : 'border-zinc-600 hover:border-zinc-500 text-zinc-300'
                         }`}
                       >
@@ -532,7 +710,9 @@ const SplikzDatingHome = () => {
     );
   }
 
-  // Main landing page
+  // ─────────────────────────────────────────────────────────────
+  // Main landing page (unchanged)
+  // ─────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden relative">
       {/* Animated Background */}
@@ -572,7 +752,7 @@ const SplikzDatingHome = () => {
                 </h2>
 
                 <p className="text-xl lg:text-2xl text-zinc-300 leading-relaxed">
-                  Skip the endless swiping. Connect through authentic 3-second video intros and 
+                  Skip the endless swiping. Connect through authentic 3-second video intros and
                   discover people who match your energy and vibe.
                 </p>
               </div>
@@ -580,15 +760,21 @@ const SplikzDatingHome = () => {
               {/* Stats */}
               <div className="flex gap-8 py-6">
                 <div className="text-center">
-                  <div className="text-3xl font-bold bg-gradient-to-r from-fuchsia-400 to-purple-400 bg-clip-text text-transparent">3s</div>
+                  <div className="text-3xl font-bold bg-gradient-to-r from-fuchsia-400 to-purple-400 bg-clip-text text-transparent">
+                    3s
+                  </div>
                   <div className="text-zinc-400">Video intros</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">AI</div>
+                  <div className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
+                    AI
+                  </div>
                   <div className="text-zinc-400">Smart matching</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-fuchsia-400 bg-clip-text text-transparent">Free</div>
+                  <div className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-fuchsia-400 bg-clip-text text-transparent">
+                    Free
+                  </div>
                   <div className="text-zinc-400">To get started</div>
                 </div>
               </div>
@@ -605,7 +791,7 @@ const SplikzDatingHome = () => {
                 </Button>
                 <Button
                   variant="outline"
-                  size="lg" 
+                  size="lg"
                   className="h-16 px-8 text-lg border-white/20 text-white hover:bg-white/10 backdrop-blur"
                 >
                   Watch Demo
@@ -655,7 +841,7 @@ const SplikzDatingHome = () => {
                           alt="Dating profile example"
                           className="w-full h-full object-cover"
                         />
-                        
+
                         {/* Video Play Overlay */}
                         <div className="absolute inset-0 bg-black/20">
                           <button
@@ -726,9 +912,7 @@ const SplikzDatingHome = () => {
         {/* Features Section */}
         <div className="container mx-auto px-4 py-20 border-t border-zinc-800/50">
           <div className="text-center mb-16">
-            <h3 className="text-4xl font-bold text-white mb-4">
-              Why Splikz Dating Works
-            </h3>
+            <h3 className="text-4xl font-bold text-white mb-4">Why Splikz Dating Works</h3>
             <p className="text-xl text-zinc-400 max-w-2xl mx-auto">
               Revolutionary features designed to help you find genuine connections faster than ever
             </p>
@@ -742,7 +926,8 @@ const SplikzDatingHome = () => {
                 </div>
                 <h4 className="text-xl font-bold text-white mb-4">3-Second Video Intros</h4>
                 <p className="text-zinc-400">
-                  Show your real personality instantly. No more guessing what someone is really like from photos alone.
+                  Show your real personality instantly. No more guessing what someone is really like
+                  from photos alone.
                 </p>
               </CardContent>
             </Card>
@@ -754,7 +939,8 @@ const SplikzDatingHome = () => {
                 </div>
                 <h4 className="text-xl font-bold text-white mb-4">AI-Powered Matching</h4>
                 <p className="text-zinc-400">
-                  Our smart algorithm learns your preferences and connects you with highly compatible matches nearby.
+                  Our smart algorithm learns your preferences and connects you with highly compatible
+                  matches nearby.
                 </p>
               </CardContent>
             </Card>
@@ -766,7 +952,8 @@ const SplikzDatingHome = () => {
                 </div>
                 <h4 className="text-xl font-bold text-white mb-4">Safe & Verified</h4>
                 <p className="text-zinc-400">
-                  Every profile is verified. Advanced safety features and community guidelines keep you protected.
+                  Every profile is verified. Advanced safety features and community guidelines keep
+                  you protected.
                 </p>
               </CardContent>
             </Card>
@@ -784,9 +971,15 @@ const SplikzDatingHome = () => {
             </div>
             <p className="text-zinc-400 mb-6">Find your perfect match in 3 seconds</p>
             <div className="flex justify-center gap-6 text-sm text-zinc-500">
-              <a href="#" className="hover:text-zinc-300 transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-zinc-300 transition-colors">Terms of Service</a>
-              <a href="#" className="hover:text-zinc-300 transition-colors">Support</a>
+              <a href="#" className="hover:text-zinc-300 transition-colors">
+                Privacy Policy
+              </a>
+              <a href="#" className="hover:text-zinc-300 transition-colors">
+                Terms of Service
+              </a>
+              <a href="#" className="hover:text-zinc-300 transition-colors">
+                Support
+              </a>
             </div>
           </div>
         </footer>
