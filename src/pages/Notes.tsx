@@ -1,600 +1,1020 @@
-// src/pages/Notes.tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+// src/pages/Dating/DatingOnboarding.tsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { Send, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Loader2,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Heart,
+  Sparkles,
+  MapPin,
+  Camera,
+  Upload,
+  X,
+  Plus,
+  Star,
+  Users,
+  Coffee,
+  Music2,
+  Palette,
+  BookOpen,
+  Gamepad2,
+  Dumbbell,
+  Plane,
+  ChefHat,
+  Mountain,
+} from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
-type Profile = {
-  id: string;
-  username: string | null;
-  display_name: string | null;
-  avatar_url: string | null;
+/* =============== constants =============== */
+const GENDER_IDENTITIES = [
+  { id: "man", label: "Man", icon: "👨" },
+  { id: "woman", label: "Woman", icon: "👩" },
+  { id: "non_binary", label: "Non-binary", icon: "🌟" },
+  { id: "trans_man", label: "Trans man", icon: "🏳️‍⚧️" },
+  { id: "trans_woman", label: "Trans woman", icon: "🏳️‍⚧️" },
+  { id: "genderfluid", label: "Genderfluid", icon: "🌊" },
+  { id: "other", label: "Other", icon: "✨" },
+];
+
+const ORIENTATIONS = [
+  { id: "straight", label: "Straight" },
+  { id: "gay", label: "Gay" },
+  { id: "lesbian", label: "Lesbian" },
+  { id: "bisexual", label: "Bisexual" },
+  { id: "pansexual", label: "Pansexual" },
+  { id: "asexual", label: "Asexual" },
+  { id: "queer", label: "Queer" },
+  { id: "questioning", label: "Questioning" },
+];
+
+const SEEKING_GENDERS = [
+  "Men",
+  "Women",
+  "Non-binary folks",
+  "Trans men",
+  "Trans women",
+  "Everyone",
+];
+
+const RELATIONSHIP_TYPES = [
+  {
+    id: "long_term",
+    label: "Long-term relationship",
+    desc: "Looking for something serious and meaningful",
+  },
+  {
+    id: "short_term",
+    label: "Short-term dating",
+    desc: "Casual dating, see what happens naturally",
+  },
+  {
+    id: "friends",
+    label: "New friends",
+    desc: "Building genuine platonic connections",
+  },
+  {
+    id: "networking",
+    label: "Professional networking",
+    desc: "Career connections and opportunities",
+  },
+  {
+    id: "unsure",
+    label: "Open to possibilities",
+    desc: "Still figuring it out, open to connections",
+  },
+];
+
+const INTEREST_CATEGORIES = [
+  {
+    name: "Creative",
+    items: [
+      { id: "music", label: "Music", icon: Music2 },
+      { id: "art", label: "Art", icon: Palette },
+      { id: "photography", label: "Photography", icon: Camera },
+      { id: "writing", label: "Writing", icon: BookOpen },
+      { id: "dancing", label: "Dancing", icon: Users },
+    ],
+  },
+  {
+    name: "Active",
+    items: [
+      { id: "fitness", label: "Fitness", icon: Dumbbell },
+      { id: "outdoors", label: "Outdoors", icon: Mountain },
+      { id: "sports", label: "Sports", icon: Users },
+      { id: "hiking", label: "Hiking", icon: Mountain },
+      { id: "yoga", label: "Yoga", icon: Users },
+    ],
+  },
+  {
+    name: "Social",
+    items: [
+      { id: "foodie", label: "Foodie", icon: ChefHat },
+      { id: "coffee", label: "Coffee", icon: Coffee },
+      { id: "travel", label: "Travel", icon: Plane },
+      { id: "nightlife", label: "Nightlife", icon: Users },
+      { id: "cooking", label: "Cooking", icon: ChefHat },
+    ],
+  },
+  {
+    name: "Digital",
+    items: [
+      { id: "gaming", label: "Gaming", icon: Gamepad2 },
+      { id: "tech", label: "Tech", icon: Mountain },
+      { id: "movies", label: "Movies", icon: BookOpen },
+      { id: "podcasts", label: "Podcasts", icon: Music2 },
+      { id: "streaming", label: "Streaming", icon: Music2 },
+    ],
+  },
+];
+
+/* =============== DOB helpers =============== */
+const today = new Date();
+const MAX_YEAR = today.getFullYear() - 18;
+const MIN_YEAR = 1900;
+const MONTHS = [
+  { v: "01", n: "Jan" }, { v: "02", n: "Feb" }, { v: "03", n: "Mar" },
+  { v: "04", n: "Apr" }, { v: "05", n: "May" }, { v: "06", n: "Jun" },
+  { v: "07", n: "Jul" }, { v: "08", n: "Aug" }, { v: "09", n: "Sep" },
+  { v: "10", n: "Oct" }, { v: "11", n: "Nov" }, { v: "12", n: "Dec" },
+];
+
+const ageFromISO = (iso: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  let a = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) a--;
+  return a < 0 || Number.isNaN(a) ? "" : String(a);
 };
 
-type NoteRow = {
-  id: string;
-  sender_id: string;
-  recipient_id: string;
-  body: string;
-  created_at: string;
-  read_at: string | null;
-  in_reply_to: string | null;
+function daysInMonth(year: number, month1to12: number) {
+  return new Date(year, month1to12, 0).getDate();
+}
 
-  // enriched locally
-  sender_username?: string | null;
-  sender_display_name?: string | null;
-  sender_avatar_url?: string | null;
-};
+/* =============== storage helper =============== */
+async function uploadToBucket(
+  bucket: string,
+  file: File,
+  folder: string
+): Promise<string> {
+  const ext = file.name.split(".").pop() || "bin";
+  const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const filePath = `${folder}/${fileName}`;
 
-// 🔁 lifetime for read notes
-const DELETE_MS = 15_000; // 15 seconds
+  const { error } = await supabase.storage
+    .from(bucket)
+    .upload(filePath, file, { cacheControl: "3600", upsert: false });
+  if (error) throw error;
 
-export default function NotesPage() {
-  const [searchParams] = useSearchParams();
+  const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+  return data.publicUrl;
+}
 
-  const [me, setMe] = useState<string | null>(null);
+/* ====================================================================== */
 
-  // composer state
-  const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [options, setOptions] = useState<Profile[]>([]);
-  const [toUser, setToUser] = useState<Profile | null>(null);
-  const [body, setBody] = useState("");
-  const [sending, setSending] = useState(false);
+const DatingOnboarding: React.FC = () => {
+  const navigate = useNavigate();
 
-  // inbox state
-  const [loadingInbox, setLoadingInbox] = useState(true);
-  const [inbox, setInbox] = useState<NoteRow[]>([]);
-  const [replying, setReplying] = useState<Record<string, boolean>>({});
-  const [replyText, setReplyText] = useState<Record<string, string>>({});
-
-  // notes read this session (so we can delete them after 15s / on leave)
-  const readThisSession = useRef<Set<string>>(new Set());
-  const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  /* ---------------- Auth ---------------- */
+  // 🔒 Keyboard firewall to stop global listeners (like the top search) from stealing focus
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    let mounted = true;
+    const firewall = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const isEditable =
+        !!t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          (t as any).isContentEditable);
 
-    (async () => {
-      const { data, error } = await supabase.auth.getUser();
-      if (!mounted) return;
-      if (error) {
-        console.error(error);
-        toast.error("Could not get user");
+      // If user is typing, kill propagation so nothing outside this page reacts.
+      if (isEditable) {
+        e.stopPropagation();
+        (e as any).stopImmediatePropagation?.();
         return;
       }
-      setMe(data.user?.id ?? null);
-    })();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, session) => {
-      setMe(session?.user?.id ?? null);
-    });
+      // If something already focused and editable, preserve it
+      const active = document.activeElement as HTMLElement | null;
+      const activeEditable =
+        !!active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          (active as any).isContentEditable);
+      if (activeEditable) {
+        e.stopPropagation();
+        (e as any).stopImmediatePropagation?.();
+        active.focus?.({ preventScroll: true });
+      }
+    };
 
+    window.addEventListener("keydown", firewall, true);
+    window.addEventListener("keypress", firewall, true);
+    window.addEventListener("keyup", firewall, true);
     return () => {
-      mounted = false;
-      subscription.unsubscribe();
+      window.removeEventListener("keydown", firewall, true);
+      window.removeEventListener("keypress", firewall, true);
+      window.removeEventListener("keyup", firewall, true);
     };
   }, []);
 
-  /* --------- Preselect recipient from URL --------- */
+  const [saving, setSaving] = useState(false);
+  const [currentStep, setCurrentStep] = useState(1);
+  const totalSteps = 6;
+
+  const [formData, setFormData] = useState({
+    name: "",
+    city: "",
+    age: "",
+    dob: "",
+    bio: "",
+    gender: "",
+    pronouns: "",
+    orientation: "",
+    seeking: [] as string[],
+    relationshipType: "",
+    interests: [] as string[],
+    photos: [] as { id: number; url: string; file?: File }[],
+    videoIntro: null as null | { url: string; file?: File },
+    showAge: true,
+  });
+
+  // DOB parts
+  const [dobYear, setDobYear] = useState("");
+  const [dobMonth, setDobMonth] = useState("");
+  const [dobDay, setDobDay] = useState("");
+
+  // redirect if already has dating profile
   useEffect(() => {
-    const to = searchParams.get("to");
-    const msg = searchParams.get("msg");
-    if (!to) return;
-
-    let cancelled = false;
-
     (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, avatar_url")
-        .eq("id", to)
+      const { data: au } = await supabase.auth.getUser();
+      const uid = au?.user?.id;
+      if (!uid) return;
+      const { data: dp } = await supabase
+        .from("dating_profiles")
+        .select("user_id")
+        .eq("user_id", uid)
         .maybeSingle();
-
-      if (!cancelled && !error && data) {
-        setToUser(data as Profile);
-        if (msg && !body) setBody(msg);
-      }
+      if (dp) navigate("/dating/discover", { replace: true });
     })();
+  }, [navigate]);
 
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
-  /* ---------------- Search creators (username OR display_name) ---------------- */
+  // prefill from localStorage
   useEffect(() => {
-    const raw = query.trim();
-    if (!raw || toUser) {
-      setOptions([]);
-      return;
+    const raw = localStorage.getItem("dating_prefill");
+    if (raw) {
+      const pre = JSON.parse(raw);
+      setFormData((p) => ({
+        ...p,
+        name: pre.name ?? p.name,
+        bio: pre.bio ?? p.bio,
+      }));
     }
+  }, []);
 
-    const term = raw.replace(/^@/, "");
-    const pattern = `%${term}%`;
-    let cancelled = false;
-
-    const run = async () => {
-      setSearching(true);
-
-      const [byUser, byName] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar_url")
-          .ilike("username", pattern)
-          .limit(25),
-        supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar_url")
-          .ilike("display_name", pattern)
-          .limit(25),
-      ]);
-
-      if (cancelled) return;
-
-      const a: Profile[] = (byUser.data as any) ?? [];
-      const seen = new Set(a.map((r) => r.id));
-      const merged: Profile[] = [
-        ...a,
-        ...(((byName.data as any) ?? []).filter((r: Profile) => !seen.has(r.id))),
-      ];
-
-      // rank results (prefix first)
-      merged.sort((x, y) => {
-        const xu = (x.username || "").toLowerCase();
-        const yu = (y.username || "").toLowerCase();
-        const xd = (x.display_name || "").toLowerCase();
-        const yd = (y.display_name || "").toLowerCase();
-        const t = term.toLowerCase();
-        const rank = (s: string) => (s.startsWith(t) ? 0 : 1);
-        const rx = Math.min(rank(xu), rank(xd));
-        const ry = Math.min(rank(yu), rank(yd));
-        return rx !== ry ? rx - ry : (xd || xu).localeCompare(yd || yu);
-      });
-
-      setOptions(merged.slice(0, 25));
-      setSearching(false);
-    };
-
-    const t = setTimeout(run, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [query, toUser]);
-
-  /* ---------------- Send ---------------- */
-  const handleSend = async () => {
-    if (!me) return toast.error("Please sign in to send a note");
-    if (!toUser) return toast.error("Choose who you want to send a note to");
-    if (!body.trim()) return toast.error("Type a note");
-    if (toUser.id === me) return toast.error("You can't send a note to yourself");
-
-    setSending(true);
-    const { error } = await supabase.from("notes").insert({
-      sender_id: me,
-      recipient_id: toUser.id,
-      body: body.trim(),
-      in_reply_to: null,
-    });
-    setSending(false);
-
-    if (error) {
-      console.error(error);
-      toast.error("Failed to send note");
-      return;
+  // keep dob+age in sync
+  useEffect(() => {
+    if (dobYear && dobMonth && dobDay) {
+      const iso = `${dobYear}-${dobMonth}-${dobDay}`;
+      setFormData((p) => ({ ...p, dob: iso, age: ageFromISO(iso) }));
     }
-    setBody("");
-    setToUser(null);
-    setQuery("");
-    toast.success("Note sent!");
+  }, [dobYear, dobMonth, dobDay]);
+
+  const handleInput = (field: string, value: any) =>
+    setFormData((p) => ({ ...p, [field]: value }));
+
+  const toggleArrayItem = (field: "seeking" | "interests", val: string) =>
+    setFormData((p) => ({
+      ...p,
+      [field]: p[field].includes(val)
+        ? p[field].filter((x) => x !== val)
+        : [...p[field], val],
+    }));
+
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const addPhoto = async (file: File) => {
+    setUploadError(null);
+    setUploadingPhoto(true);
+    const url = URL.createObjectURL(file);
+    setFormData((p) => ({
+      ...p,
+      photos: [...p.photos, { id: Date.now(), url, file }],
+    }));
+    setUploadingPhoto(false);
+  };
+  const removePhoto = (id: number) =>
+    setFormData((p) => ({ ...p, photos: p.photos.filter((ph) => ph.id !== id) }));
+  const addVideoIntro = async (file: File) => {
+    const url = URL.createObjectURL(file);
+    setFormData((p) => ({ ...p, videoIntro: { url, file } }));
   };
 
-  /* ---------------- Hard-delete read notes now (for refresh) ---------------- */
-  const purgePreviouslyRead = useCallback(async () => {
-    if (!me) return;
-    // Delete any note that was already read (from any previous visit)
-    // This guarantees "disappear on refresh".
-    try {
-      await supabase
-        .from("notes")
-        .delete()
-        .eq("recipient_id", me)
-        .not("read_at", "is", null); // read_at IS NOT NULL
-    } catch (e) {
-      console.error("Purge previously read notes failed:", e);
+  /* =============== validation =============== */
+  const stepError: string | null = useMemo(() => {
+    switch (currentStep) {
+      case 1: {
+        if (!formData.name.trim()) return "Please enter your name.";
+        if (!formData.city.trim()) return "Please enter your city.";
+        if (!(dobYear && dobMonth && dobDay)) return "Please enter your full date of birth.";
+        const age = Number(formData.age);
+        if (!age || age < 18) return "You must be 18 or older.";
+        return null;
+      }
+      case 2:
+        if (!formData.gender) return "Please choose your gender identity.";
+        if (!formData.pronouns.trim()) return "Please choose or enter your pronouns.";
+        return null;
+      case 3:
+        if (!formData.orientation) return "Please select your orientation.";
+        return null;
+      case 4:
+        if (formData.seeking.length < 1) return "Pick at least one option for who you want to meet.";
+        return null;
+      case 5:
+        if (!formData.relationshipType) return "Choose what you’re looking for.";
+        return null;
+      case 6:
+        if (!(formData.photos.length > 0 || formData.videoIntro))
+          return "Add at least one photo or a 3-second video.";
+        return null;
+      default:
+        return null;
     }
-  }, [me]);
+  }, [currentStep, formData, dobYear, dobMonth, dobDay]);
 
-  /* ---------------- Delete read notes from this session ---------------- */
-  const deleteReadNow = useCallback(async () => {
-    if (!me) return;
-    const ids = Array.from(readThisSession.current);
-    if (!ids.length) return;
+  const nextStep = () => {
+    if (!stepError) setCurrentStep((s) => Math.min(totalSteps, s + 1));
+  };
+  const prevStep = () => {
+    if (currentStep === 1) navigate("/dating");
+    else setCurrentStep((s) => Math.max(1, s - 1));
+  };
 
+  /* =============== publish =============== */
+  const publishProfile = async () => {
+    if (stepError) return;
     try {
-      const { error } = await supabase
-        .from("notes")
-        .delete()
-        .in("id", ids)
-        .eq("recipient_id", me);
-
-      if (error) {
-        console.error("Failed to delete notes:", error);
+      setSaving(true);
+      const { data: au } = await supabase.auth.getUser();
+      const user = au?.user;
+      if (!user) {
+        setSaving(false);
+        navigate("/login");
         return;
       }
 
-      readThisSession.current.clear();
-      setInbox((prev) => prev.filter((note) => !ids.includes(note.id)));
-      toast.success(`Deleted ${ids.length} read note(s)`);
-    } catch (error) {
-      console.error("Error deleting notes:", error);
-    }
-  }, [me]);
-
-  /* ---------------- Fetch inbox (with purge + mark-read) ---------------- */
-  const fetchInbox = useCallback(async () => {
-    if (!me) return;
-    setLoadingInbox(true);
-
-    try {
-      // 1) On every load/refresh: delete anything read earlier.
-      await purgePreviouslyRead();
-
-      // 2) Fetch remaining (unread) notes
-      const { data: notesData, error: notesError } = await supabase
-        .from("notes")
-        .select("*")
-        .eq("recipient_id", me)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false });
-
-      if (notesError) throw notesError;
-
-      // 3) Enrich with sender profiles
-      const senderIds = [...new Set(notesData?.map((n) => n.sender_id) || [])];
-      const { data: profilesData } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, avatar_url")
-        .in("id", senderIds);
-
-      const enrichedNotes: NoteRow[] = (notesData || []).map((note) => {
-        const profile = profilesData?.find((p) => p.id === note.sender_id);
-        return {
-          ...note,
-          sender_username: profile?.username,
-          sender_display_name: profile?.display_name,
-          sender_avatar_url: profile?.avatar_url,
-        };
-      });
-
-      setInbox(enrichedNotes);
-
-      // 4) Mark unread as read and schedule deletion in 15s
-      const unread = enrichedNotes.filter((n) => !n.read_at);
-      if (unread.length) {
-        const ids = unread.map((n) => n.id);
-        const now = new Date().toISOString();
-
-        const { error: updErr } = await supabase
-          .from("notes")
-          .update({ read_at: now })
-          .in("id", ids)
-          .eq("recipient_id", me);
-
-        if (!updErr) {
-          unread.forEach((n) => readThisSession.current.add(n.id));
-          setInbox((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)));
-
-          if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
-          deleteTimeoutRef.current = setTimeout(() => {
-            deleteReadNow();
-          }, DELETE_MS);
+      let photoUrls: string[] = [];
+      for (const ph of formData.photos) {
+        if (ph.file) {
+          const u = await uploadToBucket("dating_photos", ph.file, user.id);
+          photoUrls.push(u);
         }
       }
-    } catch (error) {
-      console.error("Error fetching inbox:", error);
-      toast.error("Failed to load notes");
-    } finally {
-      setLoadingInbox(false);
+      let videoUrl: string | null = null;
+      if (formData.videoIntro?.file) {
+        videoUrl = await uploadToBucket("dating_videos", formData.videoIntro.file, user.id);
+      }
+
+      const { error } = await supabase.from("dating_profiles").upsert(
+        {
+          user_id: user.id,
+          display_name: formData.name || null,
+          city: formData.city || null,
+          dob: formData.dob || null,
+          show_age: formData.showAge,
+          bio: formData.bio || null,
+          gender: formData.gender || null,
+          pronouns: formData.pronouns || null,
+          orientation: formData.orientation || null,
+          seeking: formData.seeking,
+          relationship_type: formData.relationshipType || null,
+          interests: formData.interests,
+          avatar_url: photoUrls[0] || null,
+          photo_urls: photoUrls,
+          video_intro_url: videoUrl,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+
+      if (error) throw error;
+      navigate("/dating/discover", { replace: true });
+    } catch (e) {
+      console.error(e);
+      setSaving(false);
+      alert("Could not publish profile. Please try again.");
     }
-  }, [me, purgePreviouslyRead, deleteReadNow]);
+  };
 
-  useEffect(() => {
-    fetchInbox();
-  }, [fetchInbox]);
+  const progress = Math.round((currentStep / totalSteps) * 100);
 
-  /* ---------------- Realtime ---------------- */
-  useEffect(() => {
-    if (!me) return;
-    const channel = supabase
-      .channel("notes-realtime")
-      .on(
-        "postgres_changes",
-        { schema: "public", table: "notes", event: "*" },
-        () => fetchInbox(),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [me, fetchInbox]);
-
-  /* ---------------- Cleanup on leave ---------------- */
-  useEffect(() => {
-    const cleanup = () => {
-      if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
-      // Best effort; browsers may not always wait for async work here
-      deleteReadNow();
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") cleanup();
-    };
-
-    window.addEventListener("beforeunload", cleanup);
-    window.addEventListener("unload", cleanup);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      cleanup();
-      window.removeEventListener("beforeunload", cleanup);
-      window.removeEventListener("unload", cleanup);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [deleteReadNow]);
-
-  /* ---------------- UI helpers ---------------- */
-  const initial = useCallback(
-    (p?: Profile | null, emailFallback?: string | null) =>
-      (p?.display_name?.[0] || p?.username?.[0] || emailFallback?.[0] || "U").toUpperCase(),
-    [],
-  );
-
-  const hasInbox = inbox.length > 0;
-  const seconds = DELETE_MS / 1000;
-
-  const disclaimer = useMemo(
-    () => (
-      <div className="rounded-md border border-yellow-300/40 bg-yellow-500/10 p-3 text-sm">
-        <strong>Heads up:</strong> Notes disappear after you read them. We automatically
-        delete read notes after {seconds} seconds, and also when you leave or refresh this page.
+  /* =============== UI helpers =============== */
+  const StepIndicator = () => (
+    <div className="w-full max-w-4xl mx-auto mb-8">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm text-zinc-400">Step {currentStep} of {totalSteps}</div>
+        <div className="text-sm text-zinc-400">{progress}% complete</div>
       </div>
-    ),
-    [seconds],
-  );
-
-  if (!me) {
-    return (
-      <div className="mx-auto max-w-3xl p-4">
-        {disclaimer}
-        <div className="mt-6 text-sm">
-          Please <a className="underline" href="/login">log in</a> to send and read notes.
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-4xl p-4 space-y-8">
-      {/* Composer */}
-      <div>
-        <h1 className="text-xl font-semibold">Send a Note</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Pick a creator and send a short, one-off note. When they read it, it gets automatically
-          deleted after {seconds} seconds. They can reply before it disappears.
-        </p>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(260px,320px)_1fr_auto]">
-          <div className="relative">
-            <Input
-              value={toUser ? (toUser.display_name || toUser.username || "Selected") : query}
-              onChange={(e) => {
-                setToUser(null);
-                setQuery(e.target.value);
-              }}
-              placeholder="Search name or username…"
-              aria-label="Search creators"
-            />
-            {!!(query && !toUser) && (
-              <div className="absolute z-10 mt-1 w-full rounded-md border bg-background shadow">
-                {searching && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-                )}
-                {!searching && options.length === 0 && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                )}
-                {options.map((opt) => (
-                  <button
-                    key={opt.id}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50"
-                    onClick={() => {
-                      setToUser(opt);
-                      setQuery("");
-                    }}
-                  >
-                    <Avatar className="h-6 w-6">
-                      {opt.avatar_url ? <AvatarImage src={opt.avatar_url} /> : null}
-                      <AvatarFallback className="text-[10px]">
-                        {initial(opt, null)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <div className="text-sm">
-                        {opt.display_name || opt.username || "User"}
-                      </div>
-                      {opt.username ? (
-                        <div className="text-xs text-muted-foreground">@{opt.username}</div>
-                      ) : null}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <Textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder={
-              toUser
-                ? `Write a note to ${toUser.display_name || toUser.username || "creator"}…`
-                : "Choose a creator first…"
-            }
-            className="min-h-[44px]"
-          />
-
-          <Button onClick={handleSend} disabled={sending || !toUser || !body.trim()}>
-            <Send className="mr-2 h-4 w-4" />
-            {sending ? "Sending…" : "Send"}
-          </Button>
-        </div>
-
-        <div className="mt-4">{disclaimer}</div>
-      </div>
-
-      {/* Inbox */}
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Your Note Inbox</h2>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={fetchInbox} disabled={loadingInbox}>
-              Refresh
-            </Button>
-            <Button variant="destructive" size="sm" onClick={deleteReadNow}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Clear read now ({readThisSession.current.size})
-            </Button>
-          </div>
-        </div>
-
-        {loadingInbox ? (
-          <div className="text-sm text-muted-foreground">Loading…</div>
-        ) : !hasInbox ? (
-          <div className="rounded-md border p-4 text-sm text-muted-foreground">
-            No notes yet. When someone sends you a note, it'll appear here.
-          </div>
-        ) : (
-          <ul className="space-y-3">
-            {inbox.map((n) => (
-              <li key={n.id} className="rounded-md border p-3">
-                <div className="flex items-start gap-3">
-                  <Avatar className="h-9 w-9">
-                    {n.sender_avatar_url ? <AvatarImage src={n.sender_avatar_url} /> : null}
-                    <AvatarFallback>
-                      {(n.sender_display_name || n.sender_username || "U")[0].toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={`/profile/${n.sender_id}`}
-                        className="font-medium hover:underline"
-                        title="View profile"
-                      >
-                        {n.sender_display_name || n.sender_username || "User"}
-                      </a>
-                      {n.sender_username ? (
-                        <span className="text-xs text-muted-foreground">@{n.sender_username}</span>
-                      ) : null}
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        {new Date(n.created_at).toLocaleString()}
-                      </span>
-                    </div>
-
-                    <div className="mt-1 whitespace-pre-wrap text-sm">{n.body}</div>
-
-                    {/* Reply */}
-                    <div className="mt-2 flex items-center gap-2">
-                      {!replying[n.id] ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setReplying((s) => ({ ...s, [n.id]: true }))}
-                        >
-                          Reply
-                        </Button>
-                      ) : (
-                        <>
-                          <Textarea
-                            value={replyText[n.id] ?? ""}
-                            onChange={(e) =>
-                              setReplyText((s) => ({ ...s, [n.id]: e.target.value }))
-                            }
-                            placeholder="Write your reply…"
-                            className="min-h-[38px]"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={async () => {
-                              const text = (replyText[n.id] ?? "").trim();
-                              if (!text) return;
-                              const { error } = await supabase.from("notes").insert({
-                                sender_id: me!,
-                                recipient_id: n.sender_id,
-                                body: text,
-                                in_reply_to: n.id,
-                              });
-                              if (error) {
-                                console.error(error);
-                                toast.error("Failed to send reply");
-                                return;
-                              }
-                              setReplyText((s) => ({ ...s, [n.id]: "" }));
-                              setReplying((s) => ({ ...s, [n.id]: false }));
-                              toast.success("Reply sent");
-                            }}
-                          >
-                            <Send className="mr-2 h-4 w-4" />
-                            Send
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setReplying((s) => ({ ...s, [n.id]: false }))}
-                          >
-                            Cancel
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Status */}
-                <div
-                  className={cn(
-                    "mt-2 text-xs",
-                    n.read_at
-                      ? readThisSession.current.has(n.id)
-                        ? "text-red-600"
-                        : "text-emerald-600"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {n.read_at
-                    ? readThisSession.current.has(n.id)
-                      ? `Read (will be deleted in ${seconds} seconds)`
-                      : "Read (from previous session)"
-                    : "Unread"}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="w-full bg-zinc-800 rounded-full h-2">
+        <div
+          className="bg-gradient-to-r from-fuchsia-500 to-purple-500 h-2 rounded-full transition-all duration-500 ease-out"
+          style={{ width: `${progress}%` }}
+        />
       </div>
     </div>
   );
-}
+
+  const StepCard: React.FC<{ title: string; subtitle?: string }> = ({
+    title,
+    subtitle,
+    children,
+  }) => (
+    <Card className="w-full max-w-4xl mx-auto bg-zinc-950 border-zinc-800 shadow-2xl">
+      <CardHeader className="text-center border-b border-zinc-800 pb-6">
+        <CardTitle className="text-2xl font-bold text-white mb-2">{title}</CardTitle>
+        {subtitle && <p className="text-zinc-400">{subtitle}</p>}
+      </CardHeader>
+      <CardContent className="p-8">{children}</CardContent>
+    </Card>
+  );
+
+  const NavigationButtons = () => (
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 w-full max-w-4xl mx-auto mt-8">
+      <Button
+        variant="outline"
+        onClick={prevStep}
+        className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+      >
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        {currentStep === 1 ? "Exit" : "Back"}
+      </Button>
+
+      {stepError && <div className="text-sm text-red-400">{stepError}</div>}
+
+      {currentStep === totalSteps ? (
+        <Button
+          onClick={publishProfile}
+          disabled={saving || Boolean(stepError)}
+          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8"
+        >
+          {saving ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Publishing your profile...
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-4 w-4 mr-2" />
+              Publish my profile
+            </>
+          )}
+        </Button>
+      ) : (
+        <Button
+          onClick={nextStep}
+          disabled={Boolean(stepError)}
+          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-8 disabled:opacity-60"
+        >
+          Continue
+          <ArrowRight className="h-4 w-4 ml-2" />
+        </Button>
+      )}
+    </div>
+  );
+
+  /* =============== steps =============== */
+  const renderStep = () => {
+    switch (currentStep) {
+      case 1: {
+        const maxDays =
+          (dobYear && dobMonth
+            ? daysInMonth(parseInt(dobYear), parseInt(dobMonth))
+            : 31) || 31;
+        const days = Array.from({ length: maxDays }, (_, i) =>
+          String(i + 1).padStart(2, "0")
+        );
+
+        return (
+          <StepCard title="Basics" subtitle="Tell us a little about yourself">
+            <div className="space-y-6">
+              {/* Avatar or 3s video */}
+              <div className="flex flex-col items-center gap-4">
+                <div className="h-32 w-32 rounded-full ring-4 ring-fuchsia-500/30 overflow-hidden relative bg-zinc-900">
+                  {formData.videoIntro?.url ? (
+                    <video
+                      src={formData.videoIntro.url}
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                    />
+                  ) : formData.photos[0]?.url ? (
+                    <img
+                      src={formData.photos[0].url}
+                      className="h-full w-full object-cover"
+                      alt="main"
+                    />
+                  ) : (
+                    <Avatar className="h-32 w-32">
+                      <AvatarImage />
+                      <AvatarFallback className="bg-zinc-800 text-zinc-300 text-2xl">
+                        {formData.name ? formData.name.charAt(0) : "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-200 cursor-pointer hover:border-zinc-600">
+                    <Upload className="h-4 w-4" />
+                    <span>Add photo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])}
+                    />
+                  </label>
+
+                  <label className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white cursor-pointer hover:from-fuchsia-500 hover:to-purple-500">
+                    <Camera className="h-4 w-4" />
+                    <span>Add 3-sec video</span>
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])}
+                    />
+                  </label>
+
+                  {formData.videoIntro && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10 border-zinc-700 text-zinc-300"
+                      onClick={() => handleInput("videoIntro", null)}
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Remove video
+                    </Button>
+                  )}
+                </div>
+
+                {uploadingPhoto && (
+                  <div className="text-sm text-zinc-400 flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Adding photo…
+                  </div>
+                )}
+                {uploadError && <div className="text-sm text-red-400">{uploadError}</div>}
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <Label className="text-zinc-300 text-sm font-medium">Your name</Label>
+                  <Input
+                    value={formData.name}
+                    onChange={(e) => handleInput("name", e.target.value)}
+                    className="mt-2 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
+                    placeholder="What should people call you?"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-zinc-300 text-sm font-medium">City</Label>
+                  <div className="relative mt-2">
+                    <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-zinc-500" />
+                    <Input
+                      value={formData.city}
+                      onChange={(e) => handleInput("city", e.target.value)}
+                      className="pl-10 bg-zinc-900 border-zinc-700 text-white text-lg h-12"
+                      placeholder="Where are you based?"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* DOB + Age */}
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <Label className="text-zinc-300 text-sm font-medium">Date of birth</Label>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <select
+                      className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
+                      value={dobMonth}
+                      onChange={(e) => setDobMonth(e.target.value)}
+                    >
+                      <option value="">Month</option>
+                      {MONTHS.map((m) => (
+                        <option key={m.v} value={m.v}>{m.n}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
+                      value={dobDay}
+                      onChange={(e) => setDobDay(e.target.value)}
+                    >
+                      <option value="">Day</option>
+                      {days.map((d) => (
+                        <option key={d} value={d}>{parseInt(d, 10)}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="bg-zinc-900 border border-zinc-700 text-white h-12 rounded-lg px-3"
+                      value={dobYear}
+                      onChange={(e) => setDobYear(e.target.value)}
+                    >
+                      <option value="">Year</option>
+                      {Array.from({ length: MAX_YEAR - MIN_YEAR + 1 }, (_, i) =>
+                        String(MAX_YEAR - i)
+                      ).map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-zinc-300 text-sm font-medium">Age</Label>
+                  <Input
+                    inputMode="numeric"
+                    value={formData.age}
+                    onChange={(e) =>
+                      handleInput("age", e.target.value.replace(/[^\d]/g, "").slice(0, 3))
+                    }
+                    className="mt-2 bg-zinc-900 border-zinc-700 text-white h-12"
+                    placeholder="Your age"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-700">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-white font-medium">Show my age</div>
+                    <div className="text-zinc-400 text-sm">
+                      Age shown: {formData.age || "—"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleInput("showAge", !formData.showAge)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      formData.showAge ? "bg-fuchsia-500" : "bg-zinc-600"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        formData.showAge ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-zinc-300 text-sm font-medium">Tell us about yourself</Label>
+                <Textarea
+                  value={formData.bio}
+                  onChange={(e) => handleInput("bio", e.target.value.slice(0, 500))}
+                  onBlur={(e) => {
+                    // if blur leaves the document, re-focus without scrolling (prevents jump)
+                    if (document.activeElement === document.body) {
+                      e.currentTarget.focus({ preventScroll: true });
+                    }
+                  }}
+                  className="mt-2 bg-zinc-900 border-zinc-700 text-white min-h-[120px] resize-none"
+                  placeholder="Share your vibe, interests, what makes you unique..."
+                />
+                <div className="text-xs text-zinc-500 mt-2 text-right">
+                  {formData.bio.length}/500
+                </div>
+              </div>
+            </div>
+          </StepCard>
+        );
+      }
+
+      case 2:
+        return (
+          <StepCard title="Your identity matters" subtitle="Help us understand who you are">
+            <div className="space-y-8">
+              <div>
+                <Label className="text-zinc-300 text-lg font-medium mb-4 block">Gender identity</Label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {GENDER_IDENTITIES.map((g) => (
+                    <button
+                      key={g.id}
+                      onClick={() => handleInput("gender", g.id)}
+                      className={`p-4 rounded-xl border-2 transition-all text-left ${
+                        formData.gender === g.id
+                          ? "border-fuchsia-500 bg-fuchsia-500/10"
+                          : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
+                      }`}
+                    >
+                      <div className="text-2xl mb-2">{g.icon}</div>
+                      <div className="text-white font-medium">{g.label}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-zinc-300 text-lg font-medium mb-4 block">Pronouns</Label>
+                <div className="flex flex-wrap gap-3">
+                  {["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => handleInput("pronouns", p)}
+                      className={`px-6 py-3 rounded-full border transition-all ${
+                        formData.pronouns === p
+                          ? "border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-300"
+                          : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-600"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <Input
+                  value={
+                    ["he/him", "she/her", "they/them", "he/they", "she/they", "ze/zir"].includes(
+                      formData.pronouns
+                    )
+                      ? ""
+                      : formData.pronouns
+                  }
+                  onChange={(e) => handleInput("pronouns", e.target.value)}
+                  className="mt-3 bg-zinc-900 border-zinc-700 text-white"
+                  placeholder="Or enter custom pronouns..."
+                />
+              </div>
+            </div>
+          </StepCard>
+        );
+
+      case 3:
+        return (
+          <StepCard title="Sexual orientation" subtitle="How do you identify?">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {ORIENTATIONS.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => handleInput("orientation", o.id)}
+                  className={`p-6 rounded-xl border-2 transition-all text-center ${
+                    formData.orientation === o.id
+                      ? "border-fuchsia-500 bg-fuchsia-500/10"
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
+                  }`}
+                >
+                  <div className="text-white font-medium text-lg">{o.label}</div>
+                </button>
+              ))}
+            </div>
+          </StepCard>
+        );
+
+      case 4:
+        return (
+          <StepCard title="Who would you like to meet?" subtitle="Select all that apply">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              {SEEKING_GENDERS.map((g) => (
+                <button
+                  key={g}
+                  onClick={() => toggleArrayItem("seeking", g)}
+                  className={`p-6 rounded-xl border-2 transition-all text-center ${
+                    formData.seeking.includes(g)
+                      ? "border-fuchsia-500 bg-fuchsia-500/10"
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
+                  }`}
+                >
+                  <div className="text-white font-medium">{g}</div>
+                </button>
+              ))}
+            </div>
+          </StepCard>
+        );
+
+      case 5:
+        return (
+          <StepCard
+            title="What are you looking for?"
+            subtitle="Your relationship goals help us find better matches"
+          >
+            <div className="space-y-4">
+              {RELATIONSHIP_TYPES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => handleInput("relationshipType", t.id)}
+                  className={`w-full p-6 rounded-xl border-2 transition-all text-left ${
+                    formData.relationshipType === t.id
+                      ? "border-fuchsia-500 bg-fuchsia-500/10"
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-600"
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="p-2 rounded-lg bg-white/5">
+                      <Star className="h-6 w-6 text-white" />
+                    </div>
+                    <div>
+                      <div className="text-white font-medium text-lg mb-1">{t.label}</div>
+                      <div className="text-zinc-400 text-sm">{t.desc}</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </StepCard>
+        );
+
+      case 6:
+        return (
+          <StepCard
+            title="Photos & 3-second intro"
+            subtitle="Show your personality (video intros get 3× more matches)"
+          >
+            <div className="space-y-8">
+              <div>
+                <h3 className="text-white font-medium text-lg mb-4">Photos (2–6 recommended)</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {formData.photos.map((photo, idx) => (
+                    <div key={photo.id} className="relative group">
+                      <img
+                        src={photo.url}
+                        alt={`Photo ${idx + 1}`}
+                        className="w-full h-48 object-cover rounded-xl"
+                      />
+                      <button
+                        onClick={() => removePhoto(photo.id)}
+                        className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                      {idx === 0 && (
+                        <div className="absolute top-2 left-2 bg-fuchsia-500 text-white text-xs px-2 py-1 rounded-full">
+                          Main
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {formData.photos.length < 6 && (
+                    <label className="border-2 border-dashed border-zinc-700 rounded-xl h-48 flex flex-col items-center justify-center cursor-pointer hover:border-zinc-600 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => e.target.files?.[0] && addPhoto(e.target.files[0])}
+                        className="hidden"
+                      />
+                      {uploadingPhoto ? (
+                        <Loader2 className="h-8 w-8 text-fuchsia-500 animate-spin" />
+                      ) : (
+                        <>
+                          <Plus className="h-8 w-8 text-zinc-500 mb-2" />
+                          <span className="text-zinc-400 text-sm">Add photo</span>
+                        </>
+                      )}
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-white font-medium text-lg mb-4">
+                  3-Second Video Intro{" "}
+                  <Badge className="ml-2 bg-gradient-to-r from-fuchsia-500 to-purple-500 text-white">
+                    <Star className="h-3 w-3 mr-1" />
+                    Recommended
+                  </Badge>
+                </h3>
+
+                {!formData.videoIntro ? (
+                  <label className="border-2 border-dashed border-fuchsia-500/50 rounded-xl p-8 text-center cursor-pointer hover:border-fuchsia-500/70 transition-colors">
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => e.target.files?.[0] && addVideoIntro(e.target.files[0])}
+                    />
+                    <div className="bg-gradient-to-r from-fuchsia-500 to-purple-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Camera className="h-8 w-8 text-white" />
+                    </div>
+                    <h4 className="text-white font-medium mb-2">
+                      Create your signature 3-second intro
+                    </h4>
+                    <p className="text-zinc-400 text-sm">We’ll trim to exactly 3 seconds when you publish.</p>
+                  </label>
+                ) : (
+                  <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-700">
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-lg flex items-center justify-center overflow-hidden">
+                        <video
+                          src={formData.videoIntro.url}
+                          className="h-full w-full object-cover"
+                          autoPlay
+                          muted
+                          loop
+                          playsInline
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-white font-medium">Video intro ready!</p>
+                        <p className="text-zinc-400 text-sm">Will be trimmed to 3s</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleInput("videoIntro", null)}
+                        className="border-zinc-700"
+                      >
+                        Re-record
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </StepCard>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      // Block bubbling to any app-wide key listeners (search bar etc.)
+      onKeyDownCapture={(e) => e.stopPropagation()}
+      onKeyUpCapture={(e) => e.stopPropagation()}
+      onKeyPressCapture={(e) => e.stopPropagation()}
+      className="min-h-screen bg-black text-white relative"
+      style={{ overscrollBehavior: "contain" }} // extra guard against scroll chaining
+    >
+      <div className="relative z-10 border-b border-zinc-800/50 bg-black/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-fuchsia-600 to-purple-500 flex items-center justify-center">
+              <Heart className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold">Splikz Dating</h1>
+              <p className="text-sm text-zinc-400">Create your perfect dating profile</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
+        <StepIndicator />
+        <div className="flex gap-6">
+          <div className="flex-1">
+            {renderStep()}
+            <NavigationButtons />
+          </div>
+        </div>
+      </div>
+
+      {saving && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <Card className="bg-zinc-950 border-zinc-700 w-full max-w-md">
+            <CardContent className="p-8 text-center">
+              <div className="h-16 w-16 bg-gradient-to-r from-fuchsia-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Sparkles className="h-8 w-8 text-white" />
+              </div>
+              <h3 className="text-xl font-bold text-white mb-2">Publishing your profile...</h3>
+              <p className="text-zinc-400 mb-6">
+                We’re saving your info and will trim your video to exactly 3 seconds.
+              </p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-sm text-zinc-300">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Profile information saved
+                </div>
+                <div className="flex items-center gap-3 text-sm text-zinc-300">
+                  <Check className="h-4 w-4 text-green-500" />
+                  Photos added
+                </div>
+                <div className="flex items-center gap-3 text-sm text-zinc-300">
+                  <Loader2 className="h-4 w-4 animate-spin text-fuchsia-500" />
+                  Processing your 3-sec intro…
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DatingOnboarding;
