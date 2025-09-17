@@ -449,6 +449,14 @@ const DatingDiscover: React.FC = () => {
     }
   };
 
+  // Helper function to check if a value is meaningful (not null, empty string, or empty array)
+  const hasValue = (value: any): boolean => {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string') return value.trim() !== '';
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  };
+
   // ─────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────
@@ -469,20 +477,22 @@ const DatingDiscover: React.FC = () => {
   const hasProfiles = currentIndex < profiles.length;
   const currentProfile = hasProfiles ? profiles[currentIndex] : null;
 
+  // Only shows DetailRow if the value exists and is meaningful
   const DetailRow = ({ label, value }: { label: string; value?: string | null }) =>
-    value ? (
+    hasValue(value) ? (
       <div className="flex items-start gap-3">
         <span className="text-zinc-400 w-36 shrink-0">{label}</span>
         <span className="text-white">{value}</span>
       </div>
     ) : null;
 
+  // Only shows PillList if items exist and array has content
   const PillList = ({ label, items }: { label: string; items?: string[] | null }) =>
-    items && items.length ? (
+    hasValue(items) ? (
       <div>
         <div className="text-zinc-400 mb-2">{label}</div>
         <div className="flex flex-wrap gap-2">
-          {items.map((t, i) => (
+          {items!.map((t, i) => (
             <span key={i} className="text-xs bg-white/10 border border-white/10 rounded-full px-2 py-1 text-white">
               {t}
             </span>
@@ -792,39 +802,51 @@ const DatingDiscover: React.FC = () => {
                 </div>
 
                 {/* Bio */}
-                {currentProfile.bio && (
+                {hasValue(currentProfile.bio) && (
                   <div className="text-zinc-200">{currentProfile.bio}</div>
                 )}
 
                 {/* Gallery */}
-                {currentProfile.photos?.length ? (
+                {hasValue(currentProfile.photos) && (
                   <div>
                     <div className="text-zinc-400 mb-2">Photos</div>
                     <div className="grid grid-cols-3 gap-2">
-                      {currentProfile.photos.map((p, i) => (
+                      {currentProfile.photos!.map((p, i) => (
                         <img key={i} src={p} alt={`Photo ${i + 1}`} className="h-28 w-full object-cover rounded-md" />
                       ))}
                     </div>
                   </div>
-                ) : null}
+                )}
 
-                {/* Details */}
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <DetailRow label="Looking for" value={currentProfile.relationship_goal || undefined} />
-                  <DetailRow label="Height" value={currentProfile.height || undefined} />
-                  <DetailRow label="Body type" value={currentProfile.body_type || undefined} />
-                  <DetailRow label="Education" value={currentProfile.education || undefined} />
-                  <DetailRow label="Religion" value={currentProfile.religion || undefined} />
-                  <DetailRow label="Drinking" value={currentProfile.drinking || undefined} />
-                  <DetailRow label="Smoking" value={currentProfile.smoking || undefined} />
-                  <DetailRow label="Exercise" value={currentProfile.exercise || undefined} />
-                  <DetailRow label="Kids" value={currentProfile.has_kids || undefined} />
-                  <DetailRow label="Wants kids" value={currentProfile.wants_kids || undefined} />
-                  <DetailRow label="Pets" value={currentProfile.pets || undefined} />
-                </div>
+                {/* Extended Details - Only show if at least one field has data */}
+                {(hasValue(currentProfile.relationship_goal) || 
+                  hasValue(currentProfile.height) || 
+                  hasValue(currentProfile.body_type) || 
+                  hasValue(currentProfile.education) || 
+                  hasValue(currentProfile.religion) || 
+                  hasValue(currentProfile.drinking) || 
+                  hasValue(currentProfile.smoking) || 
+                  hasValue(currentProfile.exercise) || 
+                  hasValue(currentProfile.has_kids) || 
+                  hasValue(currentProfile.wants_kids) || 
+                  hasValue(currentProfile.pets)) && (
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <DetailRow label="Looking for" value={currentProfile.relationship_goal} />
+                    <DetailRow label="Height" value={currentProfile.height} />
+                    <DetailRow label="Body type" value={currentProfile.body_type} />
+                    <DetailRow label="Education" value={currentProfile.education} />
+                    <DetailRow label="Religion" value={currentProfile.religion} />
+                    <DetailRow label="Drinking" value={currentProfile.drinking} />
+                    <DetailRow label="Smoking" value={currentProfile.smoking} />
+                    <DetailRow label="Exercise" value={currentProfile.exercise} />
+                    <DetailRow label="Kids" value={currentProfile.has_kids} />
+                    <DetailRow label="Wants kids" value={currentProfile.wants_kids} />
+                    <DetailRow label="Pets" value={currentProfile.pets} />
+                  </div>
+                )}
 
-                <PillList label="Interests" items={currentProfile.interests || undefined} />
-                <PillList label="Hobbies" items={currentProfile.hobbies || undefined} />
+                <PillList label="Interests" items={currentProfile.interests} />
+                <PillList label="Hobbies" items={currentProfile.hobbies} />
 
                 {/* Action row inside modal */}
                 <div className="flex items-center justify-center gap-6 pt-2">
