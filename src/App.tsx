@@ -56,6 +56,7 @@ import Profile from "./pages/Profile";
 import CreatorProfile from "./pages/CreatorProfile";
 import VideoPage from "./pages/VideoPage";
 import Search from "./pages/Search";
+import PhotoPage from "./pages/PhotoPage";
 
 // Messaging
 import CombinedMessages from "./pages/CombinedMessages";
