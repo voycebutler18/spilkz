@@ -1,304 +1,581 @@
 // src/pages/CreatorProfile.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, MapPin, Calendar, UserPlus, Check } from "lucide-react";
+import { VideoGrid } from "@/components/VideoGrid";
+import FollowButton from "@/components/FollowButton";
+import FollowersList from "@/components/FollowersList";
+import { MapPin, Calendar, Film, Users, TrendingUp } from "lucide-react";
+import { toast } from "sonner";
 
-type Profile = {
+interface Profile {
   id: string;
   username: string | null;
   display_name: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name?: string | null;
   bio: string | null;
-  city: string | null;
-  created_at: string | null;
   avatar_url: string | null;
-};
+  city: string | null;
+  followers_count: number;
+  following_count: number;
+  spliks_count: number;
+  is_private: boolean;
+  created_at: string;
+  followers_private?: boolean;
+  following_private?: boolean;
+}
 
-const formatJoined = (iso?: string | null) => {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { month: "long", year: "numeric" });
-};
+const isUuid = (v: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 
-const safeNumber = (v: number | null) => (typeof v === "number" ? v : 0);
-
-/**
- * Creator Profile
- * - Loads profile by :slug (username, fallback to id)
- * - ✅ Correct follower/following counts using head+count queries
- * - Optional posts count from first table that exists: videos → spliks → posts
- * - Follow/Unfollow button with instant optimistic UI
- */
-const CreatorProfile: React.FC = () => {
-  const { slug } = useParams<{ slug: string }>();
+export default function CreatorProfile() {
+  const { slug = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-  const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [spliks, setSpliks] = useState<any[]>([]);
+  const [boostedSpliks, setBoostedSpliks] = useState<any[]>([]);
+  const [boostedLoading, setBoostedLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [showFollowersList, setShowFollowersList] = useState(false);
+  const [showFollowingList, setShowFollowingList] = useState(false);
 
-  const [followersCount, setFollowersCount] = useState<number>(0);
-  const [followingCount, setFollowingCount] = useState<number>(0);
-  const [postsCount, setPostsCount] = useState<number>(0);
-
-  const [meId, setMeId] = useState<string | null>(null);
-  const [iFollow, setIFollow] = useState<boolean>(false);
-  const [toggling, setToggling] = useState<boolean>(false);
+  const unsubRef = useRef<null | (() => void)>(null);
 
   useEffect(() => {
-    let alive = true;
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUserId(data.user?.id || null);
+    });
+  }, []);
 
-    (async () => {
-      try {
-        setLoading(true);
+  // Resolve profile slug (username or uuid); redirect /creator -> own profile when logged in
+  useEffect(() => {
+    let cancelled = false;
 
-        // who am I?
-        const { data: auth } = await supabase.auth.getUser();
-        if (alive) setMeId(auth?.user?.id ?? null);
+    const run = async () => {
+      const s = (slug || "").trim();
 
-        // find profile by username (slug) first, otherwise by id
-        let userProfile: Profile | null = null;
-
-        if (slug) {
-          const { data: pByUsername } = await supabase
+      if (!s) {
+        const { data: session } = await supabase.auth.getSession();
+        const uid = session?.session?.user?.id;
+        if (uid) {
+          const { data: me } = await supabase
             .from("profiles")
-            .select("id,username,display_name,bio,city,created_at,avatar_url")
-            .eq("username", slug)
+            .select("username")
+            .eq("id", uid)
             .maybeSingle();
+          if (me?.username) {
+            navigate(`/creator/${me.username}`, { replace: true });
+          } else {
+            navigate(`/creator/${uid}`, { replace: true });
+          }
+          return;
+        }
+        setLoading(false);
+        setProfile(null);
+        return;
+      }
 
-          userProfile = (pByUsername as Profile | null) ?? null;
+      setLoading(true);
+      setProfile(null);
+      setSpliks([]);
+      setBoostedSpliks([]);
 
-          if (!userProfile) {
-            const { data: pById } = await supabase
+      try {
+        let profileData: Profile | null = null;
+
+        if (!isUuid(s)) {
+          let { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .ilike("username", s)
+            .maybeSingle<Profile>();
+
+          if (!data) {
+            const byLower = await supabase
               .from("profiles")
-              .select("id,username,display_name,bio,city,created_at,avatar_url")
-              .eq("id", slug)
-              .maybeSingle();
-            userProfile = (pById as Profile | null) ?? null;
+              .select("*")
+              .eq("username", s.toLowerCase())
+              .maybeSingle<Profile>();
+            data = byLower.data || null;
+          }
+          profileData = data;
+        }
+
+        if (!profileData && isUuid(s)) {
+          const byId = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", s)
+            .maybeSingle<Profile>();
+          profileData = byId.data || null;
+
+          if (profileData?.username && s !== profileData.username) {
+            navigate(`/creator/${profileData.username}`, { replace: true });
+            return;
           }
         }
 
-        if (!userProfile) {
-          navigate("/home", { replace: true });
+        if (!profileData && !isUuid(s)) {
+          const { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("username", s)
+            .maybeSingle<Profile>();
+          profileData = data;
+        }
+
+        if (!profileData) {
+          if (!cancelled) {
+            setProfile(null);
+            setLoading(false);
+          }
           return;
         }
 
-        if (!alive) return;
-        setProfile(userProfile);
+        if (cancelled) return;
 
-        // ✅ follower/following counts (fast head requests)
-        const [{ count: followers }, { count: following }] = await Promise.all([
-          supabase
-            .from("follows")
-            .select("id", { count: "exact", head: true })
-            .eq("following_id", userProfile.id),
-          supabase
-            .from("follows")
-            .select("id", { count: "exact", head: true })
-            .eq("follower_id", userProfile.id),
-        ]);
-
-        if (!alive) return;
-        setFollowersCount(safeNumber(followers ?? 0));
-        setFollowingCount(safeNumber(following ?? 0));
-
-        // (Optional) posts/videos count — try common tables
-        const tablesToTry = ["videos", "spliks", "posts"];
-        let counted = 0;
-        for (const t of tablesToTry) {
-          try {
-            const { count } = await supabase
-              .from(t)
-              .select("id", { count: "exact", head: true })
-              .eq("user_id", userProfile.id);
-            if (typeof count === "number") {
-              counted = count;
-              break;
-            }
-          } catch {
-            // ignore if table doesn't exist
-          }
-        }
-        if (!alive) return;
-        setPostsCount(counted);
-
-        // do I follow this profile?
-        if (auth?.user?.id && auth.user.id !== userProfile.id) {
-          const { data: rel } = await supabase
-            .from("follows")
-            .select("id")
-            .eq("follower_id", auth.user.id)
-            .eq("following_id", userProfile.id)
-            .maybeSingle();
-          if (!alive) return;
-          setIFollow(!!rel);
-        } else {
-          setIFollow(false);
+        setProfile(profileData);
+        await fetchSpliks(profileData.id, cancelled);
+        await fetchBoostedSpliks(profileData.id, cancelled);
+      } catch (e) {
+        console.error("Error resolving profile:", e);
+        if (!cancelled) {
+          toast.error("Failed to load profile");
+          setProfile(null);
         }
       } finally {
-        if (alive) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    })();
-
-    return () => {
-      alive = false;
     };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, navigate]);
 
-  const isMe = useMemo(() => meId && profile?.id && meId === profile.id, [meId, profile]);
+  // Realtime subscriptions for this profile
+  useEffect(() => {
+    if (unsubRef.current) {
+      try { unsubRef.current(); } catch {}
+      unsubRef.current = null;
+    }
+    if (!profile?.id) return;
 
-  const toggleFollow = async () => {
-    if (!meId || !profile || meId === profile.id) return;
-    setToggling(true);
-    try {
-      if (iFollow) {
-        // Unfollow
-        const { error } = await supabase
-          .from("follows")
-          .delete()
-          .eq("follower_id", meId)
-          .eq("following_id", profile.id);
-        if (error) throw error;
-        setIFollow(false);
-        setFollowersCount((n) => Math.max(0, n - 1));
-      } else {
-        // Follow
-        const { error } = await supabase
-          .from("follows")
-          .insert({ follower_id: meId, following_id: profile.id });
-        if (error) throw error;
-        setIFollow(true);
-        setFollowersCount((n) => n + 1);
+    const channel = supabase
+      .channel(`creator-${profile.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles", filter: `id=eq.${profile.id}` },
+        (payload) => setProfile(payload.new as Profile)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "spliks", filter: `user_id=eq.${profile.id}` },
+        () => fetchSpliks(profile.id)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "followers" },
+        () => refreshCounts(profile.id)
+      )
+      // refresh the "Boosted" tab on boosts
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "boosts", filter: `user_id=eq.${profile.id}` },
+        () => fetchBoostedSpliks(profile.id)
+      )
+      .subscribe();
+
+    unsubRef.current = () => supabase.removeChannel(channel);
+    return () => {
+      if (unsubRef.current) {
+        try { unsubRef.current(); } finally { unsubRef.current = null; }
       }
-    } catch (e) {
-      console.error("Follow toggle error", e);
-    } finally {
-      setToggling(false);
+    };
+  }, [profile?.id]);
+
+  const refreshCounts = async (profileId: string) => {
+    const { data } = await supabase
+      .from("profiles")
+      .select("followers_count, following_count, spliks_count")
+      .eq("id", profileId)
+      .maybeSingle();
+    if (data) {
+      setProfile((prev) => (prev ? ({ ...prev, ...data } as Profile) : prev));
     }
   };
 
+  const fetchSpliks = async (userId: string, cancelled?: boolean) => {
+    try {
+      const { data, error } = await supabase
+        .from("spliks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      if (cancelled) return;
+
+      const spliksWithProfiles = await Promise.all(
+        (data || []).map(async (s) => {
+          const { data: p } = await supabase
+            .from("profiles")
+            .select("username, display_name, first_name, last_name, avatar_url")
+            .eq("id", s.user_id)
+            .maybeSingle();
+          return { ...s, profiles: p || undefined };
+        })
+      );
+
+      if (!cancelled) setSpliks(spliksWithProfiles);
+    } catch (e) {
+      console.error("Error fetching videos:", e);
+      if (!cancelled) toast.error("Failed to load videos");
+    }
+  };
+
+  // Boosted tab uses boosts table instead of hype_reactions
+  const fetchBoostedSpliks = async (userId: string, cancelled?: boolean) => {
+    try {
+      setBoostedLoading(true);
+
+      const { data: boostRows, error: boostsErr } = await supabase
+        .from("boosts")
+        .select("splik_id, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (boostsErr) throw boostsErr;
+
+      if (!boostRows?.length) {
+        if (!cancelled) setBoostedSpliks([]);
+        return;
+      }
+
+      const ids = boostRows.map((r) => r.splik_id);
+
+      const { data: splikRows, error: spliksErr } = await supabase
+        .from("spliks")
+        .select("*")
+        .in("id", ids);
+
+      if (spliksErr) throw spliksErr;
+
+      const withProfiles = await Promise.all(
+        (splikRows || []).map(async (s) => {
+          const { data: p } = await supabase
+            .from("profiles")
+            .select("username, display_name, first_name, last_name, avatar_url")
+            .eq("id", s.user_id)
+            .maybeSingle();
+          return { ...s, profiles: p || undefined };
+        })
+      );
+
+      const orderIndex: Record<string, number> = {};
+      boostRows.forEach((r, i) => (orderIndex[r.splik_id] = i));
+      withProfiles.sort((a, b) => (orderIndex[a.id] ?? 0) - (orderIndex[b.id] ?? 0));
+
+      if (!cancelled) setBoostedSpliks(withProfiles);
+    } catch (e) {
+      console.error("Error fetching boosted videos:", e);
+      if (!cancelled) toast.error("Failed to load boosted videos");
+    } finally {
+      if (!cancelled) setBoostedLoading(false);
+    }
+  };
+
+  // Deep link: ?video=<id>
+  useEffect(() => {
+    const deepId = searchParams.get("video");
+    if (!deepId || !spliks.length) return;
+
+    let cancelled = false;
+    let tries = 0;
+    const maxTries = 14;
+
+    const tryPlayUnmuted = (vid: HTMLVideoElement) => {
+      try {
+        vid.muted = false;
+        const p = vid.play();
+        if (p && typeof (p as any).catch === "function") {
+          (p as Promise<void>).catch(() => {
+            vid.muted = true;
+            vid.play().catch(() => {});
+          });
+        }
+      } catch {}
+    };
+
+    const attempt = () => {
+      if (cancelled) return;
+      const selectors = [
+        `[data-splik-id="${deepId}"]`,
+        `#splik-${deepId}`,
+        `[data-video-id="${deepId}"]`,
+        `[data-id="${deepId}"]`,
+      ];
+      let host: HTMLElement | null = null;
+      for (const s of selectors) {
+        const el = document.querySelector<HTMLElement>(s);
+        if (el) { host = el; break; }
+      }
+      if (host) {
+        host.scrollIntoView({ behavior: "smooth", block: "center" });
+        const vid = host.querySelector("video") as HTMLVideoElement | null;
+        if (vid) setTimeout(() => tryPlayUnmuted(vid), 80);
+        return;
+      }
+      if (tries++ < maxTries) setTimeout(attempt, 120);
+    };
+
+    attempt();
+    return () => { cancelled = true; };
+  }, [searchParams, spliks.length]);
+
+  const formatDate = (date: string) =>
+    new Date(date).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
   if (loading) {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="min-h-screen bg-background">
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
       </div>
     );
   }
 
   if (!profile) {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center text-center text-muted-foreground">
-        Profile not found.
+      <div className="min-h-screen bg-background">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
+          <h2 className="text-2xl font-semibold mb-4">Profile not found</h2>
+          <p className="text-muted-foreground mb-6">
+            The profile you're looking for doesn't exist or may have been removed.
+          </p>
+          <Button onClick={() => navigate("/")}>Go Home</Button>
+        </div>
       </div>
     );
   }
 
+  // Strong fallback: display_name → full_name → first+last → username → "User"
+  const joinedFirstLast = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+  const nameOrUsername =
+    profile.display_name?.trim() ||
+    profile.full_name?.trim() ||
+    (joinedFirstLast || undefined) ||
+    profile.username?.trim() ||
+    "User";
+
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
-      <Card className="bg-black/40 border-zinc-700">
-        <CardContent className="p-6">
-          {/* Header */}
-          <div className="flex items-start gap-6">
-            <div className="h-28 w-28 rounded-full overflow-hidden ring-2 ring-primary/30 shrink-0">
-              {profile.avatar_url ? (
-                <img
-                  src={profile.avatar_url}
-                  alt={profile.display_name || profile.username || "avatar"}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <Avatar className="h-28 w-28">
-                  <AvatarImage />
-                  <AvatarFallback className="bg-zinc-800 text-zinc-300 text-3xl">
-                    {(profile.display_name || profile.username || "?").slice(0, 1)}
-                  </AvatarFallback>
-                </Avatar>
-              )}
-            </div>
+    <div className="min-h-screen bg-background">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Card className="mb-8 p-6">
+          <div className="flex flex-col md:flex-row gap-6">
+            <Avatar className="h-32 w-32">
+              <AvatarImage src={profile.avatar_url || ""} />
+              <AvatarFallback className="text-3xl">
+                {nameOrUsername.charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
 
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-2xl sm:text-3xl font-bold text-white truncate">
-                  {profile.display_name || profile.username || "Creator"}
-                </h1>
-                {isMe && <Badge className="bg-primary/20 border-primary/40">You</Badge>}
+            <div className="flex-1">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h1 className="text-3xl font-bold">{nameOrUsername}</h1>
+                  {profile.username && (
+                    <p className="text-muted-foreground">@{profile.username}</p>
+                  )}
+                </div>
+
+                {currentUserId !== profile.id && (
+                  <FollowButton
+                    profileId={profile.id}
+                    username={profile.username || ""}
+                    className="ml-4"
+                  />
+                )}
               </div>
-              {profile.username && (
-                <div className="text-zinc-400">@{profile.username}</div>
-              )}
 
-              {profile.bio && (
-                <p className="mt-3 text-zinc-200 whitespace-pre-line">{profile.bio}</p>
-              )}
+              {profile.bio && <p className="mb-4">{profile.bio}</p>}
 
-              <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-zinc-400">
+              {/* Message button removed intentionally */}
+
+              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-4">
                 {profile.city && (
                   <div className="flex items-center gap-1">
                     <MapPin className="h-4 w-4" />
                     {profile.city}
                   </div>
                 )}
-                {profile.created_at && (
-                  <div className="flex items-center gap-1">
-                    <Calendar className="h-4 w-4" />
-                    Joined {formatJoined(profile.created_at)}
-                  </div>
-                )}
+                <div className="flex items-center gap-1">
+                  <Calendar className="h-4 w-4" />
+                  Joined {formatDate(profile.created_at)}
+                </div>
+              </div>
+
+              <div className="flex gap-8">
+                <div className="text-center min-w-[80px]">
+                  <p className="text-2xl font-bold">{profile.spliks_count || 0}</p>
+                  <p className="text-sm text-muted-foreground">Videos</p>
+                </div>
+                <button
+                  onClick={() => setShowFollowersList(true)}
+                  className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
+                >
+                  <p className="text-2xl font-bold">
+                    {profile.followers_private && currentUserId !== profile.id
+                      ? 0
+                      : profile.followers_count || 0}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Followers</p>
+                </button>
+                <button
+                  onClick={() => setShowFollowingList(true)}
+                  className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
+                >
+                  <p className="text-2xl font-bold">
+                    {profile.following_private && currentUserId !== profile.id
+                      ? 0
+                      : profile.following_count || 0}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Following</p>
+                </button>
               </div>
             </div>
-
-            {/* Actions */}
-            <div className="flex flex-col items-stretch gap-2">
-              {isMe ? (
-                <Link to="/dashboard">
-                  <Button className="w-full">Edit Profile</Button>
-                </Link>
-              ) : meId ? (
-                <Button
-                  onClick={toggleFollow}
-                  disabled={toggling}
-                  className={iFollow ? "bg-zinc-800 hover:bg-zinc-700" : ""}
-                  variant={iFollow ? "outline" : "default"}
-                >
-                  {iFollow ? (
-                    <>
-                      <Check className="h-4 w-4 mr-2" /> Following
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="h-4 w-4 mr-2" /> Follow
-                    </>
-                  )}
-                </Button>
-              ) : null}
-            </div>
           </div>
+        </Card>
 
-          {/* Stats */}
-          <div className="mt-6 grid grid-cols-3 gap-3 max-w-md">
-            <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-center">
-              <div className="text-xl font-semibold text-white">{postsCount}</div>
-              <div className="text-xs text-zinc-400 mt-1">Videos</div>
-            </div>
-            <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-center">
-              <div className="text-xl font-semibold text-white">{followersCount}</div>
-              <div className="text-xs text-zinc-400 mt-1">Followers</div>
-            </div>
-            <div className="rounded-lg bg-white/5 border border-white/10 p-3 text-center">
-              <div className="text-xl font-semibold text-white">{followingCount}</div>
-              <div className="text-xs text-zinc-400 mt-1">Following</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+        <Tabs defaultValue="videos" className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="videos">Videos</TabsTrigger>
+            <TabsTrigger value="about">About</TabsTrigger>
+            <TabsTrigger value="boosted">Boosted</TabsTrigger>
+          </TabsList>
 
-      {/* Below here you can render tabs for Videos / About / Boosted, etc. */}
+          <TabsContent value="videos" className="mt-6">
+            {spliks.length > 0 ? (
+              <VideoGrid
+                spliks={spliks}
+                showCreatorInfo={false}
+                onDeleteComment={
+                  currentUserId === profile.id
+                    ? async (commentId) => {
+                        const { error } = await supabase
+                          .from("comments")
+                          .delete()
+                          .eq("id", commentId);
+                        if (!error) toast.success("Comment deleted");
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <Card className="p-12 text-center">
+                <Film className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No videos yet</p>
+              </Card>
+            )}
+          </TabsContent>
+
+          <TabsContent value="about" className="mt-6">
+            <Card className="p-6">
+              <h3 className="text-lg font-semibold mb-4">
+                About {nameOrUsername}
+              </h3>
+              <div className="space-y-4">
+                {profile.bio && (
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Bio</p>
+                    <p>{profile.bio}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Stats</p>
+                  <div className="flex gap-4">
+                    <Badge variant="secondary">
+                      <Film className="mr-1 h-3 w-3" />
+                      {profile.spliks_count} Videos
+                    </Badge>
+                    <Badge variant="secondary">
+                      <Users className="mr-1 h-3 w-3" />
+                      {profile.followers_count} Followers
+                    </Badge>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Member Since</p>
+                  <p>{formatDate(profile.created_at)}</p>
+                </div>
+              </div>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="boosted" className="mt-6">
+            {boostedLoading ? (
+              <Card className="p-12 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+                <p className="text-muted-foreground mt-3">Loading boosted videos…</p>
+              </Card>
+            ) : boostedSpliks.length > 0 ? (
+              <VideoGrid
+                spliks={boostedSpliks}
+                showCreatorInfo={true}
+                onDeleteComment={
+                  currentUserId === profile.id
+                    ? async (commentId) => {
+                        const { error } = await supabase
+                          .from("comments")
+                          .delete()
+                          .eq("id", commentId);
+                        if (!error) toast.success("Comment deleted");
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <Card className="p-12 text-center">
+                <TrendingUp className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">No boosted videos yet</p>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      <FollowersList
+        profileId={profile.id}
+        isOpen={showFollowersList}
+        onClose={() => setShowFollowersList(false)}
+        type="followers"
+        count={profile.followers_count}
+        isPrivate={profile.followers_private || false}
+        isOwnProfile={currentUserId === profile.id}
+      />
+
+      <FollowersList
+        profileId={profile.id}
+        isOpen={showFollowingList}
+        onClose={() => setShowFollowingList(false)}
+        type="following"
+        count={profile.following_count}
+        isPrivate={profile.following_private || false}
+        isOwnProfile={currentUserId === profile.id}
+      />
     </div>
   );
-};
-
-export default CreatorProfile;
+}
