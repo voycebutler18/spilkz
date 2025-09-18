@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Upload, X, Loader2, Scissors, Volume2, VolumeX,
-  AlertCircle, Film, Zap, Smartphone, Info, Utensils, Image as ImageIcon, Video as VideoIcon,
+  AlertCircle, Film, Zap, Smartphone, Info, Utensils,
+  Image as ImageIcon, Video as VideoIcon, Sparkles,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/components/ui/use-toast";
@@ -164,6 +165,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [isFood, setIsFood] = useState(false);
+  const [isPrayer, setIsPrayer] = useState(false); // NEW
   const [mood, setMood] = useState<string>("");
 
   // Video state
@@ -245,11 +247,12 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     };
   }, []);
 
-  // ✅ Route to the Creator Dashboard
-  const goToDashboard = useCallback(() => {
+  // ✅ Route after upload (Prayer > Food > Dashboard)
+  const goAfterUpload = useCallback(() => {
     onClose();
-    setTimeout(() => navigate("/dashboard"), 0);
-  }, [navigate, onClose]);
+    const dest = isPrayer ? "/prayer" : (isFood ? "/food" : "/dashboard");
+    setTimeout(() => navigate(dest), 0);
+  }, [navigate, onClose, isPrayer, isFood]);
 
   useEffect(() => {
     return () => {
@@ -435,7 +438,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     } catch (err: any) {
       console.error("Error processing video:", err);
       setVideoError(err?.message || "Failed to process your video.");
-      // IMPORTANT: do not reset file here — keep UI out of drop zone
     } finally {
       setProcessingVideo(false);
       setVideoReady(true);
@@ -713,6 +715,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         trim_start: 0,
         trim_end: MAX_VIDEO_DURATION,
         is_food: isFood,
+        is_prayer: isPrayer, // NEW
         video_path: videoPath,
         video_url: publicUrl,
         thumbnail_url,
@@ -751,7 +754,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       toast({ title: "Upload successful!", description: "Your 3-second Splik has been saved." });
       resetAll();
       onUploadComplete();
-      goToDashboard();
+      goAfterUpload(); // NEW
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload video", variant: "destructive" });
@@ -798,6 +801,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         trim_start: null,
         trim_end: null,
         is_food: isFood,
+        is_prayer: isPrayer, // NEW
         video_path: null,
         video_url: null,           // no video
         thumbnail_url: publicUrl,  // show the image on dashboard
@@ -855,7 +859,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       toast({ title: "Upload successful!", description: "Your photo has been saved." });
       resetAll();
       onUploadComplete();
-      goToDashboard();
+      goAfterUpload(); // NEW
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload photo", variant: "destructive" });
@@ -897,6 +901,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     setTitle("");
     setDescription("");
     setIsFood(false);
+    setIsPrayer(false); // NEW
     setMood("");
 
     // video
@@ -955,16 +960,16 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) goToDashboard();
+        if (!v) goAfterUpload(); // NEW
       }}
     >
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         {/* Close */}
         <button
           type="button"
-          onClick={goToDashboard}
+          onClick={goAfterUpload} // NEW
           className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20"
-          aria-label="Close and go to dashboard"
+          aria-label="Close and go to destination"
         >
           <X className="h-4 w-4" />
         </button>
@@ -1261,6 +1266,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
               </p>
             </div>
 
+            {/* Food toggle */}
             <div className="mt-2 flex items-center justify-between rounded-md border p-3">
               <div className="flex items-start gap-2">
                 <Utensils className="h-4 w-4 text-primary mt-0.5" />
@@ -1281,6 +1287,30 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
               >
                 <Utensils className="h-4 w-4 mr-2" />
                 {isFood ? "Food Enabled" : "Mark as Food"}
+              </Button>
+            </div>
+
+            {/* Prayer toggle (NEW) */}
+            <div className="mt-2 flex items-center justify-between rounded-md border p-3">
+              <div className="flex items-start gap-2">
+                <Sparkles className="h-4 w-4 text-primary mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium">Prayer {mediaType === "photo" ? "post" : "video"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    If enabled, this will also appear on the Prayer page.
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                onClick={() => setIsPrayer((v) => !v)}
+                variant={isPrayer ? "default" : "outline"}
+                className={isPrayer ? "bg-gradient-to-r from-amber-600 to-purple-500 text-white" : ""}
+                disabled={uploading}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                {isPrayer ? "Prayer Enabled" : "Mark as Prayer"}
               </Button>
             </div>
           </div>
