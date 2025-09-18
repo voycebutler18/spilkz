@@ -204,6 +204,7 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
+              <Route path="/photo/:id" element={<PhotoPage />} />
 
               {/* Notes - Fixed routing to handle both /notes and /notes/* properly */}
               <Route path="/notes" element={<NotesPage />} />
