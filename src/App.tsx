@@ -1,3 +1,4 @@
+// src/App.tsx
 import NotesPage from "@/pages/Notes";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -14,7 +15,7 @@ import {
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
-import RealtimeNotesBridge from "@/components/RealtimeNotesBridge"; // 👈 add this
+import RealtimeNotesBridge from "@/components/RealtimeNotesBridge";
 
 // Pages
 import Splash from "./pages/Splash";
@@ -87,21 +88,25 @@ const queryClient = new QueryClient();
 function UploadRoute() {
   const { openUpload, isOpen } = useUploadModal();
   const navigate = useNavigate();
+
   useEffect(() => {
     openUpload({ onCompleteNavigateTo: "/dashboard" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   useEffect(() => {
     if (!isOpen) {
       const t = setTimeout(() => navigate("/", { replace: true }), 150);
       return () => clearTimeout(t);
     }
   }, [isOpen, navigate]);
+
   return null;
 }
 
 function ScrollToTop() {
   const { pathname, hash } = useLocation();
+
   useEffect(() => {
     try {
       if ("scrollRestoration" in window.history) {
@@ -109,12 +114,14 @@ function ScrollToTop() {
       }
     } catch {}
   }, []);
+
   useEffect(() => {
     if (hash) return;
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
   }, [pathname, hash]);
+
   return null;
 }
 
@@ -124,6 +131,7 @@ function useIsDesktop() {
       ? window.matchMedia("(min-width: 1024px)").matches
       : true
   );
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -131,6 +139,7 @@ function useIsDesktop() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
   return isDesktop;
 }
 
@@ -138,6 +147,7 @@ function MessagesIndexRoute() {
   const isDesktop = useIsDesktop();
   return isDesktop ? <CombinedMessages /> : <MessagesInbox />;
 }
+
 function MessagesThreadRoute() {
   const isDesktop = useIsDesktop();
   return isDesktop ? <CombinedMessages /> : <MessageThread />;
@@ -151,7 +161,7 @@ const App = () => (
       <BrowserRouter>
         <ScrollToTop />
 
-        {/* 👇 mounted once for the whole app */}
+        {/* Mounted once for realtime notes across the whole app */}
         <RealtimeNotesBridge />
 
         <UploadModalProvider>
