@@ -425,9 +425,9 @@ export function VideoGrid({
               onMouseEnter={() => setHoveredVideo(splik.id)}
               onMouseLeave={() => setHoveredVideo(null)}
             >
-              {/* Video Thumbnail Container - Larger Size */}
+              {/* Clean Video Thumbnail - No Overlays */}
               <div 
-                className="relative aspect-video bg-gray-900 rounded-xl overflow-hidden mb-3 shadow-lg group-hover:shadow-2xl transition-all duration-300 cursor-pointer"
+                className="relative aspect-video bg-gray-900 rounded-lg overflow-hidden mb-4 shadow-lg group-hover:shadow-xl transition-all duration-300 cursor-pointer"
                 onMouseEnter={() => {
                   const video = videoRefs.current[splik.id];
                   if (video && !isPlaying) {
@@ -447,10 +447,6 @@ export function VideoGrid({
                     setPlayingVideo(null);
                   }
                 }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  // Navigate to video page on click
-                }}
               >
                 <video
                   ref={(el) => {
@@ -458,132 +454,52 @@ export function VideoGrid({
                   }}
                   src={splik.video_url}
                   poster={splik.thumbnail_url || undefined}
-                  className={`w-full h-full object-cover transition-all duration-500 ${
-                    isHovered ? 'scale-105' : 'scale-100'
-                  }`}
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                   muted={mutedVideos.has(splik.id)}
                   playsInline
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
 
-                {/* Gradient Overlays */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
-                <div className={`absolute inset-0 bg-black/20 transition-opacity duration-300 ${
-                  isHovered ? 'opacity-100' : 'opacity-0'
-                }`} />
-
-                {/* Duration Badge - Larger and More Visible */}
-                <div className="absolute top-3 right-3">
-                  <div className="bg-black/90 backdrop-blur-sm text-white text-sm font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg">
-                    <Clock className="w-4 h-4" />
-                    3.0s
-                  </div>
-                </div>
-
-                {/* Volume Control - Only show when playing */}
-                {isPlaying && (
-                  <Button
-                    size="icon"
-                    className="absolute top-3 left-3 h-10 w-10 bg-black/80 hover:bg-black/90 text-white border-0 rounded-lg backdrop-blur-sm shadow-lg"
-                    onClick={(e) => toggleMute(splik.id, e)}
-                  >
-                    {mutedVideos.has(splik.id) ? (
-                      <VolumeX className="h-5 w-5" />
-                    ) : (
-                      <Volume2 className="h-5 w-5" />
-                    )}
-                  </Button>
-                )}
-
-                {/* Quick Actions Overlay */}
-                <div className={`absolute bottom-2 left-2 right-2 flex items-end justify-between transition-all duration-300 ${
-                  isHovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
-                }`}>
-                  <div className="flex gap-1">
-                    <Button
-                      size="icon"
-                      variant={isLiked ? "default" : "secondary"}
-                      className={`h-8 w-8 rounded-lg backdrop-blur-sm transition-all duration-200 ${
-                        isLiked 
-                          ? 'bg-red-500 hover:bg-red-600 text-white' 
-                          : 'bg-black/60 hover:bg-black/80 text-white border-0'
-                      }`}
-                      onClick={(e) => handleLike(splik.id, e)}
-                    >
-                      <Heart className={`h-3 w-3 ${isLiked ? 'fill-current' : ''}`} />
-                    </Button>
-                    
-                    <Button
-                      size="icon"
-                      className="h-8 w-8 bg-black/60 hover:bg-black/80 text-white border-0 rounded-lg backdrop-blur-sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setShowComments(splik.id);
-                      }}
-                    >
-                      <MessageCircle className="h-3 w-3" />
-                    </Button>
-                    
-                    <Button
-                      size="icon"
-                      className="h-8 w-8 bg-black/60 hover:bg-black/80 text-white border-0 rounded-lg backdrop-blur-sm"
-                      onClick={(e) => handleShare(splik, e)}
-                    >
-                      <Share2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  
-                  {/* Stats */}
-                  <div className="flex items-center gap-2 text-white text-xs font-medium">
-                    <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md">
-                      <Heart className="w-3 h-3" />
-                      <span>{formatCount(videoStats[splik.id]?.likes || 0)}</span>
-                    </div>
-                    <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md">
-                      <MessageCircle className="w-3 h-3" />
-                      <span>{formatCount(videoStats[splik.id]?.comments || 0)}</span>
-                    </div>
-                  </div>
-                </div>
+                {/* Simple gradient for text readability */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
               </div>
 
-              {/* Video Info */}
-              <div className="px-1">
-                {/* Title */}
+              {/* Clean Video Info - Simple and Minimal */}
+              <div className="space-y-3">
+                {/* Title Only */}
                 {splik.title && (
-                  <h3 className="text-white font-semibold text-sm md:text-base line-clamp-2 leading-tight mb-2 group-hover:text-gray-300 transition-colors">
+                  <h3 className="text-white font-semibold text-lg leading-tight line-clamp-2 group-hover:text-gray-300 transition-colors">
                     {splik.title}
                   </h3>
                 )}
 
                 {/* Creator Info */}
                 {showCreatorInfo && creator && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <Avatar className="w-6 h-6 md:w-8 md:h-8">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="w-9 h-9">
                       <AvatarImage src={creator.avatar_url || ""} />
-                      <AvatarFallback className="bg-purple-600 text-white text-xs font-bold">
+                      <AvatarFallback className="bg-purple-600 text-white text-sm font-bold">
                         {creatorName.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="text-gray-400 text-xs md:text-sm font-medium truncate">
-                      {creatorName}
-                    </span>
+                    <div className="min-w-0">
+                      <p className="text-gray-300 font-medium truncate">{creatorName}</p>
+                      <p className="text-gray-500 text-sm">{formatTime(splik.created_at)}</p>
+                    </div>
                   </div>
                 )}
 
-                {/* Metadata */}
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>{formatTime(splik.created_at)}</span>
-                  {isOwner && onDeletedSplik && (
+                {/* Owner Controls Only */}
+                {isOwner && onDeletedSplik && (
+                  <div className="pt-2 border-t border-gray-700">
                     <DeleteSplikButton
                       splikId={splik.id}
                       videoUrl={splik.video_url}
                       thumbnailUrl={splik.thumbnail_url}
                       onDeleted={() => onDeletedSplik(splik.id)}
                     />
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </Link>
           );
