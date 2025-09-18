@@ -27,7 +27,6 @@ import Press from "./pages/business/Press";
 import HelpCenter from "./pages/support/HelpCenter";
 import Contact from "./pages/support/Contact";
 import SplikPage from "@/pages/SplikPage";
-import DatingProfileEdit from "@/pages/Dating/DatingProfileEdit";
 
 // Legal / Community
 import Terms from "./pages/legal/Terms";
@@ -75,11 +74,12 @@ import { UploadModalProvider, useUploadModal } from "@/contexts/UploadModalConte
 // Promote
 import Promote from "@/pages/Promote";
 
-// ✅ Splikz Dating
+// ✅ Splikz Dating (scoped under /dating/*)
 import DatingHome from "./pages/Dating/DatingHome";
 import DatingOnboarding from "./pages/Dating/DatingOnboarding";
 import DatingDiscover from "./pages/Dating/DatingDiscover";
 import DatingHearts from "./pages/Dating/DatingHearts";
+import DatingProfileEdit from "@/pages/Dating/DatingProfileEdit";
 
 const queryClient = new QueryClient();
 
@@ -103,7 +103,9 @@ function ScrollToTop() {
   const { pathname, hash } = useLocation();
   useEffect(() => {
     try {
-      if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+      if ("scrollRestoration" in window.history) {
+        window.history.scrollRestoration = "manual";
+      }
     } catch {}
   }, []);
   useEffect(() => {
@@ -117,7 +119,9 @@ function ScrollToTop() {
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState<boolean>(() =>
-    typeof window !== "undefined" ? window.matchMedia("(min-width: 1024px)").matches : true
+    typeof window !== "undefined"
+      ? window.matchMedia("(min-width: 1024px)").matches
+      : true
   );
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -200,19 +204,18 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
-              <Route path="/dating/profile/edit" element={<DatingProfileEdit />} />
 
-              {/* Promote */}
-              <Route path="/promote/:splikId" element={<Promote />} />
+              {/* Notes (make it explicit and future-proof for nesting) */}
+              <Route path="/notes/*" element={<NotesPage />} />
 
-              {/* Notes */}
-              <Route path="/notes" element={<NotesPage />} />
-
-              {/* ✅ Splikz Dating */}
-              <Route path="/dating" element={<DatingHome />} />
-              <Route path="/dating/onboarding" element={<DatingOnboarding />} />
-              <Route path="/dating/discover" element={<DatingDiscover />} />
-              <Route path="/dating/hearts" element={<DatingHearts />} />
+              {/* ✅ Splikz Dating — fully scoped under /dating/* */}
+              <Route path="/dating">
+                <Route index element={<DatingHome />} />
+                <Route path="onboarding" element={<DatingOnboarding />} />
+                <Route path="discover" element={<DatingDiscover />} />
+                <Route path="hearts" element={<DatingHearts />} />
+                <Route path="profile/edit" element={<DatingProfileEdit />} />
+              </Route>
 
               {/* Messaging */}
               <Route path="/messages" element={<MessagesIndexRoute />} />
@@ -223,6 +226,9 @@ const App = () => (
               <Route path="/prayers/search" element={<PrayersSearchPage />} />
               <Route path="/prayers/tag/:tag" element={<PrayersTagPage />} />
               <Route path="/prayers/:id" element={<PrayerDetailPage />} />
+
+              {/* Promote */}
+              <Route path="/promote/:splikId" element={<Promote />} />
 
               {/* 404 */}
               <Route path="*" element={<NotFound />} />
