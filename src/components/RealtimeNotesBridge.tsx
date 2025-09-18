@@ -1,4 +1,4 @@
-// src/components/RealtimeNotesBridge.tsx
+// src/components/system/RealtimeNotesBridge.tsx
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { subscribeToIncomingNotes } from "@/lib/realtimeNotes";
@@ -11,19 +11,25 @@ export default function RealtimeNotesBridge() {
       const uid = data.user?.id;
       if (!uid) return;
 
-      // Optional: browser notifications
+      // Ask once for browser notifications (optional)
       if ("Notification" in window && Notification.permission === "default") {
         Notification.requestPermission().catch(() => {});
       }
 
-      // Start listening for new notes for me
       unsub = subscribeToIncomingNotes(uid, (note) => {
-        // Example: update global badge / trigger UI refresh
+        // push a DOM event so any page can react
         window.dispatchEvent(new CustomEvent("notes:new", { detail: note }));
+
+        // optional native notification (won’t fire if denied)
+        try {
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("New note", { body: note.body.slice(0, 120) });
+          }
+        } catch {}
       });
     });
 
-    return () => { unsub?.(); };
+    return () => unsub?.();
   }, []);
 
   return null;
