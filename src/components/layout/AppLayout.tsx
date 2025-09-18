@@ -17,6 +17,9 @@ import { supabase } from "@/integrations/supabase/client";
 import RightActivityRail from "@/components/highlights/RightActivityRail";
 import MobileActivity from "@/components/highlights/MobileActivity";
 
+/* ✅ NoteBox unread badge/link */
+import NoteBoxLink from "@/components/NoteBoxLink";
+
 const AppLayout: React.FC = () => {
   // mobile state only
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -41,6 +44,13 @@ const AppLayout: React.FC = () => {
       <div className="hidden md:block">
         {/* Global top bar */}
         <Header />
+
+        {/* ✅ Slim utility row under header (right-aligned) */}
+        <div className="border-b border-border/60">
+          <div className="mx-auto flex max-w-7xl items-center justify-end gap-3 px-4 py-2">
+            <NoteBoxLink />
+          </div>
+        </div>
 
         {/* 3-column shell: Left rail (fixed), Main content, Right rail */}
         <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[260px_1fr] lg:grid-cols-[260px_1fr_320px]">
@@ -80,10 +90,15 @@ const AppLayout: React.FC = () => {
           >
             <Menu className="h-6 w-6" />
           </button>
+
           <Link to="/" className="font-bold text-lg">
             Splikz
           </Link>
-          <div className="w-8" />
+
+          {/* ✅ Mobile: NoteBox unread badge on the right */}
+          <div className="flex items-center">
+            <NoteBoxLink />
+          </div>
         </div>
 
         {/* ✅ Mobile activity bar (last 24h) */}
