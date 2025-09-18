@@ -1,4 +1,3 @@
-
 // src/components/dashboard/CreatorDashboard.tsx
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -15,18 +14,16 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import VideoUploadModal from "@/components/dashboard/VideoUploadModal";
 import CreatorAnalytics from "@/components/dashboard/CreatorAnalytics";
 import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
-  Video, Users, TrendingUp, Settings, MessageCircle, Shield, Trash2, Plus,
+  Video, Users, TrendingUp, Settings, Shield, Trash2, Plus,
   Volume2, VolumeX, BarChart3, Bookmark,
 } from "lucide-react";
 import { toast } from "sonner";
-import { formatDistanceToNow } from "date-fns";
 
 /* ----------------------------- Types ----------------------------- */
 interface Profile {
@@ -51,7 +48,6 @@ interface SplikRow {
   thumbnail_url: string | null;  // for photos this is the image itself
   created_at: string;
   likes_count?: number | null;   // keeping original name for hype_reactions
-  comments_count?: number | null;
   bookmarks_count?: number | null; // adding bookmarks
   trim_start?: number | null;    // videos only
   trim_end?: number | null;      // videos only
@@ -69,17 +65,6 @@ interface DashboardStats {
   totalBoosts: number;  // renamed from totalReactions for modern look
   avgBoostsPerPost: number;  // renamed from avgReactionsPerVideo
   totalBookmarks: number;  // adding bookmarks
-}
-
-interface CommentRow {
-  id: string;
-  user_id: string;
-  splik_id: string;
-  body: string;
-  created_at: string;
-  user_username?: string | null;
-  user_display_name?: string | null;
-  user_avatar_url?: string | null;
 }
 
 /* ----------------------------- Helpers for counts ----------------------------- */
@@ -115,158 +100,16 @@ async function fetchBookmarkCountsFor(ids: string[]) {
   return counts;
 }
 
-async function fetchCommentCountsFor(ids: string[]) {
-  const counts: Record<string, number> = {};
-  try {
-    const { data } = await supabase.from("comments").select("splik_id").in("splik_id", ids);
-    (data || []).forEach((r: any) => {
-      const id = r.splik_id as string;
-      if (ids.includes(id)) counts[id] = (counts[id] || 0) + 1;
-    });
-  } catch {}
-  return counts;
-}
-
-/* ----------------------------- Comments Manager ----------------------------- */
-function CommentsManager({
-  open, onClose, splik, onCountChange,
-}: {
-  open: boolean;
-  onClose: () => void;
-  splik: SplikRow;
-  onCountChange?: (delta: number) => void;
-}) {
-  const [loading, setLoading] = useState(true);
-  const [comments, setComments] = useState<CommentRow[]>([]);
-  const unsubRef = useRef<() => void>();
-
-  const fetchComments = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("comments")
-        .select("id,user_id,splik_id,body,created_at")
-        .eq("splik_id", splik.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      setComments((data || []) as CommentRow[]);
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to load comments");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    fetchComments();
-
-    const ch = supabase
-      .channel(`comments-${splik.id}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
-        (payload) => {
-          setComments((prev) => [payload.new as CommentRow, ...prev]);
-          onCountChange?.(1);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "comments", filter: `splik_id=eq.${splik.id}` },
-        (payload) => {
-          const id = (payload.old as any).id as string;
-          setComments((prev) => prev.filter((c) => c.id !== id));
-          onCountChange?.(-1);
-        }
-      )
-      .subscribe();
-
-    unsubRef.current = () => supabase.removeChannel(ch);
-    return () => {
-      if (unsubRef.current) unsubRef.current();
-      unsubRef.current = undefined;
-    };
-  }, [open, splik.id, onCountChange]);
-
-  const handleDelete = async (commentId: string) => {
-    try {
-      const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("splik_id", splik.id);
-      if (error) throw error;
-      toast.success("Comment deleted");
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to delete comment");
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(v) => (!v ? onClose() : null)}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Comments — {splik.title || splik.id.slice(0, 6)}</DialogTitle>
-        </DialogHeader>
-
-        {loading ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">Loading…</div>
-        ) : comments.length === 0 ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">No comments yet</div>
-        ) : (
-          <div className="max-h-[60vh] overflow-y-auto space-y-3">
-            {comments.map((c) => (
-              <div key={c.id} className="flex items-start gap-3 rounded-lg border p-3">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src={c.user_avatar_url || undefined} />
-                  <AvatarFallback>
-                    {(c.user_display_name?.[0] || c.user_username?.[0] || "U").toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">
-                        {c.user_display_name || c.user_username || c.user_id}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(c.created_at), { addSuffix: true })}
-                      </div>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="h-8 px-2"
-                      onClick={() => handleDelete(c.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  <p className="text-sm mt-2 whitespace-pre-wrap break-words">{c.body}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /* ----------------------------- Feed Item ----------------------------- */
 function CreatorFeedItem({
-  splik, onDelete, onCommentCountAdjust,
+  splik, onDelete,
 }: {
   splik: SplikRow;
   onDelete: (id: string) => void;
-  onCommentCountAdjust: (id: string, delta: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
-  const [showComments, setShowComments] = useState(false);
 
   const isPhoto = !splik.video_url && !!splik.thumbnail_url;
   const start = Math.max(0, Number(splik.trim_start ?? 0));
@@ -376,16 +219,6 @@ function CreatorFeedItem({
                       <TrendingUp className="h-4 w-4 text-orange-400" />
                       <span>{splik.likes_count || 0}</span>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowComments(true);
-                      }}
-                      className="flex items-center gap-1 hover:opacity-80"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                      <span>{splik.comments_count || 0}</span>
-                    </button>
                     <div className="flex items-center gap-1">
                       <Bookmark className="h-4 w-4 text-blue-400" />
                       <span>{splik.bookmarks_count || 0}</span>
@@ -463,16 +296,6 @@ function CreatorFeedItem({
                       <TrendingUp className="h-4 w-4 text-orange-400" />
                       <span>{splik.likes_count || 0}</span>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowComments(true);
-                      }}
-                      className="flex items-center gap-1 hover:opacity-80"
-                    >
-                      <MessageCircle className="h-4 w-4" />
-                      <span>{splik.comments_count || 0}</span>
-                    </button>
                     <div className="flex items-center gap-1">
                       <Bookmark className="h-4 w-4 text-blue-400" />
                       <span>{splik.bookmarks_count || 0}</span>
@@ -505,24 +328,7 @@ function CreatorFeedItem({
               </span>
             )}
           </div>
-
-          <div className="mt-3">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowComments(true)}>
-              <MessageCircle className="h-4 w-4" />
-              Manage comments
-            </Button>
-          </div>
         </div>
-
-        {/* Comments modal */}
-        {showComments && (
-          <CommentsManager
-            open={showComments}
-            onClose={() => setShowComments(false)}
-            splik={splik}
-            onCountChange={(delta) => onCommentCountAdjust(splik.id, delta)}
-          />
-        )}
       </div>
     </div>
   );
@@ -530,11 +336,10 @@ function CreatorFeedItem({
 
 /* ----------------------------- Feed ----------------------------- */
 function CreatorFeed({
-  spliks, onDelete, onCommentCountAdjust,
+  spliks, onDelete,
 }: {
   spliks: SplikRow[];
   onDelete: (id: string) => void;
-  onCommentCountAdjust: (id: string, delta: number) => void;
 }) {
   return (
     <div className="space-y-8">
@@ -543,7 +348,6 @@ function CreatorFeed({
           key={s.id}
           splik={s}
           onDelete={onDelete}
-          onCommentCountAdjust={onCommentCountAdjust}
         />
       ))}
     </div>
@@ -651,38 +455,7 @@ const CreatorDashboard = () => {
           recomputeStatsFromList((prev) => prev.filter((s) => s.id !== deletedId));
         }
       )
-      // comments live updates
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "comments" },
-        (payload) => {
-          const sid = (payload.new as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            const next = prev.map((s) =>
-              s.id === sid ? { ...s, comments_count: (s.comments_count ?? 0) + 1 } : s
-            );
-            return next;
-          });
-          recomputeStatsFromList((prev) => prev);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "comments" },
-        (payload) => {
-          const sid = (payload.old as any).splik_id as string;
-          setSpliks((prev) => {
-            if (!prev.find((s) => s.id === sid)) return prev;
-            const next = prev.map((s) =>
-              s.id === sid ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) - 1) } : s
-            );
-            return next;
-          });
-          recomputeStatsFromList((prev) => prev);
-        }
-      )
-      // boosts live updates (your actual current table)
+      // boosts live updates
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "boosts" },
@@ -713,7 +486,7 @@ const CreatorDashboard = () => {
           recomputeStatsFromList((prev) => prev);
         }
       )
-      // bookmarks live updates (your actual current table)
+      // bookmarks live updates
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "bookmarks" },
@@ -788,9 +561,8 @@ const CreatorDashboard = () => {
       if (error) throw error;
 
       const ids = (rows || []).map((r: any) => r.id as string);
-      const [hypeCounts, commentCounts, bookmarkCounts] = await Promise.all([
+      const [hypeCounts, bookmarkCounts] = await Promise.all([
         fetchHypeCountsFor(ids),
-        fetchCommentCountsFor(ids),
         fetchBookmarkCountsFor(ids),
       ]);
 
@@ -808,7 +580,6 @@ const CreatorDashboard = () => {
         ...(r as SplikRow),
         profile: prof,
         likes_count: hypeCounts[r.id] ?? 0,
-        comments_count: commentCounts[r.id] ?? 0,
         bookmarks_count: bookmarkCounts[r.id] ?? 0,
       }));
 
@@ -847,16 +618,6 @@ const CreatorDashboard = () => {
       }));
       return list;
     });
-  };
-
-  /* ------------------------- Comments count adjust ------------------------- */
-  const handleCommentCountAdjust = (splikId: string, delta: number) => {
-    setSpliks((prev) =>
-      prev.map((s) =>
-        s.id === splikId ? { ...s, comments_count: Math.max(0, (s.comments_count ?? 0) + delta) } : s
-      )
-    );
-    recomputeStatsFromList((prev) => prev);
   };
 
   /* ------------------------- Delete post ------------------------- */
@@ -1095,7 +856,6 @@ const CreatorDashboard = () => {
               <CreatorFeed
                 spliks={spliks}
                 onDelete={handleDeleteVideo}
-                onCommentCountAdjust={handleCommentCountAdjust}
               />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
