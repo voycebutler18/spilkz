@@ -54,10 +54,7 @@ type Props = {
 
 const VISIBILITY_THRESHOLD = 0.6;
 
-/** Public-safe count fetcher.
- *  Prefers RPC `count_boosts_batch(ids uuid[])` (works without SELECT on boosts).
- *  Falls back to a public SELECT if you enabled a read policy instead.
- */
+/** Public-safe count fetcher. */
 async function fetchBoostCountPublic(splikId: string): Promise<number> {
   try {
     const { data, error } = await supabase.rpc("count_boosts_batch", { ids: [splikId] });
@@ -166,7 +163,6 @@ export default function SplikCard({
 
     load();
 
-    // Optional live updates: re-count whenever boosts change for this splik
     const ch = supabase
       .channel(`boosts-${splik.id}`)
       .on(
@@ -199,7 +195,7 @@ export default function SplikCard({
             .select("id", { head: true, count: "exact" })
             .eq("user_id", user.id)
             .eq("splik_id", splik.id);
-        if (!cancelled) setIsSaved((count ?? 0) > 0);
+          if (!cancelled) setIsSaved((count ?? 0) > 0);
         }
 
         if (initialHasHyped === undefined) {
@@ -212,9 +208,6 @@ export default function SplikCard({
           if (!cancelled) setHasHyped(!!boostRow);
         }
 
-        // NOTE: we no longer count boosts here — public effect above is the single source of truth.
-
-        // Check follow status if not creator
         if (!isCreator) {
           const { data: followRow } = await supabase
             .from("followers")
@@ -342,7 +335,6 @@ export default function SplikCard({
       const u = await ensureAuth();
 
       if (hasHyped) {
-        // Remove boost
         const result = await supabase
           .from("boosts")
           .delete()
@@ -354,12 +346,10 @@ export default function SplikCard({
           setHypeCount((n) => Math.max(0, n - 1));
         }
       } else {
-        // Add boost
         const result = await supabase
           .from("boosts")
           .insert({ splik_id: splik.id, user_id: u.id });
 
-        // If unique-constraint exists and row already there, treat as boosted
         if (result.error && String(result.error.message || "").toLowerCase().includes("duplicate")) {
           setHasHyped(true);
         } else if (!result.error) {
@@ -368,11 +358,9 @@ export default function SplikCard({
         }
       }
 
-      // Always refresh from server to show the truth
       const total = await fetchBoostCountPublic(splik.id);
       setHypeCount(total);
     } catch (error) {
-      // auth_required already toasted
       if ((error as any)?.message !== "auth_required") {
         console.error("Boost error:", error);
       }
@@ -474,10 +462,7 @@ export default function SplikCard({
 
   // Reliable creator name + link
   const profile = splik.profile || loadedProfile || null;
-  const fullName = [profile?.first_name, profile?.last_name]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
+  const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
   const name = profile?.display_name || fullName || profile?.username || "User";
   const avatarUrl =
     profile?.avatar_url ||
@@ -543,8 +528,8 @@ export default function SplikCard({
                     disabled={followLoading}
                     className={cn(
                       "absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold transition-all duration-200",
-                      isFollowing 
-                        ? "bg-gray-600 text-white" 
+                      isFollowing
+                        ? "bg-gray-600 text-white"
                         : "bg-red-500 text-white hover:bg-red-600",
                       followLoading && "opacity-50 cursor-not-allowed"
                     )}
@@ -563,10 +548,7 @@ export default function SplikCard({
                   "w-12 h-12 rounded-full flex items-center justify-center",
                   hasHyped ? "bg-orange-500" : "bg-white/20 backdrop-blur-sm"
                 )}>
-                  <TrendingUp className={cn(
-                    "w-6 h-6",
-                    hasHyped ? "text-white" : "text-white"
-                  )} />
+                  <TrendingUp className="w-6 h-6 text-white" />
                 </div>
                 <span className="text-white text-xs font-semibold">
                   {hypeCount > 0 ? (hypeCount > 999 ? `${Math.floor(hypeCount/1000)}K` : hypeCount) : ""}
@@ -604,7 +586,7 @@ export default function SplikCard({
             {/* Mobile Bottom Content Info */}
             <div className="absolute bottom-6 left-4 right-20 z-10 md:hidden">
               <div className="space-y-2">
-                <Link 
+                <Link
                   to={creatorHref}
                   className="text-white font-semibold text-sm"
                 >
@@ -623,7 +605,7 @@ export default function SplikCard({
               </div>
             </div>
 
-            {/* Mute toggle - Mobile: bottom right, Desktop: bottom right of video */}
+            {/* Mute toggle */}
             <button
               onClick={onToggleMute}
               className="absolute bottom-6 right-4 md:right-3 md:bottom-3 w-10 h-10 md:w-8 md:h-8 rounded-full bg-black/70 hover:bg-black/80 flex items-center justify-center ring-1 ring-white/30 z-10"
@@ -646,13 +628,16 @@ export default function SplikCard({
             )}
           </>
         ) : (
-          // Photo-only
-          <img
-            src={splik.thumbnail_url || ""}
-            alt={splik.title || "Photo"}
-            className="block w-full h-screen object-cover bg-black md:h-[560px] lg:h-[640px]"
-            loading="lazy"
-          />
+          /* Photo-only: make image fill the same frame as video */
+          <div className="relative w-full h-screen md:h-[560px] lg:h-[640px] bg-black overflow-hidden">
+            <img
+              src={splik.thumbnail_url || ""}
+              alt={splik.title || "Photo"}
+              className="absolute inset-0 w-full h-full object-cover select-none"
+              loading="lazy"
+              draggable={false}
+            />
+          </div>
         )}
       </div>
 
@@ -688,7 +673,6 @@ export default function SplikCard({
         {/* Desktop Actions */}
         <div className="px-4 pb-4 pt-3">
           <div className="flex items-center gap-2">
-            {/* Follow only if NOT creator */}
             {!isCreator && (
               <FollowButton
                 profileId={splik.user_id}
@@ -698,7 +682,6 @@ export default function SplikCard({
               />
             )}
 
-            {/* Boost */}
             <Button
               variant={hasHyped ? "default" : "outline"}
               size="sm"
@@ -714,7 +697,6 @@ export default function SplikCard({
               {hasHyped ? "Boosted" : "Boost"} ({hypeCount})
             </Button>
 
-            {/* Bookmark */}
             <Button
               variant="outline"
               size="sm"
@@ -736,7 +718,6 @@ export default function SplikCard({
               )}
             </Button>
 
-            {/* Send a note */}
             <Button
               asChild
               variant="outline"
