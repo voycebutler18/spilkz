@@ -21,7 +21,7 @@ import AvatarUploader from "@/components/profile/AvatarUploader";
 
 import {
   Video, Users, TrendingUp, Settings, Shield, Trash2, Plus,
-  Volume2, VolumeX, BarChart3, Bookmark,
+  Volume2, VolumeX, BarChart3, Bookmark, Edit2, Check, X,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -102,18 +102,31 @@ async function fetchBookmarkCountsFor(ids: string[]) {
 
 /* ----------------------------- Feed Item ----------------------------- */
 function CreatorFeedItem({
-  splik, onDelete,
+  splik, onDelete, onUpdate,
 }: {
   splik: SplikRow;
   onDelete: (id: string) => void;
+  onUpdate: (id: string, updates: { title?: string; description?: string }) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
+  
+  // Editing states
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [editTitle, setEditTitle] = useState(splik.title || "");
+  const [editDescription, setEditDescription] = useState(splik.description || "");
 
   const isPhoto = !splik.video_url && !!splik.thumbnail_url;
   const start = Math.max(0, Number(splik.trim_start ?? 0));
   const loopEnd = start + 3;
+
+  // Reset edit states when splik changes
+  useEffect(() => {
+    setEditTitle(splik.title || "");
+    setEditDescription(splik.description || "");
+  }, [splik.title, splik.description]);
 
   /* Video-only lifecycle */
   useEffect(() => {
@@ -183,6 +196,49 @@ function CreatorFeedItem({
     v.muted = next;
     if (next) v.setAttribute("muted", "true"); else v.removeAttribute("muted");
     setIsMuted(next);
+  };
+
+  // Edit handlers
+  const handleSaveTitle = () => {
+    if (editTitle.trim() !== splik.title) {
+      onUpdate(splik.id, { title: editTitle.trim() || null });
+    }
+    setIsEditingTitle(false);
+  };
+
+  const handleSaveDescription = () => {
+    if (editDescription.trim() !== splik.description) {
+      onUpdate(splik.id, { description: editDescription.trim() || null });
+    }
+    setIsEditingDescription(false);
+  };
+
+  const handleCancelTitleEdit = () => {
+    setEditTitle(splik.title || "");
+    setIsEditingTitle(false);
+  };
+
+  const handleCancelDescriptionEdit = () => {
+    setEditDescription(splik.description || "");
+    setIsEditingDescription(false);
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleSaveTitle();
+    } else if (e.key === "Escape") {
+      handleCancelTitleEdit();
+    }
+  };
+
+  const handleDescriptionKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && e.ctrlKey) {
+      e.preventDefault();
+      handleSaveDescription();
+    } else if (e.key === "Escape") {
+      handleCancelDescriptionEdit();
+    }
   };
 
   return (
@@ -313,12 +369,110 @@ function CreatorFeedItem({
 
         {/* Meta */}
         <div className="p-4">
-          <h4 className="font-semibold text-white">
-            {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
-          </h4>
-          {splik.description && (
-            <p className="text-sm text-gray-400 mt-1">{splik.description}</p>
+          {/* Editable Title */}
+          <div className="group relative">
+            {isEditingTitle ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onKeyDown={handleTitleKeyDown}
+                  className="bg-gray-800 border-gray-700 text-white text-base font-semibold"
+                  placeholder={isPhoto ? "Photo title..." : "Video title..."}
+                  autoFocus
+                />
+                <Button
+                  size="sm"
+                  onClick={handleSaveTitle}
+                  className="h-8 w-8 p-0 bg-green-600 hover:bg-green-700"
+                >
+                  <Check className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleCancelTitleEdit}
+                  className="h-8 w-8 p-0 bg-gray-800 border-gray-700 hover:bg-gray-700"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-white flex-1 min-w-0">
+                  {splik.title || (isPhoto ? `Photo ${splik.id.slice(0, 6)}` : `Video ${splik.id.slice(0, 6)}`)}
+                </h4>
+                <button
+                  onClick={() => setIsEditingTitle(true)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 hover:bg-gray-800 rounded"
+                  aria-label="Edit title"
+                >
+                  <Edit2 className="h-4 w-4 text-gray-400 hover:text-white" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Editable Description */}
+          {(splik.description || isEditingDescription) && (
+            <div className="group relative mt-2">
+              {isEditingDescription ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    onKeyDown={handleDescriptionKeyDown}
+                    className="bg-gray-800 border-gray-700 text-white text-sm resize-none"
+                    placeholder="Add a description..."
+                    rows={2}
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handleSaveDescription}
+                      className="h-7 px-3 bg-green-600 hover:bg-green-700 text-xs"
+                    >
+                      <Check className="h-3 w-3 mr-1" />
+                      Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleCancelDescriptionEdit}
+                      className="h-7 px-3 bg-gray-800 border-gray-700 hover:bg-gray-700 text-xs"
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      Cancel
+                    </Button>
+                    <span className="text-xs text-gray-500">Ctrl+Enter to save</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start justify-between">
+                  <p className="text-sm text-gray-400 flex-1 min-w-0">{splik.description}</p>
+                  <button
+                    onClick={() => setIsEditingDescription(true)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity ml-2 p-1 hover:bg-gray-800 rounded"
+                    aria-label="Edit description"
+                  >
+                    <Edit2 className="h-4 w-4 text-gray-400 hover:text-white" />
+                  </button>
+                </div>
+              )}
+            </div>
           )}
+
+          {/* Add description button */}
+          {!splik.description && !isEditingDescription && (
+            <button
+              onClick={() => setIsEditingDescription(true)}
+              className="mt-2 text-sm text-gray-500 hover:text-gray-400 transition-colors"
+            >
+              + Add description
+            </button>
+          )}
+
           <div className="mt-2 text-xs text-gray-500">
             {new Date(splik.created_at).toLocaleDateString()}
             {!isPhoto && (
@@ -336,10 +490,11 @@ function CreatorFeedItem({
 
 /* ----------------------------- Feed ----------------------------- */
 function CreatorFeed({
-  spliks, onDelete,
+  spliks, onDelete, onUpdate,
 }: {
   spliks: SplikRow[];
   onDelete: (id: string) => void;
+  onUpdate: (id: string, updates: { title?: string; description?: string }) => void;
 }) {
   return (
     <div className="space-y-8">
@@ -348,6 +503,7 @@ function CreatorFeed({
           key={s.id}
           splik={s}
           onDelete={onDelete}
+          onUpdate={onUpdate}
         />
       ))}
     </div>
@@ -620,6 +776,26 @@ const CreatorDashboard = () => {
     });
   };
 
+  /* ------------------------- Update post ------------------------- */
+  const handleUpdateSplik = async (splikId: string, updates: { title?: string; description?: string }) => {
+    if (!currentUserId) return;
+
+    try {
+      const { error } = await supabase
+        .from("spliks")
+        .update(updates)
+        .eq("id", splikId)
+        .eq("user_id", currentUserId);
+      
+      if (error) throw error;
+      
+      toast.success("Post updated successfully");
+    } catch (error) {
+      console.error("Error updating post:", error);
+      toast.error("Failed to update post");
+    }
+  };
+
   /* ------------------------- Delete post ------------------------- */
   const handleDeleteVideo = async (videoId: string) => {
     if (!currentUserId) return;
@@ -856,6 +1032,7 @@ const CreatorDashboard = () => {
               <CreatorFeed
                 spliks={spliks}
                 onDelete={handleDeleteVideo}
+                onUpdate={handleUpdateSplik}
               />
             ) : (
               <Card className="p-12 text-center bg-gray-900 border-gray-800">
