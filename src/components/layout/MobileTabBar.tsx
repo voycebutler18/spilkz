@@ -27,19 +27,72 @@ export default function MobileTabBar({
   const nav = useNavigate();
   const { pathname } = useLocation();
 
-  // (kept tiny auth state only if you need it later; safe to remove)
-  const [user, setUser] = useState<any>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [unread, setUnread] = useState<number>(0);
+
+  // auth sniff
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getUser().then(({ data }) => mounted && setUser(data.user ?? null));
+    supabase.auth.getUser().then(({ data }) => mounted && setUserId(data.user?.id ?? null));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (mounted) setUser(session?.user ?? null);
+      if (mounted) setUserId(session?.user?.id ?? null);
     });
     return () => {
       mounted = false;
       sub?.subscription?.unsubscribe();
     };
   }, []);
+
+  // small helper to recount unread
+  const recountUnread = async (uid: string) => {
+    try {
+      const { count } = await supabase
+        .from("notes")
+        .select("*", { count: "exact", head: true })
+        .eq("recipient_id", uid)
+        .is("deleted_at", null)
+        .is("read_at", null);
+      setUnread(count ?? 0);
+    } catch {
+      // ignore
+    }
+  };
+
+  // keep unread live
+  useEffect(() => {
+    if (!userId) return;
+
+    // initial count
+    recountUnread(userId);
+
+    // realtime: any new note to me
+    const ch = supabase
+      .channel("mobile-notes-badge")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notes", filter: `recipient_id=eq.${userId}` },
+        () => recountUnread(userId)
+      )
+      .subscribe();
+
+    // custom events dispatched from Notes page / bridge
+    const onPing = () => recountUnread(userId);
+    window.addEventListener("notes:inboxChanged", onPing);
+
+    // visibility/focus recount (cheap, head: true)
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recountUnread(userId);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      supabase.removeChannel(ch);
+      window.removeEventListener("notes:inboxChanged", onPing);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [userId]);
 
   const isProfile =
     pathname.startsWith("/creator") ||
@@ -48,6 +101,9 @@ export default function MobileTabBar({
 
   const isPrayers = pathname === "/prayers";
   const isNotes = pathname === "/notes";
+
+  // format the badge (99+)
+  const unreadLabel = unread > 99 ? "99+" : String(unread);
 
   return (
     <nav
@@ -77,19 +133,34 @@ export default function MobileTabBar({
           )}
         </NavLink>
 
-        {/* NoteBox */}
+        {/* NoteBox (with unread badge) */}
         <NavLink to="/notes" className={item}>
-          {({ isActive }) => (
-            <div className="relative">
-              {(isActive || isNotes) && (
-                <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />
-              )}
-              <div className="relative flex flex-col items-center">
-                <Inbox className={`${icon(isActive || isNotes)} ${(isActive || isNotes) ? "fill-current" : ""}`} />
-                <span className={label(isActive || isNotes)}>NoteBox</span>
+          {({ isActive }) => {
+            const active = isActive || isNotes;
+            return (
+              <div className="relative">
+                {active && <div className="absolute -inset-2 bg-primary/10 rounded-2xl blur-sm" />}
+                <div className="relative flex flex-col items-center">
+                  <div className="relative">
+                    <Inbox className={`${icon(active)} ${active ? "fill-current" : ""}`} />
+                    {userId && unread > 0 && (
+                      <span
+                        className="
+                          absolute -top-1 -right-2 min-w-[18px] h-[18px]
+                          px-1 rounded-full text-[10px] leading-[18px]
+                          bg-red-600 text-white font-semibold text-center
+                        "
+                        aria-label={`${unread} unread notes`}
+                      >
+                        {unreadLabel}
+                      </span>
+                    )}
+                  </div>
+                  <span className={label(active)}>NoteBox</span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          }}
         </NavLink>
 
         {/* Daily Prayers */}
