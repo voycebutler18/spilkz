@@ -242,6 +242,7 @@ export default function CreatorProfile() {
         .select("*")
         .eq("user_id", userId)
         .eq("status", "active")
+        .not("video_url", "is", null) // Block photos from videos tab
         .order("created_at", { ascending: false });
 
       if (error) throw error;
