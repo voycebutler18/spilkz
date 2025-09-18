@@ -1,4 +1,6 @@
 // src/components/dashboard/VideoUploadModal.tsx
+// at top of src/components/dashboard/VideoUploadModal.tsx
+import { createPrayer } from "@/lib/prayers";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
