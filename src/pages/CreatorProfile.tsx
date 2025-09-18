@@ -1,3 +1,4 @@
+
 // src/pages/CreatorProfile.tsx
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, useSearchParams, Link } from "react-router-dom";
@@ -321,22 +322,26 @@ export default function CreatorProfile() {
     try {
       setPhotosLoading(true);
 
+      // Fetch photos from spliks table (where photos are actually stored)
       const { data, error } = await supabase
-        .from("vibe_photos")
+        .from("spliks")
         .select("*")
         .eq("user_id", userId)
+        .eq("status", "active")
+        .is("video_url", null) // Photos have null video_url
+        .not("thumbnail_url", "is", null) // But have thumbnail_url (the photo)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
       if (cancelled) return;
 
       const photoItems: PhotoItem[] = (data || []).map((r: any) => ({
-        id: String(r.id),
+        id: String(r.id), // Use spliks table ID
         user_id: String(r.user_id),
-        photo_url: String(r.photo_url),
+        photo_url: String(r.thumbnail_url), // Photo is stored in thumbnail_url
         created_at: r.created_at || new Date().toISOString(),
-        description: r.description ?? r.caption ?? null,
-        location: r.location ?? null,
+        description: r.description || r.title || null,
+        location: null, // Not stored in spliks table
       }));
 
       if (!cancelled) setPhotos(photoItems);
