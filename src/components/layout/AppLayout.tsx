@@ -17,8 +17,8 @@ import { supabase } from "@/integrations/supabase/client";
 import RightActivityRail from "@/components/highlights/RightActivityRail";
 import MobileActivity from "@/components/highlights/MobileActivity";
 
-/* ✅ NoteBox unread badge/link */
-import NoteBoxLink from "@/components/NoteBoxLink";
+/* Keep the profile/actions menu on mobile */
+import RightProfileMenu from "@/components/layout/RightProfileMenu";
 
 const AppLayout: React.FC = () => {
   // mobile state only
@@ -42,15 +42,8 @@ const AppLayout: React.FC = () => {
     <div className="min-h-screen bg-background text-foreground">
       {/* ─────────────── DESKTOP / TABLET ─────────────── */}
       <div className="hidden md:block">
-        {/* Global top bar */}
+        {/* Global top bar (includes NoteBox badge/link) */}
         <Header />
-
-        {/* ✅ Slim utility row under header (right-aligned) */}
-        <div className="border-b border-border/60">
-          <div className="mx-auto flex max-w-7xl items-center justify-end gap-3 px-4 py-2">
-            <NoteBoxLink />
-          </div>
-        </div>
 
         {/* 3-column shell: Left rail (fixed), Main content, Right rail */}
         <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[260px_1fr] lg:grid-cols-[260px_1fr_320px]">
@@ -81,7 +74,7 @@ const AppLayout: React.FC = () => {
 
       {/* ─────────────── MOBILE ─────────────── */}
       <div className="md:hidden">
-        {/* Top bar for mobile */}
+        {/* Top bar for mobile (no extra NoteBox here; Header handles it on desktop) */}
         <div className="sticky top-0 z-40 h-12 border-b bg-background/95 backdrop-blur px-3 flex items-center justify-between">
           <button
             aria-label="Open menu"
@@ -95,13 +88,13 @@ const AppLayout: React.FC = () => {
             Splikz
           </Link>
 
-          {/* ✅ Mobile: NoteBox unread badge on the right */}
+          {/* Keep the standard profile/actions button on mobile */}
           <div className="flex items-center">
-            <NoteBoxLink />
+            <RightProfileMenu />
           </div>
         </div>
 
-        {/* ✅ Mobile activity bar (last 24h) */}
+        {/* Mobile activity bar (last 24h) */}
         <MobileActivity />
 
         {/* Content with bottom padding so tab bar doesn’t overlap */}
