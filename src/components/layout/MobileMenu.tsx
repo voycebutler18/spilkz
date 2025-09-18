@@ -8,23 +8,32 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, LogOut, Home, Upload, Brain, Utensils, Heart, Building2, HelpCircle, Info, Bookmark, StickyNote } from "lucide-react";
+import {
+  Sparkles,
+  LogOut,
+  Home,
+  Upload,
+  Utensils,
+  Heart,
+  Building2,
+  HelpCircle,
+  Info,
+  Bookmark,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface MobileMenuProps {
   open: boolean;
-  onClose: () => void; // parent should set open = false
+  onClose: () => void;
 }
 
-// 🔒 Hide Messages link in the mobile menu for now.
-// Set to true later to re-enable.
 const SHOW_MESSAGES = false;
 
 const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
   const [isAuthed, setIsAuthed] = useState(false);
   const navigate = useNavigate();
 
-  // Close sheet then navigate — avoids iOS tap being swallowed by the dialog focus trap
+  // Close the sheet, then navigate (avoids focus-trap issues on iOS)
   const go = (path: string) => {
     onClose();
     setTimeout(() => navigate(path), 0);
@@ -60,8 +69,8 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
         if (!value) onClose();
       }}
     >
-      {/* give the content bottom padding so the sticky CTA never overlaps list */}
-      <SheetContent side="left" className="w-[280px] sm-[350px] pb-24 overflow-y-auto">
+      {/* NOTE: fixed Tailwind typo sm-[350px] -> sm:w-[350px] */}
+      <SheetContent side="left" className="w-[280px] sm:w-[350px] pb-24 overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="flex items-center space-x-2">
             <Sparkles className="h-5 w-5 text-primary" />
@@ -100,8 +109,8 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
           )}
 
           {isAuthed && (
-            <Button 
-              className="w-full rounded-xl bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]" 
+            <Button
+              className="w-full rounded-xl bg-gradient-to-r from-primary to-secondary hover:opacity-90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
               onClick={() => go("/upload")}
             >
               <Upload className="h-4 w-4 mr-2" />
@@ -140,24 +149,34 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
               aria-label="Daily Prayers"
               title="Daily Prayers"
             >
-              <div className="text-amber-400 group-hover:text-amber-300 transition-colors text-sm">🙏</div>
+              <div className="text-amber-400 group-hover:text-amber-300 transition-colors text-sm">
+                🙏
+              </div>
               <span>Daily Prayers</span>
             </Link>
 
-            {/* Dating - Coming Soon */}
-            <div
-              className="flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-medium text-muted-foreground/70 bg-white/5 cursor-not-allowed select-none border border-dashed border-white/20"
-              aria-disabled="true"
-              title="Splikz Dating is coming soon"
+            {/* ✅ Splikz Dating (now active) */}
+            <Link
+              to="/dating"
+              onClick={(e) => {
+                e.preventDefault();
+                go("/dating");
+              }}
+              className="flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+              aria-label="Splikz Dating"
+              title="Splikz Dating"
             >
               <div className="flex items-center gap-3">
-                <Heart className="h-4 w-4 text-pink-400/50" />
+                <Heart className="h-4 w-4 text-pink-400 group-hover:text-pink-300 transition-colors" />
                 <span>Splikz Dating</span>
               </div>
-              <Badge variant="secondary" className="text-[9px] bg-white/10 text-white/60 px-2 py-0.5">
-                Soon
+              <Badge
+                variant="secondary"
+                className="text-[9px] bg-pink-500/20 text-pink-200 px-2 py-0.5"
+              >
+                New
               </Badge>
-            </div>
+            </Link>
 
             {/* For Brands */}
             <Link
@@ -242,11 +261,13 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
                 }}
                 className="flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
               >
-                <div className="text-yellow-400 group-hover:text-yellow-300 transition-colors text-sm">📝</div>
+                <div className="text-yellow-400 group-hover:text-yellow-300 transition-colors text-sm">
+                  📝
+                </div>
                 <span>NoteBox</span>
               </Link>
 
-              {/* Messages is hidden while SHOW_MESSAGES is false */}
+              {/* Messages (hidden while SHOW_MESSAGES is false) */}
               {SHOW_MESSAGES && (
                 <Link
                   to="/messages"
@@ -263,7 +284,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
           </div>
         )}
 
-        {/* Sign Out Button for logged in users (not in sticky bottom) */}
+        {/* Sign Out */}
         {isAuthed && (
           <div className="mt-6 px-4">
             <button
@@ -276,14 +297,14 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
           </div>
         )}
 
-        {/* Auth actions / sticky bottom CTA for non-logged in users */}
+        {/* Auth CTA (sticky) */}
         {!isAuthed && (
           <div className="fixed left-0 right-0 bottom-0 p-4 bg-background/90 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 border-t border-white/10">
             <div className="px-2">
               <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  className="flex-1 rounded-xl border-white/20 hover:bg-white/10 transition-all duration-200" 
+                <Button
+                  variant="outline"
+                  className="flex-1 rounded-xl border-white/20 hover:bg-white/10 transition-all duration-200"
                   onClick={() => go("/login")}
                 >
                   Log in
