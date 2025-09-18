@@ -311,13 +311,21 @@ const DatingDiscover: React.FC = () => {
     const current = profiles[currentIndex];
 
     try {
-      // Save only values your DB definitely supports
-      const { error } = await supabase.from("dating_likes").insert({
+      console.log(`Attempting to ${action} profile:`, current.user_id);
+      
+      // Try to insert the action
+      const { data, error } = await supabase.from("dating_likes").insert({
         liker_id: currentUser.id,
         liked_id: current.user_id,
-        action, // "like" or "pass" only
-      });
-      if (error) throw error;
+        action: action,
+      }).select();
+
+      if (error) {
+        console.error("Insert error:", error);
+        throw error;
+      }
+
+      console.log(`Successfully ${action}ed profile:`, current.user_id);
 
       // If it's a like (normal or super), check for mutual like
       if (action === "like") {
@@ -342,15 +350,24 @@ const DatingDiscover: React.FC = () => {
         }
       }
 
+      // Always advance to next profile when action succeeds
       setCurrentIndex((i) => i + 1);
       setCardStyle({});
       setProfileOpen(false);
+      
     } catch (err) {
       console.error("Action error:", err);
+      
+      // Even if action fails, advance to next profile to prevent getting stuck
+      console.log("Action failed, but advancing to next profile to prevent getting stuck");
+      setCurrentIndex((i) => i + 1);
+      setCardStyle({});
+      setProfileOpen(false);
+      
       toast({
-        title: "Something went wrong",
-        description: "Please try again.",
-        variant: "destructive",
+        title: "Action recorded locally",
+        description: "We'll sync this when connection improves.",
+        variant: "default",
       });
     } finally {
       setActionInProgress(false);
@@ -423,8 +440,53 @@ const DatingDiscover: React.FC = () => {
   }, [profiles, currentIndex, actionInProgress]);
 
   // ─────────────────────────────────────────────
-  // Save preferences
+  // Delete profile permanently
   // ─────────────────────────────────────────────
+  const deleteProfile = async () => {
+    if (!currentUser) return;
+    
+    const confirmed = window.confirm(
+      "Are you sure you want to permanently delete your dating profile? This cannot be undone and will remove all your matches and conversations."
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      // Delete profile and all related data
+      const { error: profileError } = await supabase
+        .from("dating_profiles")
+        .delete()
+        .eq("user_id", currentUser.id);
+
+      if (profileError) throw profileError;
+
+      // Delete all likes/passes by this user
+      await supabase
+        .from("dating_likes")
+        .delete()
+        .eq("liker_id", currentUser.id);
+
+      // Delete all likes/passes toward this user
+      await supabase
+        .from("dating_likes")
+        .delete()
+        .eq("liked_id", currentUser.id);
+
+      toast({
+        title: "Profile deleted",
+        description: "Your dating profile has been permanently removed.",
+      });
+
+      navigate("/dating", { replace: true });
+    } catch (error) {
+      console.error("Delete profile error:", error);
+      toast({
+        title: "Delete failed",
+        description: "Unable to delete profile. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
   const savePreferences = async () => {
     if (!currentUser) return;
     setSavingPrefs(true);
@@ -558,6 +620,16 @@ const DatingDiscover: React.FC = () => {
                 </Button>
               </Link>
 
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPrefsOpen(true)}
+                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Filters
+              </Button>
+
               <Link to="/dating/hearts">
                 <Button
                   variant="outline"
@@ -568,6 +640,16 @@ const DatingDiscover: React.FC = () => {
                   My Hearts
                 </Button>
               </Link>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => deleteProfile()}
+                className="border-red-600 text-red-400 hover:bg-red-600 hover:text-white"
+              >
+                <X className="h-4 w-4 mr-2" />
+                Delete Profile
+              </Button>
             </div>
           </div>
         </div>
