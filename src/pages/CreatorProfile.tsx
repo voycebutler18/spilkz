@@ -147,6 +147,9 @@ export default function CreatorProfile() {
         setProfile(profileData);
         await fetchSpliks(profileData.id, cancelled);
         await fetchBoostedSpliks(profileData.id, cancelled);
+        
+        // Fetch fresh counts to ensure accuracy
+        await refreshCounts(profileData.id);
       } catch (e) {
         console.error("Error resolving profile:", e);
         if (!cancelled) {
@@ -207,13 +210,48 @@ export default function CreatorProfile() {
   }, [profile?.id]);
 
   const refreshCounts = async (profileId: string) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("followers_count, following_count, spliks_count")
-      .eq("id", profileId)
-      .maybeSingle();
-    if (data) {
-      setProfile((prev) => (prev ? ({ ...prev, ...data } as Profile) : prev));
+    try {
+      // Get actual follower counts from the followers table
+      const [followersResult, followingResult, spliksResult] = await Promise.all([
+        supabase
+          .from("followers")
+          .select("id", { count: "exact" })
+          .eq("following_id", profileId),
+        supabase
+          .from("followers")
+          .select("id", { count: "exact" })
+          .eq("follower_id", profileId),
+        supabase
+          .from("spliks")
+          .select("id", { count: "exact" })
+          .eq("user_id", profileId)
+          .eq("status", "active")
+      ]);
+
+      const followersCount = followersResult.count || 0;
+      const followingCount = followingResult.count || 0;
+      const spliksCount = spliksResult.count || 0;
+
+      // Update the profile state with fresh counts
+      setProfile((prev) => (prev ? {
+        ...prev,
+        followers_count: followersCount,
+        following_count: followingCount,
+        spliks_count: spliksCount
+      } as Profile : prev));
+
+      // Also update the database to keep it in sync
+      await supabase
+        .from("profiles")
+        .update({
+          followers_count: followersCount,
+          following_count: followingCount,
+          spliks_count: spliksCount
+        })
+        .eq("id", profileId);
+
+    } catch (error) {
+      console.error("Error refreshing counts:", error);
     }
   };
 
@@ -223,6 +261,7 @@ export default function CreatorProfile() {
         .from("spliks")
         .select("*")
         .eq("user_id", userId)
+        .eq("status", "active")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -269,7 +308,8 @@ export default function CreatorProfile() {
       const { data: splikRows, error: spliksErr } = await supabase
         .from("spliks")
         .select("*")
-        .in("id", ids);
+        .in("id", ids)
+        .eq("status", "active");
 
       if (spliksErr) throw spliksErr;
 
@@ -413,8 +453,6 @@ export default function CreatorProfile() {
 
               {profile.bio && <p className="mb-4">{profile.bio}</p>}
 
-              {/* Message button removed intentionally */}
-
               <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-4">
                 {profile.city && (
                   <div className="flex items-center gap-1">
@@ -438,9 +476,7 @@ export default function CreatorProfile() {
                   className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
                 >
                   <p className="text-2xl font-bold">
-                    {profile.followers_private && currentUserId !== profile.id
-                      ? 0
-                      : profile.followers_count || 0}
+                    {profile.followers_count || 0}
                   </p>
                   <p className="text-sm text-muted-foreground">Followers</p>
                 </button>
@@ -449,9 +485,7 @@ export default function CreatorProfile() {
                   className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
                 >
                   <p className="text-2xl font-bold">
-                    {profile.following_private && currentUserId !== profile.id
-                      ? 0
-                      : profile.following_count || 0}
+                    {profile.following_count || 0}
                   </p>
                   <p className="text-sm text-muted-foreground">Following</p>
                 </button>
