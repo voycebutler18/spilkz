@@ -3,8 +3,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchUnreadNotesCount } from "@/lib/realtimeNotes";
+import { Mail } from "lucide-react";
 
-export default function NoteBoxLink() {
+type Props = {
+  to?: string;           // route to open your NoteBox page
+  label?: string;        // text label next to the icon
+  className?: string;    // optional styling override
+};
+
+export default function NoteBoxLink({ to = "/notes", label = "NoteBox", className }: Props) {
   const [me, setMe] = useState<string | null>(null);
   const [count, setCount] = useState<number>(0);
 
@@ -17,7 +24,7 @@ export default function NoteBoxLink() {
     return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  // initial count + update hooks
+  // initial count + updates
   useEffect(() => {
     if (!me) return;
 
@@ -32,24 +39,22 @@ export default function NoteBoxLink() {
       }
     };
 
-    // initial
+    // Initial fetch
     refresh();
 
-    // realtime: from RealtimeNotesBridge
+    // Increment on live inserts (from RealtimeNotesBridge)
     const onNew = (ev: Event) => {
       const anyEv = ev as CustomEvent;
       const note = anyEv.detail as { recipient_id: string };
-      if (note?.recipient_id === me) {
-        setCount((x) => x + 1);
-      }
+      if (note?.recipient_id === me) setCount((x) => x + 1);
     };
     window.addEventListener("notes:new", onNew);
 
-    // allow pages (e.g., Notes.tsx) to trigger a recount after reads/deletes
+    // Recount when inbox is changed by read/delete actions inside NoteBox page
     const onInboxChanged = () => refresh();
     window.addEventListener("notes:inboxChanged", onInboxChanged);
 
-    // safety: periodic recount (covers deletes from other tabs)
+    // Periodic safety recount (other tabs)
     const interval = setInterval(refresh, 30000);
 
     return () => {
@@ -62,11 +67,15 @@ export default function NoteBoxLink() {
 
   return (
     <Link
-      to="/notes"
-      className="relative inline-flex items-center gap-2 rounded-md px-3 py-2 hover:bg-accent"
-      title="Open Notes"
+      to={to}
+      className={
+        className ??
+        "relative inline-flex items-center gap-2 rounded-md px-3 py-2 hover:bg-accent"
+      }
+      title="Open NoteBox"
     >
-      <span>Notes</span>
+      <Mail className="h-5 w-5" />
+      <span className="font-medium">{label}</span>
       {count > 0 && (
         <span className="ml-1 inline-flex min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-xs font-semibold text-white">
           {count}
