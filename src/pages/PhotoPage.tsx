@@ -1,3 +1,4 @@
+// src/pages/PhotoPage.tsx
 import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import Header from "@/components/layout/Header";
@@ -18,16 +19,23 @@ export default function PhotoPage() {
     const fetchPhoto = async () => {
       setLoading(true);
       try {
-        // Fetch from spliks table since that's where photos are stored
+        // Fetch from spliks table - photos have video_url as null but thumbnail_url as the photo
         const { data, error } = await supabase
           .from("spliks")
           .select("*")
           .eq("id", id)
           .eq("status", "active")
-          .is("video_url", null) // Ensure it's a photo
           .maybeSingle();
 
         if (error || !data) {
+          console.error("Photo fetch error:", error);
+          setPhoto(null);
+          return;
+        }
+
+        // Check if this is actually a photo (has thumbnail_url but no video_url)
+        if (data.video_url !== null) {
+          console.log("This is a video, not a photo");
           setPhoto(null);
           return;
         }
@@ -51,10 +59,16 @@ export default function PhotoPage() {
     fetchPhoto();
   }, [id]);
 
+  const getCreatorName = (profile: any) => {
+    if (!profile) return "User";
+    const full = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
+    return profile.display_name?.trim() || full || profile.username?.trim() || "User";
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500" />
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent" />
       </div>
     );
   }
@@ -64,64 +78,106 @@ export default function PhotoPage() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-white mb-4">Photo not found</h1>
-          <Button onClick={() => window.history.back()}>Go Back</Button>
+          <p className="text-gray-400 mb-6">The photo you're looking for doesn't exist or may have been removed.</p>
+          <Button 
+            onClick={() => window.history.back()}
+            className="bg-purple-600 hover:bg-purple-700"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Go Back
+          </Button>
         </div>
       </div>
     );
   }
 
+  const creatorName = getCreatorName(photo.profile);
+
   return (
     <>
       <Header />
       <div className="min-h-screen bg-gray-900 py-8">
-        <div className="max-w-4xl mx-auto px-4">
+        <div className="max-w-5xl mx-auto px-4">
           <Button
             variant="outline"
-            className="mb-6 border-gray-700 text-gray-300"
+            className="mb-6 border-gray-600 text-gray-300 hover:bg-gray-800"
             onClick={() => window.history.back()}
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Button>
           
-          <div className="bg-gray-800 rounded-xl overflow-hidden">
-            <img
-              src={photo.thumbnail_url}
-              alt={photo.title || "Photo"}
-              className="w-full max-h-[70vh] object-contain bg-black"
-            />
+          <div className="bg-gray-800 rounded-2xl overflow-hidden shadow-2xl">
+            {/* Photo Display */}
+            <div className="relative bg-black">
+              <img
+                src={photo.thumbnail_url}
+                alt={photo.title || photo.description || "Photo"}
+                className="w-full max-h-[80vh] object-contain"
+                style={{ minHeight: '400px' }}
+              />
+            </div>
             
-            <div className="p-6">
+            {/* Photo Info */}
+            <div className="p-8">
+              {/* Title */}
               {photo.title && (
-                <h1 className="text-2xl font-bold text-white mb-4">{photo.title}</h1>
+                <h1 className="text-3xl font-bold text-white mb-6">{photo.title}</h1>
               )}
               
+              {/* Creator Info */}
               {photo.profile && (
-                <div className="flex items-center gap-3 mb-4">
-                  <Avatar className="w-12 h-12">
+                <div className="flex items-center gap-4 mb-6 p-4 bg-gray-700 rounded-xl">
+                  <Avatar className="w-16 h-16 ring-2 ring-purple-500">
                     <AvatarImage src={photo.profile.avatar_url} />
-                    <AvatarFallback className="bg-purple-600 text-white">
-                      {(photo.profile.display_name || photo.profile.username || "U").charAt(0)}
+                    <AvatarFallback className="bg-purple-600 text-white text-xl font-bold">
+                      {creatorName.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
-                  <div>
+                  <div className="flex-1">
                     <Link
                       to={`/creator/${photo.profile.username || photo.user_id}`}
-                      className="text-white font-medium hover:text-purple-300"
+                      className="text-white font-bold text-lg hover:text-purple-300 transition-colors"
                     >
-                      {photo.profile.display_name || photo.profile.username || "User"}
+                      {creatorName}
                     </Link>
-                    <p className="text-gray-400 text-sm flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      {new Date(photo.created_at).toLocaleDateString()}
-                    </p>
+                    {photo.profile.username && (
+                      <p className="text-gray-400">@{photo.profile.username}</p>
+                    )}
+                    <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
+                      <div className="flex items-center gap-1">
+                        <Calendar className="w-4 h-4" />
+                        {new Date(photo.created_at).toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric"
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
               
+              {/* Description */}
               {photo.description && (
-                <p className="text-gray-300 leading-relaxed">{photo.description}</p>
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-white mb-3">Description</h3>
+                  <p className="text-gray-300 leading-relaxed text-lg">{photo.description}</p>
+                </div>
               )}
+
+              {/* Additional Info */}
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">Details</h3>
+                  <div className="space-y-2 text-gray-300">
+                    <p><span className="text-gray-500">Posted:</span> {new Date(photo.created_at).toLocaleDateString()}</p>
+                    {photo.mime_type && (
+                      <p><span className="text-gray-500">Type:</span> {photo.mime_type}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
