@@ -27,6 +27,7 @@ import Press from "./pages/business/Press";
 import HelpCenter from "./pages/support/HelpCenter";
 import Contact from "./pages/support/Contact";
 import SplikPage from "@/pages/SplikPage";
+import DatingProfileEdit from "@/pages/Dating/DatingProfileEdit";
 
 // Legal / Community
 import Terms from "./pages/legal/Terms";
@@ -199,6 +200,7 @@ const App = () => (
               <Route path="/video/:id" element={<VideoPage />} />
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
+              <Route path="/dating/profile/edit" element={<DatingProfileEdit />} />
 
               {/* Promote */}
               <Route path="/promote/:splikId" element={<Promote />} />
