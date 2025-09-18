@@ -1,3 +1,4 @@
+// src/components/layout/MobileMenu.tsx
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -31,6 +32,8 @@ const SHOW_MESSAGES = false;
 
 const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
   const [isAuthed, setIsAuthed] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [unread, setUnread] = useState<number>(0);
   const navigate = useNavigate();
 
   // Close the sheet, then navigate (avoids focus-trap issues on iOS)
@@ -39,16 +42,21 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
     setTimeout(() => navigate(path), 0);
   };
 
+  /* ---------------- auth ---------------- */
   useEffect(() => {
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       setIsAuthed(!!data.session);
+      setUserId(data.session?.user?.id ?? null);
     });
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => setIsAuthed(!!session)
+      (_event, session) => {
+        setIsAuthed(!!session);
+        setUserId(session?.user?.id ?? null);
+      }
     );
 
     return () => {
@@ -57,10 +65,63 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
     };
   }, []);
 
+  /* ---------------- unread recount helper ---------------- */
+  const recountUnread = async (uid: string) => {
+    try {
+      const { count } = await supabase
+        .from("notes")
+        .select("*", { count: "exact", head: true })
+        .eq("recipient_id", uid)
+        .is("deleted_at", null)
+        .is("read_at", null);
+      setUnread(count ?? 0);
+    } catch {
+      // ignore
+    }
+  };
+
+  /* ---------------- live badge sync ---------------- */
+  useEffect(() => {
+    if (!userId) return;
+
+    // initial count
+    recountUnread(userId);
+
+    // realtime: new notes for me
+    const ch = supabase
+      .channel("mobilemenu-notes-badge")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notes", filter: `recipient_id=eq.${userId}` },
+        () => recountUnread(userId)
+      )
+      .subscribe();
+
+    // custom event from Notes page when it marks/deletes
+    const onPing = () => recountUnread(userId);
+    window.addEventListener("notes:inboxChanged", onPing);
+
+    // recount when the app becomes visible
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recountUnread(userId);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      supabase.removeChannel(ch);
+      window.removeEventListener("notes:inboxChanged", onPing);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [userId]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     go("/");
   };
+
+  const unreadLabel = unread > 99 ? "99+" : String(unread);
 
   return (
     <Sheet
@@ -155,7 +216,7 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
               <span>Daily Prayers</span>
             </Link>
 
-            {/* ✅ Splikz Dating (now active) */}
+            {/* ✅ Splikz Dating */}
             <Link
               to="/dating"
               onClick={(e) => {
@@ -252,19 +313,34 @@ const MobileMenu = ({ open, onClose }: MobileMenuProps) => {
                 <span>My Boosts</span>
               </Link>
 
-              {/* NoteBox */}
+              {/* NoteBox (with unread badge) */}
               <Link
                 to="/notes"
                 onClick={(e) => {
                   e.preventDefault();
                   go("/notes");
                 }}
-                className="flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
+                className="flex items-center justify-between rounded-xl px-4 py-2.5 text-sm font-medium hover:bg-white/10 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] group"
               >
-                <div className="text-yellow-400 group-hover:text-yellow-300 transition-colors text-sm">
-                  📝
+                <div className="flex items-center gap-3">
+                  <div className="text-yellow-400 group-hover:text-yellow-300 transition-colors text-sm">
+                    📝
+                  </div>
+                  <span>NoteBox</span>
                 </div>
-                <span>NoteBox</span>
+
+                {userId && unread > 0 && (
+                  <span
+                    className="
+                      inline-flex min-w-[18px] h-[18px] items-center justify-center
+                      px-1 rounded-full text-[10px] leading-[18px]
+                      bg-red-600 text-white font-semibold
+                    "
+                    aria-label={`${unread} unread notes`}
+                  >
+                    {unreadLabel}
+                  </span>
+                )}
               </Link>
 
               {/* Messages (hidden while SHOW_MESSAGES is false) */}
