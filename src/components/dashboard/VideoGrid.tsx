@@ -4,8 +4,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Play,
-  Pause,
   Volume2,
   VolumeX,
   Heart,
@@ -62,7 +60,8 @@ export function VideoGrid({
   onDeleteComment,
   onDeletedSplik,
 }: VideoGridProps) {
-  const [playingVideo, setPlayingVideo] = useState<string | null>(null);
+  // allow MANY cards to play at once
+  const [playingIds, setPlayingIds] = useState<Set<string>>(new Set());
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
 
@@ -79,7 +78,7 @@ export function VideoGrid({
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
+  const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({});
   const sessionIdRef = useRef(
     `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   );
@@ -143,22 +142,23 @@ export function VideoGrid({
     if (data) setLikedVideos(new Set(data.map((l) => l.splik_id)));
   };
 
-  const handlePlayToggle = async (splikId: string) => {
+  // --- Hover preview (multiple at once) ---
+  const handleHoverPlay = async (splikId: string) => {
     const video = videoRefs.current[splikId];
     if (!video) return;
 
-    if (playingVideo === splikId) {
-      video.pause();
-      setPlayingVideo(null);
-    } else {
-      if (playingVideo && videoRefs.current[playingVideo]) {
-        videoRefs.current[playingVideo].pause();
-      }
+    try {
       video.currentTime = 0;
-      video.play();
-      setPlayingVideo(splikId);
+      video.muted = true;
+      await video.play().catch(() => {});
+      setMutedVideos((prev) => new Set(prev).add(splikId));
+      setPlayingIds((prev) => {
+        const next = new Set(prev);
+        next.add(splikId);
+        return next;
+      });
 
-      // Still track views in backend but don't show them
+      // optional: still track a "view" if you want
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -167,17 +167,29 @@ export function VideoGrid({
         p_session_id: sessionIdRef.current,
         p_viewer_id: user?.id || null,
       });
-    }
+    } catch {}
   };
 
+  const handleHoverStop = (splikId: string) => {
+    const video = videoRefs.current[splikId];
+    if (!video) return;
+
+    try {
+      video.pause();
+      video.currentTime = 0;
+    } catch {}
+    setPlayingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(splikId);
+      return next;
+    });
+  };
+
+  // auto-stop previews at ~3s
   const handleTimeUpdate = (splikId: string) => {
     const video = videoRefs.current[splikId];
     if (!video) return;
-    if (video.currentTime >= 3) {
-      video.pause();
-      video.currentTime = 0;
-      setPlayingVideo(null);
-    }
+    if (video.currentTime >= 3) handleHoverStop(splikId);
   };
 
   const toggleMute = (splikId: string) => {
@@ -205,7 +217,11 @@ export function VideoGrid({
     }
 
     if (likedVideos.has(splikId)) {
-      await supabase.from("likes").delete().eq("splik_id", splikId).eq("user_id", user.id);
+      await supabase
+        .from("likes")
+        .delete()
+        .eq("splik_id", splikId)
+        .eq("user_id", user.id);
       setLikedVideos((prev) => {
         const next = new Set(prev);
         next.delete(splikId);
@@ -365,7 +381,6 @@ export function VideoGrid({
     return "Just now";
   };
 
-  // helper to build a reliable display name for any profile
   const nameOf = (p?: Profile) => {
     if (!p) return "User";
     const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
@@ -374,49 +389,41 @@ export function VideoGrid({
 
   return (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-4">
+      {/* 4 across on lg+ */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-4 gap-6 p-4">
         {spliks.map((splik) => {
           const isOwner = currentUserId === splik.user_id;
           const creator = splik.profiles;
           const creatorName = nameOf(creator);
           const creatorHref = `/creator/${creator?.username || splik.user_id}`;
 
+          const isPlaying = playingIds.has(splik.id);
+
           return (
             <Card
               key={splik.id}
               className="overflow-hidden bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02] group"
             >
-              {/* Video */}
-              <div className="relative aspect-[9/16] bg-gradient-to-br from-gray-900 via-black to-gray-800 overflow-hidden rounded-t-lg">
+              {/* Video (hover to play) */}
+              <div
+                className="relative aspect-[16/9] sm:aspect-[16/9] bg-gradient-to-br from-gray-900 via-black to-gray-800 overflow-hidden rounded-t-lg"
+                onMouseEnter={() => handleHoverPlay(splik.id)}
+                onMouseLeave={() => handleHoverStop(splik.id)}
+              >
                 <video
                   ref={(el) => {
-                    if (el) videoRefs.current[splik.id] = el;
+                    videoRefs.current[splik.id] = el;
                   }}
                   src={splik.video_url}
                   poster={splik.thumbnail_url || undefined}
                   className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  loop={false}
                   muted={mutedVideos.has(splik.id)}
                   playsInline
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
 
-                {/* Play/Pause overlay */}
-                <div
-                  className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/40 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-all duration-300 cursor-pointer"
-                  onClick={() => handlePlayToggle(splik.id)}
-                >
-                  <div className="bg-white/20 backdrop-blur-md rounded-full p-4 shadow-2xl hover:bg-white/30 transition-colors duration-200 border border-white/30">
-                    {playingVideo === splik.id ? (
-                      <Pause className="h-8 w-8 text-white drop-shadow-lg" />
-                    ) : (
-                      <Play className="h-8 w-8 text-white drop-shadow-lg ml-1" />
-                    )}
-                  </div>
-                </div>
-
-                {/* Sound toggle */}
-                {playingVideo === splik.id && (
+                {/* Sound toggle while playing */}
+                {isPlaying && (
                   <Button
                     size="icon"
                     variant="ghost"
@@ -434,10 +441,10 @@ export function VideoGrid({
                   </Button>
                 )}
 
-                <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+                <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
               </div>
 
-              {/* Creator row */}
+              {/* Creator row (optional) */}
               {showCreatorInfo && creator && (
                 <div className="flex items-center justify-between p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
                   <Link
@@ -476,7 +483,10 @@ export function VideoGrid({
               <div className="p-4 space-y-3 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm">
                 {splik.title && (
                   <h3 className="font-bold text-base leading-tight text-gray-900 dark:text-white line-clamp-2">
-                    {splik.title}
+                    {/* Title links to the video route */}
+                    <Link to={`/video/${splik.id}`} className="hover:underline">
+                      {splik.title}
+                    </Link>
                   </h3>
                 )}
                 {splik.description && (
