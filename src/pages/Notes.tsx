@@ -26,6 +26,7 @@ type NoteRow = {
   read_at: string | null;
   in_reply_to: string | null;
 
+  // enriched locally
   sender_username?: string | null;
   sender_display_name?: string | null;
   sender_avatar_url?: string | null;
@@ -49,7 +50,7 @@ export default function NotesPage() {
   const [loadingInbox, setLoadingInbox] = useState(true);
   const [inbox, setInbox] = useState<NoteRow[]>([]);
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
-  const timers = useRef<Record<string, NodeJS.Timeout>>({});
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const [replying, setReplying] = useState<Record<string, boolean>>({});
   const [replyText, setReplyText] = useState<Record<string, string>>({});
@@ -60,7 +61,7 @@ export default function NotesPage() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
       setMe(s?.user?.id ?? null)
     );
-    return () => sub.subscription.unsubscribe();
+    return () => sub?.subscription?.unsubscribe();
   }, []);
 
   /* -------- preselect recipient from URL -------- */
@@ -175,7 +176,6 @@ export default function NotesPage() {
         .from("notes")
         .select("*")
         .eq("recipient_id", me)
-        .is("deleted_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
 
@@ -196,6 +196,9 @@ export default function NotesPage() {
       });
 
       setInbox(enriched);
+
+      // notify header/badge to recompute (unread count)
+      window.dispatchEvent(new Event("notes:inboxChanged"));
     } catch (e) {
       console.error(e);
       toast.error("Failed to load notes");
@@ -225,7 +228,6 @@ export default function NotesPage() {
   /* ---------------- per-note open -> mark read + schedule delete ---------------- */
   const openNote = async (id: string) => {
     setOpenMap((m) => ({ ...m, [id]: !m[id] }));
-    // if it was unread, mark now and start timer
     const n = inbox.find((x) => x.id === id);
     if (n && !n.read_at) {
       const now = new Date().toISOString();
@@ -236,12 +238,21 @@ export default function NotesPage() {
         .eq("recipient_id", me!);
       if (!error) {
         setInbox((prev) => prev.map((x) => (x.id === id ? { ...x, read_at: now } : x)));
+
+        // notify header to recalc unread badge
+        window.dispatchEvent(new Event("notes:inboxChanged"));
+
         if (timers.current[id]) clearTimeout(timers.current[id]);
         timers.current[id] = setTimeout(async () => {
           try {
             await supabase.from("notes").delete().eq("id", id).eq("recipient_id", me!);
             setInbox((prev) => prev.filter((x) => x.id !== id));
-          } catch {}
+
+            // after delete, notify badge again
+            window.dispatchEvent(new Event("notes:inboxChanged"));
+          } catch {
+            /* noop */
+          }
         }, DELETE_MS);
       }
     }
@@ -257,6 +268,9 @@ export default function NotesPage() {
     });
     setInbox((prev) => prev.filter((n) => !ids.includes(n.id)));
     toast.success(`Deleted ${ids.length} read note(s)`);
+
+    // notify header to recalc unread badge
+    window.dispatchEvent(new Event("notes:inboxChanged"));
   };
 
   /* ---------------- cleanup ---------------- */
@@ -298,7 +312,7 @@ export default function NotesPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-4 space-y-8">
-      {/* Composer (unchanged) */}
+      {/* Composer */}
       <div>
         <h1 className="text-xl font-semibold">Send a Note</h1>
         <p className="text-sm text-muted-foreground mt-1">
