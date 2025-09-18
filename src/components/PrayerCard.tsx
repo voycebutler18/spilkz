@@ -1,10 +1,9 @@
 // src/components/prayers/PrayerCard.tsx
 import { Link, useNavigate } from "react-router-dom";
 import { format } from "date-fns";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/use-toast";
 import {
   amenPrayer,
   createReply,
@@ -13,75 +12,52 @@ import {
 } from "@/lib/prayers";
 import { supabase } from "@/integrations/supabase/client";
 
-type PrayerCardItem = {
-  id: string;
-  author: string; // user_id of author
-  type: "request" | "testimony" | "quote";
-  body: string;
-  amen_count: number;
-  reply_count: number;
-  answered: boolean;
-  created_at: string;
-
-  // Optional media fields (safe to omit in your data)
-  video_url?: string | null;
-  thumbnail_url?: string | null;
-};
-
 export default function PrayerCard({
   item,
   onDeleted,
 }: {
-  item: PrayerCardItem;
+  item: {
+    id: string;
+    author: string;
+    type: "request" | "testimony" | "quote";
+    body: string;
+    amen_count: number;
+    reply_count: number;
+    answered: boolean;
+    created_at: string;
+  };
   onDeleted?: (id: string) => void;
 }) {
   const day = format(new Date(item.created_at), "MMM d, yyyy");
   const time = format(new Date(item.created_at), "h:mm a");
-  const { toast } = useToast();
 
-  // who am I?
   const [me, setMe] = useState<string | null>(null);
   useEffect(() => {
-    let active = true;
-    supabase.auth.getUser().then(({ data }) => {
-      if (!active) return;
-      setMe(data.user?.id ?? null);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      if (!active) return;
-      setMe(s?.user?.id ?? null);
-    });
-    return () => {
-      active = false;
-      sub?.subscription?.unsubscribe?.();
-    };
+    supabase.auth.getUser().then(({ data }) => setMe(data.user?.id ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setMe(s?.user?.id ?? null)
+    );
+    return () => sub?.subscription?.unsubscribe();
   }, []);
   const isOwner = me === item.author;
 
-  // delete
   const [deleting, setDeleting] = useState(false);
   const handleDelete = async () => {
     if (!isOwner || deleting) return;
     if (!window.confirm("Delete this post? This cannot be undone.")) return;
     setDeleting(true);
     try {
-      await deletePrayer(item.id); // RLS will enforce owner-only
+      await deletePrayer(item.id);
       onDeleted?.(item.id);
-      toast({ title: "Deleted", description: "Your prayer was removed." });
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      toast({
-        title: "Could not delete",
-        description: e?.message || "You don't have permission to delete this prayer.",
-        variant: "destructive",
-      });
+      alert("Could not delete.");
       setDeleting(false);
     }
   };
 
   return (
     <div className="rounded-xl border bg-card p-4">
-      {/* meta row */}
       <div className="mb-2 flex items-center gap-2 text-xs">
         <span className="inline-flex rounded-full bg-muted px-2 py-0.5 capitalize">
           {item.type}
@@ -98,6 +74,7 @@ export default function PrayerCard({
         <span className="text-muted-foreground ml-auto">
           {day} at {time}
         </span>
+
         {isOwner && (
           <Button
             variant="ghost"
@@ -114,35 +91,10 @@ export default function PrayerCard({
         )}
       </div>
 
-      {/* body */}
       <Link to={`/prayers/${item.id}`} className="whitespace-pre-wrap leading-7">
         {item.body}
       </Link>
 
-      {/* optional media */}
-      {(item.video_url || item.thumbnail_url) && (
-        <div className="mt-3 overflow-hidden rounded-lg border">
-          {item.video_url ? (
-            <video
-              src={item.video_url || undefined}
-              poster={item.thumbnail_url || undefined}
-              controls
-              playsInline
-              preload="metadata"
-              className="max-h-[420px] w-full object-contain bg-black"
-            />
-          ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={item.thumbnail_url as string}
-              alt="Attachment"
-              className="max-h-[420px] w-full object-contain bg-black"
-            />
-          )}
-        </div>
-      )}
-
-      {/* interactions */}
       <div className="mt-3 flex items-center gap-4 text-sm">
         <AmenButtonInline id={item.id} initialCount={item.amen_count} />
         <ReplyListInline prayerId={item.id} initialCount={item.reply_count} />
@@ -151,7 +103,7 @@ export default function PrayerCard({
   );
 }
 
-/** Amen button – simplified version (unchanged API shape) */
+/** Amen button – simplified version */
 function AmenButtonInline({ id, initialCount }: { id: string; initialCount: number }) {
   const navigate = useNavigate();
   const [count, setCount] = useState(initialCount);
@@ -159,37 +111,39 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
-    let active = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setAuthed(!!data.session);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      if (!active) return;
-      setAuthed(!!s);
-    });
-    return () => {
-      active = false;
-      sub?.subscription?.unsubscribe?.();
-    };
+    supabase.auth.getSession().then(({ data }) => setAuthed(!!data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setAuthed(!!s)
+    );
+    return () => sub?.subscription?.unsubscribe();
   }, []);
 
   const onTap: React.MouseEventHandler<HTMLButtonElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
+
     if (!authed) {
       navigate("/login");
       return;
     }
+    
     if (busy) return;
 
     setBusy(true);
     try {
+      console.log("Attempting to amen prayer:", id);
       const result = await amenPrayer(id);
-      if (result?.inserted) setCount((prev) => prev + 1);
+      console.log("Amen result:", result);
+      
+      if (result.inserted) {
+        setCount(prev => prev + 1);
+        console.log("Amen successful, count incremented");
+      } else {
+        console.log("Already amened or duplicate");
+      }
     } catch (err) {
       console.error("Error amening prayer:", err);
-      // keep silent or add a toast if you prefer
+      alert("Error adding amen. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -211,35 +165,27 @@ function AmenButtonInline({ id, initialCount }: { id: string; initialCount: numb
   );
 }
 
-/** Inline Reply list (unchanged API shape) */
+/** Inline Reply list */
 function ReplyListInline({
   prayerId,
-  initialCount,
+  initialCount
 }: {
   prayerId: string;
   initialCount: number;
 }) {
   const [open, setOpen] = useState(false);
-  const [list, setList] = useState<
-    Array<{ id: string; body: string; created_at: string }>
-  >([]);
+  const [list, setList] = useState<Array<{ id: string; body: string; created_at: string }>>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [replyCount, setReplyCount] = useState(initialCount);
 
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
-    fetchReplies(prayerId)
-      .then((d: any) => {
-        if (cancelled) return;
-        setList(d || []);
-        setReplyCount(Math.max(initialCount, (d || []).length));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    fetchReplies(prayerId).then((d: any) => {
+      setList(d || []);
+      // Update the count when we fetch replies
+      setReplyCount(Math.max(initialCount, (d || []).length));
+    }).catch(() => {});
   }, [open, prayerId, initialCount]);
 
   const post = async () => {
@@ -282,10 +228,7 @@ function ReplyListInline({
       {open && (
         <div id={`replies-${prayerId}`} className="mt-2 space-y-2">
           {list.map((r) => (
-            <div
-              key={r.id}
-              className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap"
-            >
+            <div key={r.id} className="rounded-md bg-muted/40 p-2 text-sm whitespace-pre-wrap">
               {r.body}
             </div>
           ))}
@@ -298,18 +241,12 @@ function ReplyListInline({
               aria-label="Write a reply"
               disabled={sending}
             />
-            <Button
-              onClick={post}
-              disabled={!text.trim() || text.length > 1000 || sending}
-              type="button"
-            >
+            <Button onClick={post} disabled={!text.trim() || text.length > 1000 || sending} type="button">
               {sending ? "Sending…" : "Send"}
             </Button>
           </div>
           {text.length > 1000 && (
-            <div className="text-xs text-red-500">
-              Replies must be 1–1000 characters.
-            </div>
+            <div className="text-xs text-red-500">Replies must be 1–1000 characters.</div>
           )}
         </div>
       )}
