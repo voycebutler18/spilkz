@@ -1,3 +1,4 @@
+
 // src/pages/VideoPage.tsx
 import * as React from "react";
 import { useParams, Link } from "react-router-dom";
@@ -35,9 +36,11 @@ export default function VideoPage() {
 
   React.useEffect(() => {
     if (!id) return;
+
     let cancelled = false;
     (async () => {
       setLoading(true);
+
       // 1) Fetch the video row (public/active only)
       const { data: v, error: vErr } = await supabase
         .from("spliks")
@@ -47,51 +50,32 @@ export default function VideoPage() {
         .eq("id", id)
         .eq("status", "active")
         .maybeSingle<Splik>();
+
       if (cancelled) return;
+
       if (vErr || !v) {
         setSplik(null);
         setLoading(false);
         return;
       }
+
       // 2) Fetch creator profile (minimal fields)
       const { data: p } = await supabase
         .from("profiles")
         .select("id,username,display_name,first_name,avatar_url")
         .eq("id", v.user_id)
         .maybeSingle<Profile>();
+
       if (cancelled) return;
+
       setSplik({ ...v, profile: p || null });
       setLoading(false);
     })();
+
     return () => {
       cancelled = true;
     };
   }, [id]);
-
-  // Update meta tags for social sharing when splik loads
-  React.useEffect(() => {
-    if (splik) {
-      const creatorName = splik.profile?.display_name || splik.profile?.first_name || splik.profile?.username || 'Splikz User';
-      const videoTitle = splik.title || `Video by ${creatorName}`;
-      const videoDescription = splik.description || 'Watch this 3-second moment on Splikz';
-      const videoImage = splik.thumbnail_url || splik.video_url;
-      const currentUrl = window.location.href;
-
-      // Update Open Graph tags
-      document.querySelector('meta[property="og:title"]')?.setAttribute('content', videoTitle);
-      document.querySelector('meta[property="og:description"]')?.setAttribute('content', videoDescription);
-      document.querySelector('meta[property="og:image"]')?.setAttribute('content', videoImage);
-      document.querySelector('meta[property="og:url"]')?.setAttribute('content', currentUrl);
-      
-      // Update Twitter Card tags
-      document.querySelector('meta[name="twitter:title"]')?.setAttribute('content', videoTitle);
-      document.querySelector('meta[name="twitter:description"]')?.setAttribute('content', videoDescription);
-      document.querySelector('meta[name="twitter:image"]')?.setAttribute('content', videoImage);
-      
-      // Update page title
-      document.title = `${videoTitle} - Splikz`;
-    }
-  }, [splik]);
 
   if (loading) {
     return (
@@ -106,7 +90,7 @@ export default function VideoPage() {
       <div className="min-h-screen grid place-items-center text-center p-6">
         <div>
           <h1 className="text-5xl font-bold mb-2">404</h1>
-          <p className="mb-4">Oops! This video doesn't exist or isn't public.</p>
+          <p className="mb-4">Oops! This video doesn’t exist or isn’t public.</p>
           <Link to="/home" className="underline">
             Back to Home
           </Link>
