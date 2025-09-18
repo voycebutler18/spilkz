@@ -14,7 +14,7 @@ export type Prayer = {
   reply_count: number;
   answered: boolean;
   created_at: string;
-  // New media fields
+  // Optional media fields
   video_url?: string | null;
   thumbnail_url?: string | null;
   trim_start?: number | null;
@@ -36,8 +36,8 @@ const PRAYER_COLUMNS =
 
 /* ---------- Create ---------- */
 export async function createPrayer(
-  type: PrayerType, 
-  body: string, 
+  type: PrayerType,
+  body: string,
   media?: {
     video_url?: string;
     thumbnail_url?: string;
@@ -67,21 +67,80 @@ export async function createPrayer(
 }
 
 /* ---------- List (paged, newest first) ---------- */
+/**
+ * Returns a mixed feed:
+ *  - rows from `prayers`
+ *  - rows from `spliks` where `is_prayer = true`
+ * Both are mapped to the `Prayer` shape, sorted by created_at desc.
+ */
 export async function fetchPrayers({
   cursor,
   limit = 20,
 }: { cursor?: string; limit?: number }): Promise<Prayer[]> {
-  let q = supabase
+  const page = Math.min(Math.max(limit, 1), 50);
+
+  // 1) Prayers authored via PrayerComposer
+  let q1 = supabase
     .from("prayers")
     .select(PRAYER_COLUMNS)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(page);
 
-  if (cursor) q = q.lt("created_at", cursor);
+  if (cursor) q1 = q1.lt("created_at", cursor);
 
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data || []) as Prayer[];
+  // 2) Splik uploads marked as Prayer posts
+  //    NOTE: requires `is_prayer boolean` column on `spliks`
+  let q2 = supabase
+    .from("spliks")
+    .select(`
+      id,
+      user_id,
+      title,
+      description,
+      created_at,
+      video_url,
+      thumbnail_url,
+      trim_start,
+      trim_end,
+      mime_type
+    `)
+    .eq("is_prayer", true)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(page);
+
+  if (cursor) q2 = q2.lt("created_at", cursor);
+
+  const [{ data: a, error: e1 }, { data: b, error: e2 }] = await Promise.all([q1, q2]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+
+  const prayersA = (a || []) as Prayer[];
+
+  // Map spliks → Prayer
+  const prayersB: Prayer[] = (b || []).map((r: any) => ({
+    id: r.id,
+    author: r.user_id,
+    type: "request",                      // default; adjust if you later store a type on spliks
+    body: r.description || r.title || "",
+    tags: null,
+    amen_count: 0,
+    reply_count: 0,
+    answered: false,
+    created_at: r.created_at,
+    video_url: r.video_url ?? null,
+    thumbnail_url: r.thumbnail_url ?? null,
+    trim_start: r.trim_start ?? null,
+    trim_end: r.trim_end ?? null,
+    mime_type: r.mime_type ?? null,
+  }));
+
+  // Merge, sort, and page
+  const merged = [...prayersA, ...prayersB]
+    .sort((x, y) => (y.created_at > x.created_at ? 1 : -1))
+    .slice(0, page);
+
+  return merged;
 }
 
 /* ---------- Single by id (for detail page) ---------- */
@@ -173,7 +232,6 @@ export async function amenPrayer(
       { prayer_id: prayerId, user_id: user.id },
       { onConflict: "prayer_id,user_id", ignoreDuplicates: true }
     )
-    // don't select a column that doesn't exist
     .select("prayer_id, user_id");
 
   if (upsertErr) throw upsertErr;
