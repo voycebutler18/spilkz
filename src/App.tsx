@@ -1,4 +1,3 @@
-// src/App.tsx
 import NotesPage from "@/pages/Notes";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -15,6 +14,7 @@ import {
 import { useEffect, useState } from "react";
 
 import AppLayout from "@/components/layout/AppLayout";
+import RealtimeNotesBridge from "@/components/RealtimeNotesBridge"; // 👈 add this
 
 // Pages
 import Splash from "./pages/Splash";
@@ -150,6 +150,10 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <ScrollToTop />
+
+        {/* 👇 mounted once for the whole app */}
+        <RealtimeNotesBridge />
+
         <UploadModalProvider>
           <Routes>
             {/* Auth (no layout) */}
@@ -207,7 +211,7 @@ const App = () => (
               <Route path="/search" element={<Search />} />
               <Route path="/photo/:id" element={<PhotoPage />} />
 
-              {/* Notes - Fixed routing to handle both /notes and /notes/* properly */}
+              {/* Notes */}
               <Route path="/notes" element={<NotesPage />} />
               <Route path="/notes/*" element={<NotesPage />} />
 
