@@ -165,8 +165,13 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [isFood, setIsFood] = useState(false);
-  const [isPrayer, setIsPrayer] = useState(false); // NEW
+  const [isPrayer, setIsPrayer] = useState(false); // ✅ NEW
   const [mood, setMood] = useState<string>("");
+
+  // Reset prayer toggle each time the modal opens
+  useEffect(() => {
+    if (open) setIsPrayer(false);
+  }, [open]);
 
   // Video state
   const [file, setFile] = useState<File | null>(null);
@@ -246,13 +251,6 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
       sub?.subscription.unsubscribe();
     };
   }, []);
-
-  // ✅ Route after upload (Prayer > Food > Dashboard)
-  const goAfterUpload = useCallback(() => {
-    onClose();
-    const dest = isPrayer ? "/prayer" : (isFood ? "/food" : "/dashboard");
-    setTimeout(() => navigate(dest), 0);
-  }, [navigate, onClose, isPrayer, isFood]);
 
   useEffect(() => {
     return () => {
@@ -715,7 +713,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         trim_start: 0,
         trim_end: MAX_VIDEO_DURATION,
         is_food: isFood,
-        is_prayer: isPrayer, // NEW
+        is_prayer: isPrayer, // ✅ NEW
         video_path: videoPath,
         video_url: publicUrl,
         thumbnail_url,
@@ -750,11 +748,14 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         console.warn("right_rail_feed insert failed (non-fatal):", e);
       }
 
+      // ✅ compute route BEFORE reset so the toggle state is respected
+      const targetRoute = isPrayer ? "/prayers" : (isFood ? "/food" : "/dashboard");
+
       setUploadProgress(100);
-      toast({ title: "Upload successful!", description: "Your 3-second Splik has been saved." });
-      resetAll();
+      toast({ title: "Upload successful!", description: isPrayer ? "Posted to Prayers." : "Your 3-second Splik has been saved." });
       onUploadComplete();
-      goAfterUpload(); // NEW
+      resetAll();
+      navigate(targetRoute);
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload video", variant: "destructive" });
@@ -801,7 +802,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         trim_start: null,
         trim_end: null,
         is_food: isFood,
-        is_prayer: isPrayer, // NEW
+        is_prayer: isPrayer, // ✅ NEW
         video_path: null,
         video_url: null,           // no video
         thumbnail_url: publicUrl,  // show the image on dashboard
@@ -855,11 +856,14 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         console.warn("right_rail_feed insert failed (non-fatal):", e);
       }
 
+      // ✅ compute route BEFORE reset so the toggle state is respected
+      const targetRoute = isPrayer ? "/prayers" : (isFood ? "/food" : "/dashboard");
+
       setUploadProgress(100);
-      toast({ title: "Upload successful!", description: "Your photo has been saved." });
-      resetAll();
+      toast({ title: "Upload successful!", description: isPrayer ? "Posted to Prayers." : "Your photo has been saved." });
       onUploadComplete();
-      goAfterUpload(); // NEW
+      resetAll();
+      navigate(targetRoute);
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({ title: "Upload failed", description: error.message || "Failed to upload photo", variant: "destructive" });
@@ -901,7 +905,7 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
     setTitle("");
     setDescription("");
     setIsFood(false);
-    setIsPrayer(false); // NEW
+    setIsPrayer(false); // ✅ IMPORTANT
     setMood("");
 
     // video
@@ -959,17 +963,16 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
   return (
     <Dialog
       open={open}
-      onOpenChange={(v) => {
-        if (!v) goAfterUpload(); // NEW
-      }}
+      // Neutral close: do NOT auto-navigate; just close the modal
+      onOpenChange={(v) => { if (!v) onClose(); }}
     >
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         {/* Close */}
         <button
           type="button"
-          onClick={goAfterUpload} // NEW
+          onClick={onClose}
           className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20"
-          aria-label="Close and go to destination"
+          aria-label="Close"
         >
           <X className="h-4 w-4" />
         </button>
