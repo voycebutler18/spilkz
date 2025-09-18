@@ -552,7 +552,11 @@ export default function CreatorProfile() {
               ) : photos.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
                   {photos.map((photo) => (
-                    <div key={photo.id} className="aspect-square group cursor-pointer">
+                    <Link
+                      key={photo.id}
+                      to={`/photo/${photo.id}`}
+                      className="aspect-square group cursor-pointer"
+                    >
                       <div className="w-full h-full rounded-lg overflow-hidden bg-gray-800 relative">
                         <img
                           src={photo.photo_url}
@@ -561,7 +565,7 @@ export default function CreatorProfile() {
                         />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors duration-200" />
                       </div>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               ) : (
