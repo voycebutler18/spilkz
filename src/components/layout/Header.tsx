@@ -1,7 +1,7 @@
 // src/components/layout/Header.tsx
 import * as React from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Sparkles, LogOut, Home, Upload, Mail, Heart, Bookmark } from "lucide-react";
+import { Sparkles, LogOut, Home, Upload, Heart, Bookmark } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import RightProfileMenu from "@/components/layout/RightProfileMenu";
 import SearchOmni from "@/components/search/SearchOmni";
+import NoteBoxLink from "@/components/NoteBoxLink"; // 👈 live unread badge
 
 type Profile = {
   id: string;
@@ -136,18 +137,16 @@ const Header: React.FC = () => {
             </Button>
           )}
 
-          {/* ✅ New: NoteBox (routes to /notes) */}
+          {/* ✅ Official NoteBox with live unread badge */}
           {user && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn("gap-2", isActive("/notes") && "font-semibold")}
-              onClick={() => navigate("/notes")}
-              aria-label="NoteBox"
-              title="Your ephemeral notes"
-            >
-              <Mail className="h-4 w-4" /> NoteBox
-            </Button>
+            <NoteBoxLink
+              to="/notes"
+              label="NoteBox"
+              className={cn(
+                "relative inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent",
+                isActive("/notes") && "font-semibold"
+              )}
+            />
           )}
 
           <Button
@@ -184,41 +183,34 @@ const Header: React.FC = () => {
                     Profile
                   </Link>
                 </DropdownMenuItem>
-                
+
                 <DropdownMenuSeparator />
-                
-                {/* ✅ New Reactions System Links */}
+
+                {/* Reactions System Links */}
                 <DropdownMenuItem asChild>
                   <Link to="/dashboard/bookmarks" className="flex items-center gap-2">
                     <Bookmark className="h-4 w-4" />
                     My Bookmarks
                   </Link>
                 </DropdownMenuItem>
-                
+
                 <DropdownMenuItem asChild>
                   <Link to="/dashboard/boosts" className="flex items-center gap-2">
                     <Heart className="h-4 w-4" />
                     My Boosts
                   </Link>
                 </DropdownMenuItem>
-                
+
                 <DropdownMenuSeparator />
-                
+
                 <DropdownMenuItem asChild>
                   <Link to="/dashboard" className="flex items-center">
                     Creator Dashboard
                   </Link>
                 </DropdownMenuItem>
-                
-                {/* ⚠️ Legacy Favorites Link - Remove after migration */}
-                {/* <DropdownMenuItem asChild>
-                  <Link to="/dashboard/favorites" className="flex items-center text-muted-foreground">
-                    Legacy Favorites
-                  </Link>
-                </DropdownMenuItem> */}
-                
+
                 <DropdownMenuSeparator />
-                
+
                 <DropdownMenuItem onClick={handleSignOut}>
                   <LogOut className="mr-2 h-4 w-4" />
                   Sign out
