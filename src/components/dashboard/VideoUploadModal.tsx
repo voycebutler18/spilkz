@@ -1,5 +1,4 @@
 // src/components/dashboard/VideoUploadModal.tsx
-// at top of src/components/dashboard/VideoUploadModal.tsx
 import { createPrayer } from "@/lib/prayers";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -750,6 +749,25 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         console.warn("right_rail_feed insert failed (non-fatal):", e);
       }
 
+      // ✅ ALSO create a prayers row if toggled
+      if (isPrayer) {
+        try {
+          await createPrayer(
+            "request",
+            (description || title || "").trim() || "Prayer request",
+            {
+              video_url: publicUrl,
+              thumbnail_url: thumbnail_url || null,
+              trim_start: 0,
+              trim_end: MAX_VIDEO_DURATION,
+              mime_type: "video/mp4",
+            }
+          );
+        } catch (e) {
+          console.warn("Create linked prayer failed (non-fatal):", e);
+        }
+      }
+
       // ✅ compute route BEFORE reset so the toggle state is respected
       const targetRoute = isPrayer ? "/prayers" : (isFood ? "/food" : "/dashboard");
 
@@ -856,6 +874,25 @@ export default function VideoUploadModal({ open, onClose, onUploadComplete }: Vi
         );
       } catch (e) {
         console.warn("right_rail_feed insert failed (non-fatal):", e);
+      }
+
+      // ✅ ALSO create a prayers row for photos when toggled
+      if (isPrayer) {
+        try {
+          await createPrayer(
+            "request",
+            (description || title || "").trim() || "Prayer request",
+            {
+              video_url: null,
+              thumbnail_url: publicUrl,
+              trim_start: null,
+              trim_end: null,
+              mime_type: imageFile.type || "image/jpeg",
+            }
+          );
+        } catch (e) {
+          console.warn("Create linked prayer (photo) failed (non-fatal):", e);
+        }
       }
 
       // ✅ compute route BEFORE reset so the toggle state is respected
