@@ -407,8 +407,8 @@ export function VideoGrid({
 
   return (
     <>
-      {/* Superior Responsive Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-5">
+      {/* 4-Column Grid with Larger Videos */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
         {spliks.map((splik) => {
           const isOwner = currentUserId === splik.user_id;
           const creator = splik.profiles;
@@ -425,8 +425,33 @@ export function VideoGrid({
               onMouseEnter={() => setHoveredVideo(splik.id)}
               onMouseLeave={() => setHoveredVideo(null)}
             >
-              {/* Video Thumbnail Container */}
-              <div className="relative aspect-video bg-gray-900 rounded-xl overflow-hidden mb-3 shadow-lg group-hover:shadow-2xl transition-all duration-300">
+              {/* Video Thumbnail Container - Larger Size */}
+              <div 
+                className="relative aspect-video bg-gray-900 rounded-xl overflow-hidden mb-3 shadow-lg group-hover:shadow-2xl transition-all duration-300 cursor-pointer"
+                onMouseEnter={() => {
+                  const video = videoRefs.current[splik.id];
+                  if (video && !isPlaying) {
+                    video.currentTime = 0;
+                    video.play().catch(() => {
+                      video.muted = true;
+                      video.play().catch(() => {});
+                    });
+                    setPlayingVideo(splik.id);
+                  }
+                }}
+                onMouseLeave={() => {
+                  const video = videoRefs.current[splik.id];
+                  if (video && playingVideo === splik.id) {
+                    video.pause();
+                    video.currentTime = 0;
+                    setPlayingVideo(null);
+                  }
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  // Navigate to video page on click
+                }}
+              >
                 <video
                   ref={(el) => {
                     if (el) videoRefs.current[splik.id] = el;
@@ -447,44 +472,25 @@ export function VideoGrid({
                   isHovered ? 'opacity-100' : 'opacity-0'
                 }`} />
 
-                {/* Duration Badge */}
-                <div className="absolute top-2 right-2">
-                  <div className="bg-black/80 backdrop-blur-sm text-white text-xs font-bold px-2 py-1 rounded-md flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
+                {/* Duration Badge - Larger and More Visible */}
+                <div className="absolute top-3 right-3">
+                  <div className="bg-black/90 backdrop-blur-sm text-white text-sm font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg">
+                    <Clock className="w-4 h-4" />
                     3.0s
                   </div>
                 </div>
 
-                {/* Play Button */}
-                <div 
-                  className={`absolute inset-0 flex items-center justify-center transition-all duration-300 cursor-pointer ${
-                    isHovered || isPlaying ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  onClick={(e) => handlePlayToggle(splik.id, e)}
-                >
-                  <div className="relative">
-                    <div className="absolute inset-0 bg-white/20 rounded-full blur-lg animate-pulse" />
-                    <div className="relative bg-white/90 backdrop-blur-sm rounded-full p-3 md:p-4 shadow-2xl hover:bg-white hover:scale-110 transition-all duration-200">
-                      {isPlaying ? (
-                        <Pause className="w-5 h-5 md:w-6 md:h-6 text-gray-900" />
-                      ) : (
-                        <Play className="w-5 h-5 md:w-6 md:h-6 text-gray-900 ml-0.5" />
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Volume Control */}
+                {/* Volume Control - Only show when playing */}
                 {isPlaying && (
                   <Button
                     size="icon"
-                    className="absolute top-2 left-2 h-8 w-8 bg-black/60 hover:bg-black/80 text-white border-0 rounded-lg backdrop-blur-sm"
+                    className="absolute top-3 left-3 h-10 w-10 bg-black/80 hover:bg-black/90 text-white border-0 rounded-lg backdrop-blur-sm shadow-lg"
                     onClick={(e) => toggleMute(splik.id, e)}
                   >
                     {mutedVideos.has(splik.id) ? (
-                      <VolumeX className="h-4 w-4" />
+                      <VolumeX className="h-5 w-5" />
                     ) : (
-                      <Volume2 className="h-4 w-4" />
+                      <Volume2 className="h-5 w-5" />
                     )}
                   </Button>
                 )}
