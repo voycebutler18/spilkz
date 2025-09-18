@@ -1,598 +1,258 @@
 // src/pages/Notes.tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { Send, Trash2 } from "lucide-react";
-
-type Profile = {
-  id: string;
-  username: string | null;
-  display_name: string | null;
-  avatar_url: string | null;
-};
+import { useToast } from "@/components/ui/use-toast";
+import { formatDistanceToNow } from "date-fns";
 
 type NoteRow = {
   id: string;
   sender_id: string;
   recipient_id: string;
   body: string;
-  created_at: string;
-  read_at: string | null;
-  in_reply_to: string | null;
-
-  // enriched locally
-  sender_username?: string | null;
-  sender_display_name?: string | null;
-  sender_avatar_url?: string | null;
+  created_at: string;   // timestamptz
+  read_at: string | null; // timestamptz
+  in_reply_to?: string | null;
 };
 
-// 🔁 lifetime for read notes
-const DELETE_MS = 15_000; // 15 seconds
+const READ_GRACE_MS = 15_000; // 15s window for "recently read"
 
 export default function NotesPage() {
-  const [searchParams] = useSearchParams();
+  const { toast } = useToast();
 
   const [me, setMe] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // composer state
-  const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [options, setOptions] = useState<Profile[]>([]);
-  const [toUser, setToUser] = useState<Profile | null>(null);
+  // compose form (optional)
+  const [recipient, setRecipient] = useState(""); // username or user id—adjust for your app
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
 
-  // inbox state
-  const [loadingInbox, setLoadingInbox] = useState(true);
-  const [inbox, setInbox] = useState<NoteRow[]>([]);
-  const [replying, setReplying] = useState<Record<string, boolean>>({});
-  const [replyText, setReplyText] = useState<Record<string, string>>({});
+  // lists
+  const [unread, setUnread] = useState<NoteRow[]>([]);
+  const [readRecent, setReadRecent] = useState<NoteRow[]>([]);
 
-  // notes read this session (so we can delete them after 15s / on leave)
-  const readThisSession = useRef<Set<string>>(new Set());
-  const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  /* ---------------- Auth ---------------- */
+  // resolve current user
   useEffect(() => {
     let mounted = true;
-
-    (async () => {
-      const { data, error } = await supabase.auth.getUser();
-      if (!mounted) return;
-      if (error) {
-        console.error(error);
-        toast.error("Could not get user");
-        return;
-      }
-      setMe(data.user?.id ?? null);
-    })();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_e, session) => {
-      setMe(session?.user?.id ?? null);
+    supabase.auth.getUser().then(({ data }) => {
+      if (mounted) setMe(data.user?.id ?? null);
     });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => {
+      setMe(sess?.user?.id ?? null);
+    });
+    return () => sub?.subscription?.unsubscribe();
   }, []);
 
-  /* --------- Preselect recipient from URL --------- */
-  useEffect(() => {
-    const to = searchParams.get("to");
-    const msg = searchParams.get("msg");
-    if (!to) return;
+  const cutoffISO = useMemo(
+    () => new Date(Date.now() - READ_GRACE_MS).toISOString(),
+    []
+  );
 
-    let cancelled = false;
-
-    (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, avatar_url")
-        .eq("id", to)
-        .maybeSingle();
-
-      if (!cancelled && !error && data) {
-        setToUser(data as Profile);
-        if (msg && !body) setBody(msg);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
-  /* ---------------- Search creators (username OR display_name) ---------------- */
-  useEffect(() => {
-    const raw = query.trim();
-    if (!raw || toUser) {
-      setOptions([]);
-      return;
-    }
-
-    const term = raw.replace(/^@/, "");
-    const pattern = `%${term}%`;
-    let cancelled = false;
-
-    const run = async () => {
-      setSearching(true);
-
-      const [byUser, byName] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar_url")
-          .ilike("username", pattern)
-          .limit(25),
-        supabase
-          .from("profiles")
-          .select("id, username, display_name, avatar_url")
-          .ilike("display_name", pattern)
-          .limit(25),
-      ]);
-
-      if (cancelled) return;
-
-      const a: Profile[] = (byUser.data as any) ?? [];
-      const seen = new Set(a.map((r) => r.id));
-      const merged: Profile[] = [
-        ...a,
-        ...(((byName.data as any) ?? []).filter((r: Profile) => !seen.has(r.id))),
-      ];
-
-      // rank results (prefix first)
-      merged.sort((x, y) => {
-        const xu = (x.username || "").toLowerCase();
-        const yu = (y.username || "").toLowerCase();
-        const xd = (x.display_name || "").toLowerCase();
-        const yd = (y.display_name || "").toLowerCase();
-        const t = term.toLowerCase();
-        const rank = (s: string) => (s.startsWith(t) ? 0 : 1);
-        const rx = Math.min(rank(xu), rank(xd));
-        const ry = Math.min(rank(yu), rank(yd));
-        return rx !== ry ? rx - ry : (xd || xu).localeCompare(yd || yu);
-      });
-
-      setOptions(merged.slice(0, 25));
-      setSearching(false);
-    };
-
-    const t = setTimeout(run, 200);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-    };
-  }, [query, toUser]);
-
-  /* ---------------- Send ---------------- */
-  const handleSend = async () => {
-    if (!me) return toast.error("Please sign in to send a note");
-    if (!toUser) return toast.error("Choose who you want to send a note to");
-    if (!body.trim()) return toast.error("Type a note");
-    if (toUser.id === me) return toast.error("You can't send a note to yourself");
-
-    setSending(true);
-    const { error } = await supabase.from("notes").insert({
-      sender_id: me,
-      recipient_id: toUser.id,
-      body: body.trim(),
-      in_reply_to: null,
-    });
-    setSending(false);
-
-    if (error) {
-      console.error(error);
-      toast.error("Failed to send note");
-      return;
-    }
-    setBody("");
-    setToUser(null);
-    setQuery("");
-    toast.success("Note sent!");
-  };
-
-  /* ---------------- Hard-delete read notes now (for refresh) ---------------- */
-  const purgePreviouslyRead = useCallback(async () => {
+  const reload = useCallback(async () => {
     if (!me) return;
-    // Delete any note that was already read (from any previous visit)
-    // This guarantees "disappear on refresh".
-    try {
-      await supabase
-        .from("notes")
-        .delete()
-        .eq("recipient_id", me)
-        .not("read_at", "is", null); // read_at IS NOT NULL
-    } catch (e) {
-      console.error("Purge previously read notes failed:", e);
+    setLoading(true);
+
+    const unreadQ = supabase
+      .from("notes")
+      .select("*")
+      .eq("recipient_id", me)
+      .is("read_at", null)
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    const readRecentQ = supabase
+      .from("notes")
+      .select("*")
+      .eq("recipient_id", me)
+      .not("read_at", "is", null)
+      .gt("read_at", cutoffISO)
+      .order("read_at", { ascending: false })
+      .limit(200);
+
+    const [u, r] = await Promise.all([unreadQ, readRecentQ]);
+
+    if (u.error) {
+      console.error(u.error);
+      toast({ title: "Failed to load notes", variant: "destructive" });
+    } else {
+      setUnread((u.data ?? []) as NoteRow[]);
     }
-  }, [me]);
 
-  /* ---------------- Delete read notes from this session ---------------- */
-  const deleteReadNow = useCallback(async () => {
-    if (!me) return;
-    const ids = Array.from(readThisSession.current);
-    if (!ids.length) return;
-
-    try {
-      const { error } = await supabase
-        .from("notes")
-        .delete()
-        .in("id", ids)
-        .eq("recipient_id", me);
-
-      if (error) {
-        console.error("Failed to delete notes:", error);
-        return;
-      }
-
-      readThisSession.current.clear();
-      setInbox((prev) => prev.filter((note) => !ids.includes(note.id)));
-      toast.success(`Deleted ${ids.length} read note(s)`);
-    } catch (error) {
-      console.error("Error deleting notes:", error);
+    if (r.error) {
+      console.error(r.error);
+    } else {
+      setReadRecent((r.data ?? []) as NoteRow[]);
     }
-  }, [me]);
 
-  /* ---------------- Fetch inbox (with purge + mark-read) ---------------- */
-  const fetchInbox = useCallback(async () => {
-    if (!me) return;
-    setLoadingInbox(true);
-
-    try {
-      // 1) On every load/refresh: delete anything read earlier.
-      await purgePreviouslyRead();
-
-      // 2) Fetch remaining (unread) notes
-      const { data: notesData, error: notesError } = await supabase
-        .from("notes")
-        .select("*")
-        .eq("recipient_id", me)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false });
-
-      if (notesError) throw notesError;
-
-      // 3) Enrich with sender profiles
-      const senderIds = [...new Set(notesData?.map((n) => n.sender_id) || [])];
-      const { data: profilesData } = await supabase
-        .from("profiles")
-        .select("id, username, display_name, avatar_url")
-        .in("id", senderIds);
-
-      const enrichedNotes: NoteRow[] = (notesData || []).map((note) => {
-        const profile = profilesData?.find((p) => p.id === note.sender_id);
-        return {
-          ...note,
-          sender_username: profile?.username,
-          sender_display_name: profile?.display_name,
-          sender_avatar_url: profile?.avatar_url,
-        };
-      });
-
-      setInbox(enrichedNotes);
-
-      // 4) Mark unread as read and schedule deletion in 15s
-      const unread = enrichedNotes.filter((n) => !n.read_at);
-      if (unread.length) {
-        const ids = unread.map((n) => n.id);
-        const now = new Date().toISOString();
-
-        const { error: updErr } = await supabase
-          .from("notes")
-          .update({ read_at: now })
-          .in("id", ids)
-          .eq("recipient_id", me);
-
-        if (!updErr) {
-          unread.forEach((n) => readThisSession.current.add(n.id));
-          setInbox((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, read_at: now } : n)));
-
-          if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
-          deleteTimeoutRef.current = setTimeout(() => {
-            deleteReadNow();
-          }, DELETE_MS);
-        }
-      }
-    } catch (error) {
-      console.error("Error fetching inbox:", error);
-      toast.error("Failed to load notes");
-    } finally {
-      setLoadingInbox(false);
-    }
-  }, [me, purgePreviouslyRead, deleteReadNow]);
+    setLoading(false);
+  }, [me, cutoffISO, toast]);
 
   useEffect(() => {
-    fetchInbox();
-  }, [fetchInbox]);
+    reload();
+  }, [reload]);
 
-  /* ---------------- Realtime ---------------- */
+  // realtime: add new note into unread (no auto-read!)
   useEffect(() => {
     if (!me) return;
     const channel = supabase
-      .channel("notes-realtime")
+      .channel("notes:incoming-page")
       .on(
         "postgres_changes",
-        { schema: "public", table: "notes", event: "*" },
-        () => fetchInbox(),
+        { event: "INSERT", schema: "public", table: "notes", filter: `recipient_id=eq.${me}` },
+        (payload) => {
+          const row = payload.new as NoteRow;
+          setUnread((cur) => [row, ...cur]);
+        }
       )
       .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [me]);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [me, fetchInbox]);
+  // explicit mark read
+  const markRead = async (id: string) => {
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("notes").update({ read_at: now }).eq("id", id);
+    if (error) {
+      console.error(error);
+      toast({ title: "Could not mark as read", variant: "destructive" });
+      return;
+    }
+    const moved = unread.find((n) => n.id === id);
+    setUnread((cur) => cur.filter((n) => n.id !== id));
+    if (moved) setReadRecent((cur) => [{ ...moved, read_at: now }, ...cur]);
+  };
 
-  /* ---------------- Cleanup on leave ---------------- */
-  useEffect(() => {
-    const cleanup = () => {
-      if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
-      // Best effort; browsers may not always wait for async work here
-      deleteReadNow();
-    };
+  // clear recently-read immediately (optional client cleanup)
+  const clearReadNow = async () => {
+    if (!me || readRecent.length === 0) return;
+    const ids = readRecent.map((n) => n.id);
+    const { error } = await supabase.from("notes").delete().in("id", ids);
+    if (error) {
+      console.error(error);
+      toast({ title: "Could not clear", variant: "destructive" });
+      return;
+    }
+    setReadRecent([]);
+  };
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") cleanup();
-    };
+  // (example) send a note – replace username->id lookup with your own logic
+  const sendNote = async () => {
+    const text = body.trim();
+    if (!me || !recipient.trim() || !text) return;
 
-    window.addEventListener("beforeunload", cleanup);
-    window.addEventListener("unload", cleanup);
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    setSending(true);
+    try {
+      // Try to resolve recipient as username in 'profiles' table. Adjust for your schema.
+      let recipientId = recipient.trim();
 
-    return () => {
-      cleanup();
-      window.removeEventListener("beforeunload", cleanup);
-      window.removeEventListener("unload", cleanup);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [deleteReadNow]);
+      if (!/^[0-9a-fA-F-]{36}$/.test(recipientId)) {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("id")
+          .ilike("username", recipientId)
+          .limit(1)
+          .maybeSingle();
 
-  /* ---------------- UI helpers ---------------- */
-  const initial = useCallback(
-    (p?: Profile | null, emailFallback?: string | null) =>
-      (p?.display_name?.[0] || p?.username?.[0] || emailFallback?.[0] || "U").toUpperCase(),
-    [],
-  );
+        if (error) throw error;
+        if (!data) throw new Error("User not found");
+        recipientId = data.id as string;
+      }
 
-  const hasInbox = inbox.length > 0;
-  const seconds = DELETE_MS / 1000;
+      const { error: insErr } = await supabase.from("notes").insert({
+        sender_id: me,
+        recipient_id: recipientId,
+        body: text,
+      });
+      if (insErr) throw insErr;
 
-  const disclaimer = useMemo(
-    () => (
-      <div className="rounded-md border border-yellow-300/40 bg-yellow-500/10 p-3 text-sm">
-        <strong>Heads up:</strong> Notes disappear after you read them. We automatically
-        delete read notes after {seconds} seconds, and also when you leave or refresh this page.
-      </div>
-    ),
-    [seconds],
-  );
+      setBody("");
+      toast({ title: "Sent!" });
+    } catch (e: any) {
+      console.error(e);
+      toast({ title: e.message || "Could not send", variant: "destructive" });
+    } finally {
+      setSending(false);
+    }
+  };
 
-  if (!me) {
-    return (
-      <div className="mx-auto max-w-3xl p-4">
-        {disclaimer}
-        <div className="mt-6 text-sm">
-          Please <a className="underline" href="/login">log in</a> to send and read notes.
-        </div>
-      </div>
-    );
-  }
+  const clearableCount = readRecent.length;
 
   return (
-    <div className="mx-auto max-w-4xl p-4 space-y-8">
-      {/* Composer */}
-      <div>
-        <h1 className="text-xl font-semibold">Send a Note</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Pick a creator and send a short, one-off note. When they read it, it gets automatically
-          deleted after {seconds} seconds. They can reply before it disappears.
+    <div className="mx-auto max-w-2xl p-4 space-y-8">
+      <h1 className="text-2xl font-semibold">Send a Note</h1>
+
+      <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+        <Input
+          placeholder="recipient username or UUID"
+          value={recipient}
+          onChange={(e) => setRecipient(e.target.value)}
+        />
+        <Input
+          placeholder='Type your note…'
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+        />
+        <Button onClick={sendNote} disabled={sending || !recipient.trim() || !body.trim()}>
+          {sending ? "Sending…" : "Send"}
+        </Button>
+        <p className="text-sm text-muted-foreground">
+          Heads up: read notes can be deleted after 15s (or when you press “Clear read now”).
         </p>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[minmax(260px,320px)_1fr_auto]">
-          <div className="relative">
-            <Input
-              value={toUser ? (toUser.display_name || toUser.username || "Selected") : query}
-              onChange={(e) => {
-                setToUser(null);
-                setQuery(e.target.value);
-              }}
-              placeholder="Search name or username…"
-              aria-label="Search creators"
-            />
-            {!!(query && !toUser) && (
-              <div className="absolute z-10 mt-1 w-full rounded-md border bg-background shadow">
-                {searching && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">Searching…</div>
-                )}
-                {!searching && options.length === 0 && (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
-                )}
-                {options.map((opt) => (
-                  <button
-                    key={opt.id}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50"
-                    onClick={() => {
-                      setToUser(opt);
-                      setQuery("");
-                    }}
-                  >
-                    <Avatar className="h-6 w-6">
-                      {opt.avatar_url ? <AvatarImage src={opt.avatar_url} /> : null}
-                      <AvatarFallback className="text-[10px]">
-                        {initial(opt, null)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1">
-                      <div className="text-sm">
-                        {opt.display_name || opt.username || "User"}
-                      </div>
-                      {opt.username ? (
-                        <div className="text-xs text-muted-foreground">@{opt.username}</div>
-                      ) : null}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <Textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder={
-              toUser
-                ? `Write a note to ${toUser.display_name || toUser.username || "creator"}…`
-                : "Choose a creator first…"
-            }
-            className="min-h-[44px]"
-          />
-
-          <Button onClick={handleSend} disabled={sending || !toUser || !body.trim()}>
-            <Send className="mr-2 h-4 w-4" />
-            {sending ? "Sending…" : "Send"}
-          </Button>
-        </div>
-
-        <div className="mt-4">{disclaimer}</div>
       </div>
 
-      {/* Inbox */}
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Your Note Inbox</h2>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={fetchInbox} disabled={loadingInbox}>
-              Refresh
-            </Button>
-            <Button variant="destructive" size="sm" onClick={deleteReadNow}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Clear read now ({readThisSession.current.size})
-            </Button>
-          </div>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Your Note Inbox</h2>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={reload}>Refresh</Button>
+          <Button variant="destructive" onClick={clearReadNow} disabled={!clearableCount}>
+            Clear read now {clearableCount ? `(${clearableCount})` : ""}
+          </Button>
         </div>
+      </div>
 
-        {loadingInbox ? (
-          <div className="text-sm text-muted-foreground">Loading…</div>
-        ) : !hasInbox ? (
-          <div className="rounded-md border p-4 text-sm text-muted-foreground">
-            No notes yet. When someone sends you a note, it'll appear here.
+      {/* UNREAD */}
+      {loading ? (
+        <div className="text-sm text-muted-foreground">Loading…</div>
+      ) : unread.length === 0 ? (
+        <div className="rounded-lg border border-white/10 p-4 text-muted-foreground">
+          No notes yet. When someone sends you a note, it’ll appear here.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {unread.map((n) => (
+            <div key={n.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
+              <div className="text-sm text-muted-foreground mb-1">
+                {formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}
+              </div>
+              <div className="whitespace-pre-wrap">{n.body}</div>
+              <div className="mt-2">
+                <Button size="sm" onClick={() => markRead(n.id)}>Mark read</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* RECENTLY READ (15s window) */}
+      <div className="pt-6">
+        <h3 className="text-lg font-medium mb-3">Recently read (last 15s)</h3>
+        {readRecent.length === 0 ? (
+          <div className="rounded-lg border border-white/10 p-3 text-muted-foreground">
+            Nothing recently read.
           </div>
         ) : (
-          <ul className="space-y-3">
-            {inbox.map((n) => (
-              <li key={n.id} className="rounded-md border p-3">
-                <div className="flex items-start gap-3">
-                  <Avatar className="h-9 w-9">
-                    {n.sender_avatar_url ? <AvatarImage src={n.sender_avatar_url} /> : null}
-                    <AvatarFallback>
-                      {(n.sender_display_name || n.sender_username || "U")[0].toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={`/profile/${n.sender_id}`}
-                        className="font-medium hover:underline"
-                        title="View profile"
-                      >
-                        {n.sender_display_name || n.sender_username || "User"}
-                      </a>
-                      {n.sender_username ? (
-                        <span className="text-xs text-muted-foreground">@{n.sender_username}</span>
-                      ) : null}
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        {new Date(n.created_at).toLocaleString()}
-                      </span>
-                    </div>
-
-                    <div className="mt-1 whitespace-pre-wrap text-sm">{n.body}</div>
-
-                    {/* Reply */}
-                    <div className="mt-2 flex items-center gap-2">
-                      {!replying[n.id] ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setReplying((s) => ({ ...s, [n.id]: true }))}
-                        >
-                          Reply
-                        </Button>
-                      ) : (
-                        <>
-                          <Textarea
-                            value={replyText[n.id] ?? ""}
-                            onChange={(e) =>
-                              setReplyText((s) => ({ ...s, [n.id]: e.target.value }))
-                            }
-                            placeholder="Write your reply…"
-                            className="min-h-[38px]"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={async () => {
-                              const text = (replyText[n.id] ?? "").trim();
-                              if (!text) return;
-                              const { error } = await supabase.from("notes").insert({
-                                sender_id: me!,
-                                recipient_id: n.sender_id,
-                                body: text,
-                                in_reply_to: n.id,
-                              });
-                              if (error) {
-                                console.error(error);
-                                toast.error("Failed to send reply");
-                                return;
-                              }
-                              setReplyText((s) => ({ ...s, [n.id]: "" }));
-                              setReplying((s) => ({ ...s, [n.id]: false }));
-                              toast.success("Reply sent");
-                            }}
-                          >
-                            <Send className="mr-2 h-4 w-4" />
-                            Send
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setReplying((s) => ({ ...s, [n.id]: false }))}
-                          >
-                            Cancel
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
+          <div className="space-y-2">
+            {readRecent.map((n) => (
+              <div key={n.id} className="rounded-lg border border-white/10 bg-white/[.04] p-3">
+                <div className="text-xs text-muted-foreground mb-1">
+                  read {formatDistanceToNow(new Date(n.read_at || n.created_at), { addSuffix: true })}
                 </div>
-
-                {/* Status */}
-                <div
-                  className={cn(
-                    "mt-2 text-xs",
-                    n.read_at
-                      ? readThisSession.current.has(n.id)
-                        ? "text-red-600"
-                        : "text-emerald-600"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {n.read_at
-                    ? readThisSession.current.has(n.id)
-                      ? `Read (will be deleted in ${seconds} seconds)`
-                      : "Read (from previous session)"
-                    : "Unread"}
-                </div>
-              </li>
+                <div className="whitespace-pre-wrap">{n.body}</div>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </div>
