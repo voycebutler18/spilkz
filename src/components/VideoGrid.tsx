@@ -1,6 +1,5 @@
 // src/components/VideoGrid.tsx
 import { useState, useRef, useEffect } from "react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -12,6 +11,8 @@ import {
   MessageCircle,
   Share2,
   Trash2,
+  Clock,
+  Eye,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -65,8 +66,8 @@ export function VideoGrid({
   const [playingVideo, setPlayingVideo] = useState<string | null>(null);
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const [likedVideos, setLikedVideos] = useState<Set<string>>(new Set());
+  const [hoveredVideo, setHoveredVideo] = useState<string | null>(null);
 
-  // Central place for counts we render (removed views)
   const [videoStats, setVideoStats] = useState<{
     [id: string]: { likes: number; comments: number };
   }>({});
@@ -84,7 +85,6 @@ export function VideoGrid({
     `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   );
 
-  // keep reference to the live comments channel to clean it up
   const commentsChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(
     null
   );
@@ -96,7 +96,6 @@ export function VideoGrid({
   }, []);
 
   useEffect(() => {
-    // seed stats for each card (removed views)
     const stats: any = {};
     spliks.forEach((s) => {
       stats[s.id] = {
@@ -107,7 +106,6 @@ export function VideoGrid({
     setVideoStats(stats);
     checkLikedStatus();
 
-    // keep in sync with spliks table updates (likes/comments only)
     const channel = supabase
       .channel("video-grid-updates")
       .on(
@@ -132,9 +130,7 @@ export function VideoGrid({
   }, [spliks]);
 
   const checkLikedStatus = async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { data } = await supabase
       .from("likes")
@@ -143,7 +139,10 @@ export function VideoGrid({
     if (data) setLikedVideos(new Set(data.map((l) => l.splik_id)));
   };
 
-  const handlePlayToggle = async (splikId: string) => {
+  const handlePlayToggle = async (splikId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
     const video = videoRefs.current[splikId];
     if (!video) return;
 
@@ -158,10 +157,7 @@ export function VideoGrid({
       video.play();
       setPlayingVideo(splikId);
 
-      // Still track views in backend but don't show them
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       await supabase.rpc("increment_view_with_session", {
         p_splik_id: splikId,
         p_session_id: sessionIdRef.current,
@@ -180,7 +176,10 @@ export function VideoGrid({
     }
   };
 
-  const toggleMute = (splikId: string) => {
+  const toggleMute = (splikId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
     const video = videoRefs.current[splikId];
     if (!video) return;
 
@@ -195,25 +194,47 @@ export function VideoGrid({
     setMutedVideos(next);
   };
 
-  const handleLike = async (splikId: string) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  const handleLike = async (splikId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast.error("Please sign in to like videos");
       return;
     }
 
-    if (likedVideos.has(splikId)) {
-      await supabase.from("likes").delete().eq("splik_id", splikId).eq("user_id", user.id);
-      setLikedVideos((prev) => {
-        const next = new Set(prev);
-        next.delete(splikId);
-        return next;
-      });
-    } else {
-      await supabase.from("likes").insert({ splik_id: splikId, user_id: user.id });
-      setLikedVideos((prev) => new Set(prev).add(splikId));
+    const isLiked = likedVideos.has(splikId);
+
+    try {
+      if (isLiked) {
+        await supabase.from("likes").delete().eq("splik_id", splikId).eq("user_id", user.id);
+        setLikedVideos((prev) => {
+          const next = new Set(prev);
+          next.delete(splikId);
+          return next;
+        });
+        setVideoStats((prev) => ({
+          ...prev,
+          [splikId]: {
+            ...prev[splikId],
+            likes: Math.max(0, (prev[splikId]?.likes || 0) - 1),
+          },
+        }));
+      } else {
+        await supabase.from("likes").insert({ splik_id: splikId, user_id: user.id });
+        setLikedVideos((prev) => new Set(prev).add(splikId));
+        setVideoStats((prev) => ({
+          ...prev,
+          [splikId]: {
+            ...prev[splikId],
+            likes: (prev[splikId]?.likes || 0) + 1,
+          },
+        }));
+      }
+    } catch (error) {
+      console.error("Error toggling like:", error);
+      toast.error("Failed to update like");
     }
   };
 
@@ -246,7 +267,6 @@ export function VideoGrid({
     }
   };
 
-  // live comments while open
   useEffect(() => {
     if (commentsChannelRef.current) {
       try {
@@ -291,10 +311,7 @@ export function VideoGrid({
             ...prev,
             [showComments]: {
               ...prev[showComments],
-              comments: Math.max(
-                0,
-                (prev[showComments]?.comments || 0) - 1
-              ),
+              comments: Math.max(0, (prev[showComments]?.comments || 0) - 1),
             },
           }));
         }
@@ -302,8 +319,6 @@ export function VideoGrid({
       .subscribe();
 
     commentsChannelRef.current = ch;
-
-    // initial load
     loadComments(showComments);
 
     return () => {
@@ -317,9 +332,7 @@ export function VideoGrid({
   }, [showComments]);
 
   const handleComment = async (splikId: string) => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast.error("Please sign in to add comments");
       return;
@@ -350,7 +363,10 @@ export function VideoGrid({
     }
   };
 
-  const handleShare = (splik: Splik) => {
+  const handleShare = (splik: Splik, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    
     const url = `${window.location.origin}/video/${splik.id}`;
     navigator.clipboard.writeText(url);
     toast.success("Link copied to clipboard");
@@ -365,66 +381,105 @@ export function VideoGrid({
     return "Just now";
   };
 
-  // helper to build a reliable display name for any profile
+  const formatCount = (count: number) => {
+    if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
+    return count.toString();
+  };
+
   const nameOf = (p?: Profile) => {
     if (!p) return "User";
     const full = [p.first_name, p.last_name].filter(Boolean).join(" ").trim();
     return p.display_name || full || p.username || "User";
   };
 
+  if (!spliks.length) {
+    return (
+      <div className="text-center py-20">
+        <div className="w-24 h-24 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-6">
+          <Play className="h-12 w-12 text-gray-400" />
+        </div>
+        <h3 className="text-2xl font-bold text-white mb-2">No videos yet</h3>
+        <p className="text-gray-400">This creator hasn't posted any videos</p>
+      </div>
+    );
+  }
+
   return (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-4">
+      {/* Superior Responsive Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-5">
         {spliks.map((splik) => {
           const isOwner = currentUserId === splik.user_id;
           const creator = splik.profiles;
           const creatorName = nameOf(creator);
-          const creatorHref = `/creator/${creator?.username || splik.user_id}`;
+          const isHovered = hoveredVideo === splik.id;
+          const isPlaying = playingVideo === splik.id;
+          const isLiked = likedVideos.has(splik.id);
 
           return (
-            <Card
+            <Link
               key={splik.id}
-              className="overflow-hidden bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950 border-0 shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02] group"
+              to={`/video/${splik.id}`}
+              className="group block"
+              onMouseEnter={() => setHoveredVideo(splik.id)}
+              onMouseLeave={() => setHoveredVideo(null)}
             >
-              {/* Video */}
-              <div className="relative aspect-[9/16] bg-gradient-to-br from-gray-900 via-black to-gray-800 overflow-hidden rounded-t-lg">
+              {/* Video Thumbnail Container */}
+              <div className="relative aspect-video bg-gray-900 rounded-xl overflow-hidden mb-3 shadow-lg group-hover:shadow-2xl transition-all duration-300">
                 <video
                   ref={(el) => {
                     if (el) videoRefs.current[splik.id] = el;
                   }}
                   src={splik.video_url}
                   poster={splik.thumbnail_url || undefined}
-                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  loop={false}
+                  className={`w-full h-full object-cover transition-all duration-500 ${
+                    isHovered ? 'scale-105' : 'scale-100'
+                  }`}
                   muted={mutedVideos.has(splik.id)}
                   playsInline
                   onTimeUpdate={() => handleTimeUpdate(splik.id)}
                 />
 
-                {/* Play/Pause overlay */}
-                <div
-                  className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/40 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-all duration-300 cursor-pointer"
-                  onClick={() => handlePlayToggle(splik.id)}
-                >
-                  <div className="bg-white/20 backdrop-blur-md rounded-full p-4 shadow-2xl hover:bg-white/30 transition-colors duration-200 border border-white/30">
-                    {playingVideo === splik.id ? (
-                      <Pause className="h-8 w-8 text-white drop-shadow-lg" />
-                    ) : (
-                      <Play className="h-8 w-8 text-white drop-shadow-lg ml-1" />
-                    )}
+                {/* Gradient Overlays */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20" />
+                <div className={`absolute inset-0 bg-black/20 transition-opacity duration-300 ${
+                  isHovered ? 'opacity-100' : 'opacity-0'
+                }`} />
+
+                {/* Duration Badge */}
+                <div className="absolute top-2 right-2">
+                  <div className="bg-black/80 backdrop-blur-sm text-white text-xs font-bold px-2 py-1 rounded-md flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    3.0s
                   </div>
                 </div>
 
-                {/* Sound toggle */}
-                {playingVideo === splik.id && (
+                {/* Play Button */}
+                <div 
+                  className={`absolute inset-0 flex items-center justify-center transition-all duration-300 cursor-pointer ${
+                    isHovered || isPlaying ? 'opacity-100' : 'opacity-0'
+                  }`}
+                  onClick={(e) => handlePlayToggle(splik.id, e)}
+                >
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-white/20 rounded-full blur-lg animate-pulse" />
+                    <div className="relative bg-white/90 backdrop-blur-sm rounded-full p-3 md:p-4 shadow-2xl hover:bg-white hover:scale-110 transition-all duration-200">
+                      {isPlaying ? (
+                        <Pause className="w-5 h-5 md:w-6 md:h-6 text-gray-900" />
+                      ) : (
+                        <Play className="w-5 h-5 md:w-6 md:h-6 text-gray-900 ml-0.5" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Volume Control */}
+                {isPlaying && (
                   <Button
                     size="icon"
-                    variant="ghost"
-                    className="absolute top-3 right-3 text-white bg-black/60 backdrop-blur-md hover:bg-black/80 border border-white/20 rounded-full h-10 w-10 shadow-lg transition-all duration-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleMute(splik.id);
-                    }}
+                    className="absolute top-2 left-2 h-8 w-8 bg-black/60 hover:bg-black/80 text-white border-0 rounded-lg backdrop-blur-sm"
+                    onClick={(e) => toggleMute(splik.id, e)}
                   >
                     {mutedVideos.has(splik.id) ? (
                       <VolumeX className="h-4 w-4" />
@@ -434,178 +489,139 @@ export function VideoGrid({
                   </Button>
                 )}
 
-                <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+                {/* Quick Actions Overlay */}
+                <div className={`absolute bottom-2 left-2 right-2 flex items-end justify-between transition-all duration-300 ${
+                  isHovered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+                }`}>
+                  <div className="flex gap-1">
+                    <Button
+                      size="icon"
+                      variant={isLiked ? "default" : "secondary"}
+                      className={`h-8 w-8 rounded-lg backdrop-blur-sm transition-all duration-200 ${
+                        isLiked 
+                          ? 'bg-red-500 hover:bg-red-600 text-white' 
+                          : 'bg-black/60 hover:bg-black/80 text-white border-0'
+                      }`}
+                      onClick={(e) => handleLike(splik.id, e)}
+                    >
+                      <Heart className={`h-3 w-3 ${isLiked ? 'fill-current' : ''}`} />
+                    </Button>
+                    
+                    <Button
+                      size="icon"
+                      className="h-8 w-8 bg-black/60 hover:bg-black/80 text-white border-0 rounded-lg backdrop-blur-sm"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowComments(splik.id);
+                      }}
+                    >
+                      <MessageCircle className="h-3 w-3" />
+                    </Button>
+                    
+                    <Button
+                      size="icon"
+                      className="h-8 w-8 bg-black/60 hover:bg-black/80 text-white border-0 rounded-lg backdrop-blur-sm"
+                      onClick={(e) => handleShare(splik, e)}
+                    >
+                      <Share2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  
+                  {/* Stats */}
+                  <div className="flex items-center gap-2 text-white text-xs font-medium">
+                    <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md">
+                      <Heart className="w-3 h-3" />
+                      <span>{formatCount(videoStats[splik.id]?.likes || 0)}</span>
+                    </div>
+                    <div className="flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md">
+                      <MessageCircle className="w-3 h-3" />
+                      <span>{formatCount(videoStats[splik.id]?.comments || 0)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Creator row */}
-              {showCreatorInfo && creator && (
-                <div className="flex items-center justify-between p-4 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
-                  <Link
-                    to={creatorHref}
-                    className="flex items-center gap-3 hover:bg-gray-100/80 dark:hover:bg-gray-800/50 transition-colors rounded-xl flex-1 p-2 -m-2"
-                  >
-                    <div className="relative">
-                      <Avatar className="h-12 w-12 ring-2 ring-white dark:ring-gray-700 shadow-lg">
-                        <AvatarImage src={creator?.avatar_url || undefined} />
-                        <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white font-bold">
-                          {creatorName.charAt(0)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 shadow-sm" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold text-sm text-gray-900 dark:text-white truncate">
-                        {creatorName}
-                      </p>
-                      {creator?.username && (
-                        <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
-                          @{creator.username}
-                        </p>
-                      )}
-                    </div>
-                  </Link>
-                  <FollowButton
-                    profileId={splik.user_id}
-                    username={creator?.username || undefined}
-                    size="sm"
-                  />
-                </div>
-              )}
-
-              {/* Body */}
-              <div className="p-4 space-y-3 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm">
+              {/* Video Info */}
+              <div className="px-1">
+                {/* Title */}
                 {splik.title && (
-                  <h3 className="font-bold text-base leading-tight text-gray-900 dark:text-white line-clamp-2">
+                  <h3 className="text-white font-semibold text-sm md:text-base line-clamp-2 leading-tight mb-2 group-hover:text-gray-300 transition-colors">
                     {splik.title}
                   </h3>
                 )}
-                {splik.description && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2 leading-relaxed">
-                    {splik.description}
-                  </p>
+
+                {/* Creator Info */}
+                {showCreatorInfo && creator && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <Avatar className="w-6 h-6 md:w-8 md:h-8">
+                      <AvatarImage src={creator.avatar_url || ""} />
+                      <AvatarFallback className="bg-purple-600 text-white text-xs font-bold">
+                        {creatorName.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="text-gray-400 text-xs md:text-sm font-medium truncate">
+                      {creatorName}
+                    </span>
+                  </div>
                 )}
 
-                {/* Time only (no views) */}
-                <div className="flex items-center justify-end text-xs font-medium">
-                  <span className="text-gray-500 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-full">
-                    {formatTime(splik.created_at)}
-                  </span>
-                </div>
-
-                {/* Action buttons */}
-                <div className="flex items-center gap-2 pt-2">
-                  <FollowButton
-                    profileId={splik.user_id}
-                    username={creator?.username || undefined}
-                    size="sm"
-                    variant="outline"
-                    className="flex-1"
-                  />
-
-                  <Button
-                    size="sm"
-                    variant={likedVideos.has(splik.id) ? "default" : "outline"}
-                    onClick={() => handleLike(splik.id)}
-                    className={`flex-1 transition-all duration-200 ${
-                      likedVideos.has(splik.id)
-                        ? "bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white shadow-lg"
-                        : "hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-950 dark:hover:text-red-400"
-                    }`}
-                  >
-                    <Heart
-                      className={`h-4 w-4 mr-2 ${
-                        likedVideos.has(splik.id) ? "fill-current" : ""
-                      }`}
-                    />
-                    <span className="font-semibold">
-                      {(videoStats[splik.id]?.likes || 0).toLocaleString()}
-                    </span>
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setShowComments(splik.id)}
-                    className="flex-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 dark:hover:bg-blue-950 dark:hover:text-blue-400 transition-all duration-200"
-                  >
-                    <MessageCircle className="h-4 w-4 mr-2" />
-                    <span className="font-semibold">
-                      {(videoStats[splik.id]?.comments || 0).toLocaleString()}
-                    </span>
-                  </Button>
-
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleShare(splik)}
-                    className="px-3 hover:bg-green-50 hover:text-green-600 hover:border-green-200 dark:hover:bg-green-950 dark:hover:text-green-400 transition-all duration-200"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </Button>
-                </div>
-
-                {/* Owner-only: delete */}
-                {isOwner && (
-                  <div className="pt-2">
+                {/* Metadata */}
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>{formatTime(splik.created_at)}</span>
+                  {isOwner && onDeletedSplik && (
                     <DeleteSplikButton
                       splikId={splik.id}
                       videoUrl={splik.video_url}
                       thumbnailUrl={splik.thumbnail_url}
-                      onDeleted={() => onDeletedSplik?.(splik.id)}
+                      onDeleted={() => onDeletedSplik(splik.id)}
                     />
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </Card>
+            </Link>
           );
         })}
       </div>
 
-      {/* Comments Dialog (live) */}
+      {/* Enhanced Comments Modal */}
       <Dialog open={!!showComments} onOpenChange={() => setShowComments(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border-0 shadow-2xl">
-          <DialogHeader className="pb-4 border-b border-gray-200 dark:border-gray-700">
-            <DialogTitle className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+        <DialogContent className="max-w-3xl max-h-[90vh] bg-gray-900 border-gray-700">
+          <DialogHeader className="pb-6 border-b border-gray-700">
+            <DialogTitle className="text-2xl font-bold text-white flex items-center gap-3">
+              <MessageCircle className="h-6 w-6 text-blue-500" />
               Comments
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-6">
-            {/* Create comment */}
-            <div className="flex gap-3 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+            <div className="bg-gray-800 rounded-xl p-4">
               <Textarea
                 placeholder="Share your thoughts..."
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
-                className="flex-1 resize-none border-0 bg-white dark:bg-gray-900 shadow-sm focus:shadow-md transition-shadow duration-200"
-                rows={2}
+                className="mb-4 bg-gray-900 border-gray-600 text-white resize-none"
+                rows={3}
               />
               <Button
                 onClick={() => showComments && handleComment(showComments)}
-                className="bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white shadow-lg hover:shadow-xl transition-all duration-200 px-6"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3"
               >
-                Post
+                Post Comment
               </Button>
             </div>
 
-            {/* Comments list */}
-            <ScrollArea className="h-[400px] px-2">
+            <ScrollArea className="h-[450px]">
               {loadingComments ? (
-                <div className="text-center py-8">
-                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    Loading comments...
-                  </p>
+                <div className="text-center py-12">
+                  <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-gray-400">Loading comments...</p>
                 </div>
               ) : comments.length === 0 ? (
-                <div className="text-center py-12">
-                  <MessageCircle className="h-16 w-16 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-                  <p className="text-gray-600 dark:text-gray-400 font-medium">
-                    No comments yet
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-500">
-                    Be the first to share your thoughts!
-                  </p>
+                <div className="text-center py-16">
+                  <MessageCircle className="h-16 w-16 text-gray-600 mx-auto mb-4" />
+                  <h3 className="text-xl font-bold text-white mb-2">No comments yet</h3>
+                  <p className="text-gray-400">Be the first to share your thoughts!</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -615,38 +631,38 @@ export function VideoGrid({
                     return (
                       <div
                         key={comment.id}
-                        className="flex gap-3 p-4 bg-white dark:bg-gray-800/30 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200 border border-gray-100 dark:border-gray-700/50"
+                        className="bg-gray-800 rounded-xl p-4 hover:bg-gray-750 transition-colors"
                       >
-                        <Avatar className="h-10 w-10 ring-2 ring-gray-200 dark:ring-gray-700 flex-shrink-0">
-                          <AvatarImage src={p?.avatar_url || undefined} />
-                          <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white font-bold text-sm">
-                            {commenter.charAt(0)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <p className="font-bold text-sm text-gray-900 dark:text-white">
-                                {commenter}
-                              </p>
-                              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                {formatTime(comment.created_at)}
-                              </p>
+                        <div className="flex gap-3">
+                          <Avatar className="w-10 h-10 flex-shrink-0">
+                            <AvatarImage src={p?.avatar_url || ""} />
+                            <AvatarFallback className="bg-purple-600 text-white font-bold">
+                              {commenter.charAt(0)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between mb-2">
+                              <div>
+                                <p className="font-semibold text-white">{commenter}</p>
+                                <p className="text-xs text-gray-500">
+                                  {formatTime(comment.created_at)}
+                                </p>
+                              </div>
+                              {onDeleteComment && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => onDeleteComment(comment.id)}
+                                  className="text-gray-400 hover:text-red-400 hover:bg-red-950"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
                             </div>
-                            {onDeleteComment && (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => onDeleteComment(comment.id)}
-                                className="opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 transition-all duration-200 h-8 w-8 p-0"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            )}
+                            <p className="text-gray-300 leading-relaxed">
+                              {comment.content}
+                            </p>
                           </div>
-                          <p className="text-sm text-gray-800 dark:text-gray-200 mt-2 leading-relaxed">
-                            {comment.content}
-                          </p>
                         </div>
                       </div>
                     );
