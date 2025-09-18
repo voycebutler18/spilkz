@@ -205,7 +205,8 @@ const App = () => (
               <Route path="/splik/:id" element={<SplikPage />} />
               <Route path="/search" element={<Search />} />
 
-              {/* Notes (make it explicit and future-proof for nesting) */}
+              {/* Notes - Fixed routing to handle both /notes and /notes/* properly */}
+              <Route path="/notes" element={<NotesPage />} />
               <Route path="/notes/*" element={<NotesPage />} />
 
               {/* ✅ Splikz Dating — fully scoped under /dating/* */}
@@ -230,7 +231,7 @@ const App = () => (
               {/* Promote */}
               <Route path="/promote/:splikId" element={<Promote />} />
 
-              {/* 404 */}
+              {/* 404 - Keep this last */}
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
