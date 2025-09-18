@@ -14,6 +14,12 @@ export type Prayer = {
   reply_count: number;
   answered: boolean;
   created_at: string;
+  // New media fields
+  video_url?: string | null;
+  thumbnail_url?: string | null;
+  trim_start?: number | null;
+  trim_end?: number | null;
+  mime_type?: string | null;
 };
 
 export type PrayerReply = {
@@ -26,16 +32,33 @@ export type PrayerReply = {
 
 /* ---------- Column list used in selects ---------- */
 const PRAYER_COLUMNS =
-  "id, author, type, body, tags, amen_count, reply_count, answered, created_at";
+  "id, author, type, body, tags, amen_count, reply_count, answered, created_at, video_url, thumbnail_url, trim_start, trim_end, mime_type";
 
 /* ---------- Create ---------- */
-export async function createPrayer(type: PrayerType, body: string): Promise<Prayer> {
+export async function createPrayer(
+  type: PrayerType, 
+  body: string, 
+  media?: {
+    video_url?: string;
+    thumbnail_url?: string;
+    trim_start?: number;
+    trim_end?: number;
+    mime_type?: string;
+  }
+): Promise<Prayer> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Sign in first");
 
+  const insertData = {
+    author: user.id,
+    type,
+    body: body.trim(),
+    ...media,
+  };
+
   const { data, error } = await supabase
     .from("prayers")
-    .insert({ author: user.id, type, body: body.trim() })
+    .insert(insertData)
     .select(PRAYER_COLUMNS)
     .single();
 
@@ -73,6 +96,65 @@ export async function fetchPrayer(id: string): Promise<Prayer | null> {
   return (data as Prayer) ?? null;
 }
 
+/* ---------- Media Upload Helper ---------- */
+export async function uploadPrayerMedia(file: File): Promise<{ url: string; thumbnailUrl?: string }> {
+  const fileExt = file.name.split('.').pop();
+  const fileName = `${Math.random()}.${fileExt}`;
+  const filePath = `prayers/${fileName}`;
+
+  // Upload main file
+  const { error: uploadError } = await supabase.storage
+    .from('media')
+    .upload(filePath, file);
+
+  if (uploadError) throw uploadError;
+
+  const { data: { publicUrl } } = supabase.storage
+    .from('media')
+    .getPublicUrl(filePath);
+
+  let thumbnailUrl = publicUrl;
+
+  // For videos, create thumbnail
+  if (file.type.startsWith('video/')) {
+    try {
+      const video = document.createElement('video');
+      video.src = publicUrl;
+      video.currentTime = 1; // Capture at 1 second
+
+      await new Promise((resolve) => {
+        video.onloadedmetadata = resolve;
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(video, 0, 0);
+
+      const thumbnailBlob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((blob) => resolve(blob!), 'image/jpeg', 0.8);
+      });
+
+      const thumbFileName = `prayers/thumb_${fileName.replace(/\.[^/.]+$/, '.jpg')}`;
+      const { error: thumbError } = await supabase.storage
+        .from('media')
+        .upload(thumbFileName, thumbnailBlob);
+
+      if (!thumbError) {
+        const { data: { publicUrl: thumbUrl } } = supabase.storage
+          .from('media')
+          .getPublicUrl(thumbFileName);
+        thumbnailUrl = thumbUrl;
+      }
+    } catch (error) {
+      console.warn('Thumbnail generation failed:', error);
+    }
+  }
+
+  return { url: publicUrl, thumbnailUrl };
+}
+
 /* ---------- Amen (duplicate-safe; returns server count) ---------- */
 /** Returns:
  *  - inserted: was a new amen created for (prayer_id, user_id)?
@@ -99,7 +181,7 @@ export async function amenPrayer(
   // If the row already existed, upsert returns [] (ignored); if new, returns 1 row
   const inserted = Array.isArray(upsertData) && upsertData.length > 0;
 
-  // Read back the server-side count so UI can’t drift
+  // Read back the server-side count so UI can't drift
   const { count, error: countErr } = await supabase
     .from("prayer_amens")
     .select("prayer_id", { count: "exact", head: true })
