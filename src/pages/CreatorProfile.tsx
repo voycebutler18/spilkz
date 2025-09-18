@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { VideoGrid } from "@/components/VideoGrid";
 import FollowButton from "@/components/FollowButton";
 import FollowersList from "@/components/FollowersList";
-import { MapPin, Calendar, Film, Users, TrendingUp } from "lucide-react";
+import { MapPin, Calendar, Film, Users, TrendingUp, Play, Eye, Heart } from "lucide-react";
 import { toast } from "sonner";
 
 interface Profile {
@@ -390,9 +390,9 @@ export default function CreatorProfile() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
         <div className="flex items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent" />
         </div>
       </div>
     );
@@ -400,13 +400,20 @@ export default function CreatorProfile() {
 
   if (!profile) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
-          <h2 className="text-2xl font-semibold mb-4">Profile not found</h2>
-          <p className="text-muted-foreground mb-6">
-            The profile you're looking for doesn't exist or may have been removed.
-          </p>
-          <Button onClick={() => navigate("/")}>Go Home</Button>
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
+        <div className="max-w-4xl mx-auto px-4 py-20 text-center">
+          <div className="bg-black/20 backdrop-blur-xl rounded-3xl p-12 border border-white/10">
+            <h2 className="text-3xl font-bold text-white mb-4">Profile not found</h2>
+            <p className="text-gray-300 mb-8">
+              The profile you're looking for doesn't exist or may have been removed.
+            </p>
+            <Button 
+              onClick={() => navigate("/")}
+              className="bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500"
+            >
+              Go Home
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -422,172 +429,223 @@ export default function CreatorProfile() {
     "User";
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Card className="mb-8 p-6">
-          <div className="flex flex-col md:flex-row gap-6">
-            <Avatar className="h-32 w-32">
-              <AvatarImage src={profile.avatar_url || ""} />
-              <AvatarFallback className="text-3xl">
-                {nameOrUsername.charAt(0).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
+      {/* Hero Section */}
+      <div className="relative">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-gray-900/50" />
+        <div className="relative max-w-6xl mx-auto px-4 pt-8 pb-16">
+          {/* Profile Header */}
+          <div className="bg-black/20 backdrop-blur-xl rounded-3xl p-8 border border-white/10 shadow-2xl">
+            <div className="flex flex-col lg:flex-row items-center lg:items-start gap-8">
+              {/* Avatar */}
+              <div className="relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-violet-500 rounded-full blur-sm opacity-50" />
+                <Avatar className="relative h-40 w-40 border-4 border-white/20 shadow-2xl">
+                  <AvatarImage src={profile.avatar_url || ""} className="object-cover" />
+                  <AvatarFallback className="text-4xl font-bold bg-gradient-to-br from-purple-600 to-violet-600 text-white">
+                    {nameOrUsername.charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+              </div>
 
-            <div className="flex-1">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h1 className="text-3xl font-bold">{nameOrUsername}</h1>
-                  {profile.username && (
-                    <p className="text-muted-foreground">@{profile.username}</p>
+              {/* Profile Info */}
+              <div className="flex-1 text-center lg:text-left">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-6">
+                  <div>
+                    <h1 className="text-4xl lg:text-5xl font-bold text-white mb-2 bg-gradient-to-r from-white to-gray-300 bg-clip-text">
+                      {nameOrUsername}
+                    </h1>
+                    {profile.username && (
+                      <p className="text-xl text-purple-300 font-medium">@{profile.username}</p>
+                    )}
+                  </div>
+                  
+                  {currentUserId !== profile.id && (
+                    <FollowButton
+                      profileId={profile.id}
+                      username={profile.username || ""}
+                      className="bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 border-0 px-8 py-3 text-lg font-semibold shadow-lg"
+                    />
                   )}
                 </div>
 
-                {currentUserId !== profile.id && (
-                  <FollowButton
-                    profileId={profile.id}
-                    username={profile.username || ""}
-                    className="ml-4"
-                  />
+                {profile.bio && (
+                  <p className="text-gray-300 text-lg leading-relaxed mb-6 max-w-2xl">
+                    {profile.bio}
+                  </p>
                 )}
-              </div>
 
-              {profile.bio && <p className="mb-4">{profile.bio}</p>}
-
-              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-4">
-                {profile.city && (
-                  <div className="flex items-center gap-1">
-                    <MapPin className="h-4 w-4" />
-                    {profile.city}
+                {/* Location and Join Date */}
+                <div className="flex flex-wrap justify-center lg:justify-start gap-6 text-gray-400 mb-8">
+                  {profile.city && (
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-5 w-5 text-purple-400" />
+                      <span className="text-gray-300">{profile.city}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5 text-purple-400" />
+                    <span className="text-gray-300">Joined {formatDate(profile.created_at)}</span>
                   </div>
-                )}
-                <div className="flex items-center gap-1">
-                  <Calendar className="h-4 w-4" />
-                  Joined {formatDate(profile.created_at)}
                 </div>
-              </div>
 
-              <div className="flex gap-8">
-                <div className="text-center min-w-[80px]">
-                  <p className="text-2xl font-bold">{profile.spliks_count || 0}</p>
-                  <p className="text-sm text-muted-foreground">Videos</p>
+                {/* Stats */}
+                <div className="flex justify-center lg:justify-start gap-8">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-white mb-1">{profile.spliks_count || 0}</div>
+                    <div className="text-gray-400 font-medium">Videos</div>
+                  </div>
+                  <button
+                    onClick={() => setShowFollowersList(true)}
+                    className="text-center group hover:bg-white/5 rounded-lg p-3 -m-3 transition-all duration-200"
+                  >
+                    <div className="text-3xl font-bold text-white mb-1 group-hover:text-purple-300 transition-colors">
+                      {profile.followers_count || 0}
+                    </div>
+                    <div className="text-gray-400 font-medium group-hover:text-purple-400 transition-colors">Followers</div>
+                  </button>
+                  <button
+                    onClick={() => setShowFollowingList(true)}
+                    className="text-center group hover:bg-white/5 rounded-lg p-3 -m-3 transition-all duration-200"
+                  >
+                    <div className="text-3xl font-bold text-white mb-1 group-hover:text-purple-300 transition-colors">
+                      {profile.following_count || 0}
+                    </div>
+                    <div className="text-gray-400 font-medium group-hover:text-purple-400 transition-colors">Following</div>
+                  </button>
                 </div>
-                <button
-                  onClick={() => setShowFollowersList(true)}
-                  className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
-                >
-                  <p className="text-2xl font-bold">
-                    {profile.followers_count || 0}
-                  </p>
-                  <p className="text-sm text-muted-foreground">Followers</p>
-                </button>
-                <button
-                  onClick={() => setShowFollowingList(true)}
-                  className="text-center min-w-[80px] hover:bg-accent rounded-lg p-2 -m-2 transition-colors"
-                >
-                  <p className="text-2xl font-bold">
-                    {profile.following_count || 0}
-                  </p>
-                  <p className="text-sm text-muted-foreground">Following</p>
-                </button>
               </div>
             </div>
           </div>
-        </Card>
+        </div>
+      </div>
 
+      {/* Content Tabs */}
+      <div className="max-w-6xl mx-auto px-4 pb-12">
         <Tabs defaultValue="videos" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="videos">Videos</TabsTrigger>
-            <TabsTrigger value="about">About</TabsTrigger>
-            <TabsTrigger value="boosted">Boosted</TabsTrigger>
-          </TabsList>
+          <div className="bg-black/20 backdrop-blur-xl rounded-2xl border border-white/10 overflow-hidden">
+            <TabsList className="w-full grid grid-cols-3 bg-transparent border-b border-white/10 rounded-none p-0">
+              <TabsTrigger 
+                value="videos" 
+                className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-violet-600 data-[state=active]:text-white text-gray-300 py-4 text-lg font-semibold border-0 rounded-none"
+              >
+                <Play className="h-5 w-5 mr-2" />
+                Videos
+              </TabsTrigger>
+              <TabsTrigger 
+                value="about" 
+                className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-violet-600 data-[state=active]:text-white text-gray-300 py-4 text-lg font-semibold border-0 rounded-none"
+              >
+                <Users className="h-5 w-5 mr-2" />
+                About
+              </TabsTrigger>
+              <TabsTrigger 
+                value="boosted" 
+                className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-violet-600 data-[state=active]:text-white text-gray-300 py-4 text-lg font-semibold border-0 rounded-none"
+              >
+                <TrendingUp className="h-5 w-5 mr-2" />
+                Boosted
+              </TabsTrigger>
+            </TabsList>
 
-          <TabsContent value="videos" className="mt-6">
-            {spliks.length > 0 ? (
-              <VideoGrid
-                spliks={spliks}
-                showCreatorInfo={false}
-                onDeleteComment={
-                  currentUserId === profile.id
-                    ? async (commentId) => {
-                        const { error } = await supabase
-                          .from("comments")
-                          .delete()
-                          .eq("id", commentId);
-                        if (!error) toast.success("Comment deleted");
-                      }
-                    : undefined
-                }
-              />
-            ) : (
-              <Card className="p-12 text-center">
-                <Film className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No videos yet</p>
-              </Card>
-            )}
-          </TabsContent>
-
-          <TabsContent value="about" className="mt-6">
-            <Card className="p-6">
-              <h3 className="text-lg font-semibold mb-4">
-                About {nameOrUsername}
-              </h3>
-              <div className="space-y-4">
-                {profile.bio && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Bio</p>
-                    <p>{profile.bio}</p>
+            <TabsContent value="videos" className="p-6 m-0">
+              {spliks.length > 0 ? (
+                <VideoGrid
+                  spliks={spliks}
+                  showCreatorInfo={false}
+                  onDeleteComment={
+                    currentUserId === profile.id
+                      ? async (commentId) => {
+                          const { error } = await supabase
+                            .from("comments")
+                            .delete()
+                            .eq("id", commentId);
+                          if (!error) toast.success("Comment deleted");
+                        }
+                      : undefined
+                  }
+                />
+              ) : (
+                <div className="text-center py-20">
+                  <div className="w-24 h-24 mx-auto bg-gradient-to-br from-purple-600 to-violet-600 rounded-full flex items-center justify-center mb-6">
+                    <Film className="h-12 w-12 text-white" />
                   </div>
-                )}
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Stats</p>
-                  <div className="flex gap-4">
-                    <Badge variant="secondary">
-                      <Film className="mr-1 h-3 w-3" />
-                      {profile.spliks_count} Videos
-                    </Badge>
-                    <Badge variant="secondary">
-                      <Users className="mr-1 h-3 w-3" />
-                      {profile.followers_count} Followers
-                    </Badge>
-                  </div>
+                  <h3 className="text-2xl font-bold text-white mb-2">No videos yet</h3>
+                  <p className="text-gray-400">This creator hasn't posted any videos</p>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Member Since</p>
-                  <p>{formatDate(profile.created_at)}</p>
+              )}
+            </TabsContent>
+
+            <TabsContent value="about" className="p-6 m-0">
+              <div className="max-w-3xl mx-auto">
+                <h3 className="text-2xl font-bold text-white mb-8 text-center">
+                  About {nameOrUsername}
+                </h3>
+                <div className="space-y-8">
+                  {profile.bio && (
+                    <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                      <h4 className="text-lg font-semibold text-purple-300 mb-3">Bio</h4>
+                      <p className="text-gray-300 leading-relaxed">{profile.bio}</p>
+                    </div>
+                  )}
+                  <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                    <h4 className="text-lg font-semibold text-purple-300 mb-4">Stats</h4>
+                    <div className="flex flex-wrap gap-4">
+                      <Badge className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 text-sm">
+                        <Film className="mr-2 h-4 w-4" />
+                        {profile.spliks_count} Videos
+                      </Badge>
+                      <Badge className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 text-sm">
+                        <Users className="mr-2 h-4 w-4" />
+                        {profile.followers_count} Followers
+                      </Badge>
+                      <Badge className="bg-gradient-to-r from-purple-600 to-violet-600 text-white px-4 py-2 text-sm">
+                        <Heart className="mr-2 h-4 w-4" />
+                        {profile.following_count} Following
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+                    <h4 className="text-lg font-semibold text-purple-300 mb-3">Member Since</h4>
+                    <p className="text-gray-300">{formatDate(profile.created_at)}</p>
+                  </div>
                 </div>
               </div>
-            </Card>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="boosted" className="mt-6">
-            {boostedLoading ? (
-              <Card className="p-12 text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-                <p className="text-muted-foreground mt-3">Loading boosted videos…</p>
-              </Card>
-            ) : boostedSpliks.length > 0 ? (
-              <VideoGrid
-                spliks={boostedSpliks}
-                showCreatorInfo={true}
-                onDeleteComment={
-                  currentUserId === profile.id
-                    ? async (commentId) => {
-                        const { error } = await supabase
-                          .from("comments")
-                          .delete()
-                          .eq("id", commentId);
-                        if (!error) toast.success("Comment deleted");
-                      }
-                    : undefined
-                }
-              />
-            ) : (
-              <Card className="p-12 text-center">
-                <TrendingUp className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">No boosted videos yet</p>
-              </Card>
-            )}
-          </TabsContent>
+            <TabsContent value="boosted" className="p-6 m-0">
+              {boostedLoading ? (
+                <div className="text-center py-20">
+                  <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent mx-auto mb-4" />
+                  <p className="text-gray-400">Loading boosted videos...</p>
+                </div>
+              ) : boostedSpliks.length > 0 ? (
+                <VideoGrid
+                  spliks={boostedSpliks}
+                  showCreatorInfo={true}
+                  onDeleteComment={
+                    currentUserId === profile.id
+                      ? async (commentId) => {
+                          const { error } = await supabase
+                            .from("comments")
+                            .delete()
+                            .eq("id", commentId);
+                          if (!error) toast.success("Comment deleted");
+                        }
+                      : undefined
+                  }
+                />
+              ) : (
+                <div className="text-center py-20">
+                  <div className="w-24 h-24 mx-auto bg-gradient-to-br from-purple-600 to-violet-600 rounded-full flex items-center justify-center mb-6">
+                    <TrendingUp className="h-12 w-12 text-white" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-white mb-2">No boosted videos</h3>
+                  <p className="text-gray-400">This creator hasn't boosted any videos yet</p>
+                </div>
+              )}
+            </TabsContent>
+          </div>
         </Tabs>
       </div>
 
