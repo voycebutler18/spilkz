@@ -173,3 +173,33 @@
   .btn-soft:hover { background: hsl(var(--card)); border-color: hsl(var(--border) / 0.9); }
   .btn-soft:active { transform: translateY(0.5px); }
 }
+
+/* ===== ADDED: Invisible scrollbars + no sideways movement ===== */
+@layer base {
+  html, body {
+    height: 100%;
+    overflow-y: auto;           /* still scroll vertically */
+    overflow-x: hidden;         /* never scroll sideways */
+    -ms-overflow-style: none;   /* IE/Edge */
+    scrollbar-width: none;      /* Firefox */
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;   /* Chrome/Safari */
+  }
+}
+
+@layer utilities {
+  /* Use on any scrollable pane to hide its scrollbar */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
+  }
+}
