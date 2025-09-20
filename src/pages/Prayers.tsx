@@ -1,10 +1,8 @@
 // src/pages/Prayers.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { fetchPrayers, Prayer } from "@/lib/prayers";
 import PrayerComposer from "@/components/prayers/PrayerComposer";
 import PrayerCard from "@/components/prayers/PrayerCard";
-import PrayerMediaUpload, { PrayerMediaItem } from "@/components/prayers/PrayerMediaUpload";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 
@@ -31,151 +29,7 @@ import {
   Loader2,
   Sparkles,
   X,
-  Plus,
-  Trash2,
 } from "lucide-react";
-
-/* ===========================================================
-   tiny safe helpers (STOP render-time crashes)
-   =========================================================== */
-const isString = (v: unknown): v is string => typeof v === "string";
-const hasText = (v: unknown, min = 1) =>
-  isString(v) && v.trim().length >= min;
-const startsWithSafe = (v: unknown, prefix: string) =>
-  isString(v) ? v.startsWith(prefix) : false;
-
-/* =================== Storage helpers for rail =================== */
-const PRAYER_BUCKET = import.meta.env.VITE_PRAYERS_BUCKET || "prayers_media";
-
-const pathFromPublicUrl = (url: string) => {
-  try {
-    const u = new URL(url);
-    const parts = u.pathname.split("/");
-    const idx = parts.findIndex((p) => p === PRAYER_BUCKET);
-    if (idx >= 0) return decodeURIComponent(parts.slice(idx + 1).join("/"));
-  } catch {}
-  return null;
-};
-
-/* =================== Prayers Media Rail (local to page) =================== */
-function PrayersMediaRail({ currentUserId }: { currentUserId?: string | null }) {
-  const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<PrayerMediaItem[]>([]);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("prayer_media")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(60);
-        if (error) throw error;
-        if (!alive) return;
-        const rows = (data || []).map((r: any) => ({
-          id: String(r.id),
-          user_id: String(r.user_id),
-          kind: (r.kind as "photo" | "video") || "photo",
-          url: String(r.url),
-          thumbnail_url: r.thumbnail_url ?? null,
-          duration: r.duration ?? null,
-          description: r.description ?? null,
-          created_at: String(r.created_at),
-        })) as PrayerMediaItem[];
-        setItems(rows);
-      } catch (e) {
-        console.error("prayer_media load error", e);
-        if (alive) setItems([]);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-
-    load();
-
-    const ch = supabase
-      .channel("prayers-media-rail")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "prayer_media" }, load)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "prayer_media" }, load)
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-      alive = false;
-    };
-  }, []);
-
-  const onDelete = async (item: PrayerMediaItem) => {
-    if (!currentUserId || currentUserId !== item.user_id) return;
-    setDeletingId(item.id);
-    try {
-      await supabase.from("prayer_media").delete().eq("id", item.id).eq("user_id", currentUserId);
-      const p = pathFromPublicUrl(item.url);
-      if (p) await supabase.storage.from(PRAYER_BUCKET).remove([p]);
-      setItems((prev) => prev.filter((x) => x.id !== item.id));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  return (
-    <div className="surface p-3 md:p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm md:text-base font-semibold">Prayers — Recent Photos & Videos</h3>
-        <span className="text-xs text-muted-foreground">{items.length}</span>
-      </div>
-
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">Loading…</div>
-      ) : items.length === 0 ? (
-        <div className="py-8 text-center text-muted-foreground text-sm">
-          Nothing posted yet. Be the first to share a prayer photo or 3-sec video.
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 md:gap-3">
-          {items.map((it) => (
-            <div key={it.id} className="relative group rounded-lg overflow-hidden border border-border/40 bg-muted/30">
-              {it.kind === "photo" ? (
-                <img
-                  src={it.url}
-                  alt={it.description || "Prayer photo"}
-                  className="w-full h-36 md:h-40 object-cover"
-                  loading="lazy"
-                />
-              ) : (
-                <video
-                  src={it.url}
-                  className="w-full h-36 md:h-40 object-cover"
-                  muted
-                  playsInline
-                  preload="metadata"
-                  controls
-                />
-              )}
-
-              {currentUserId === it.user_id && (
-                <button
-                  onClick={() => onDelete(it)}
-                  disabled={deletingId === it.id}
-                  className="absolute top-2 right-2 inline-flex items-center justify-center h-8 w-8 rounded-full bg-black/60 text-white hover:bg-black/75"
-                  title="Delete"
-                >
-                  {deletingId === it.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ============================= PRAYERS FEED ============================= */
 
@@ -184,19 +38,6 @@ export default function PrayersPage() {
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
-
-  // uploader modal
-  const [uploadOpen, setUploadOpen] = useState(false);
-
-  // who am I? (for delete controls in rail)
-  const [userId, setUserId] = useState<string | null>(null);
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null));
-    const { data } = supabase.auth.onAuthStateChange((_e, session) =>
-      setUserId(session?.user?.id ?? null)
-    );
-    return () => data.subscription.unsubscribe();
-  }, []);
 
   const load = async (append = false) => {
     try {
@@ -232,9 +73,9 @@ export default function PrayersPage() {
     return Array.from(map.entries());
   }, [items]);
 
-  /* ============================= CHURCH FINDER ============================= */
+  /* ============================= CHURCH FINDER POPUP ============================= */
 
-  // distance options
+  // (US) miles only
   type DistanceKey = "1mi" | "3mi" | "5mi" | "10mi";
   const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number }[] = [
     { key: "1mi", label: "1 mile", meters: 1609.34 },
@@ -282,16 +123,19 @@ export default function PrayersPage() {
     { key: "christian_unitarian", label: "Christian – Unitarian Universalist", religionRegex: "christian|unitarian", denomRegex: "unitarian|uu" },
     { key: "christian_lds", label: "Christian – Latter-day Saints (Mormon)", religionRegex: "christian|mormon", denomRegex: "lds|latter[_ ]day|mormon" },
     { key: "christian_jehovah", label: "Christian – Jehovah's Witnesses", religionRegex: "christian", denomRegex: "jehovah" },
+
     { key: "muslim_any", label: "Muslim (Any)", religionRegex: "muslim|islam" },
     { key: "muslim_sunni", label: "Muslim – Sunni", religionRegex: "muslim|islam", denomRegex: "sunni" },
     { key: "muslim_shia", label: "Muslim – Shia", religionRegex: "muslim|islam", denomRegex: "shia|shi[_ ]?ite" },
     { key: "muslim_ahmadiyya", label: "Muslim – Ahmadiyya", religionRegex: "muslim|islam", denomRegex: "ahmadi" },
     { key: "muslim_sufi", label: "Muslim – Sufi", religionRegex: "muslim|islam", denomRegex: "sufi" },
+
     { key: "jewish_any", label: "Jewish (Any)", religionRegex: "jewish|judaism" },
     { key: "jewish_orthodox", label: "Jewish – Orthodox", religionRegex: "jewish|judaism", denomRegex: "orthodox|chabad|hasidic|haredi|modern[_ ]orthodox" },
     { key: "jewish_conservative", label: "Jewish – Conservative", religionRegex: "jewish|judaism", denomRegex: "conservative" },
     { key: "jewish_reform", label: "Jewish – Reform", religionRegex: "jewish|judaism", denomRegex: "reform" },
     { key: "jewish_reconstructionist", label: "Jewish – Reconstructionist", religionRegex: "jewish|judaism", denomRegex: "reconstructionist" },
+
     { key: "hindu", label: "Hindu", religionRegex: "hindu" },
     { key: "buddhist_any", label: "Buddhist (Any)", religionRegex: "buddhist" },
     { key: "buddhist_theravada", label: "Buddhist – Theravada", religionRegex: "buddhist", denomRegex: "theravada" },
@@ -309,11 +153,14 @@ export default function PrayersPage() {
     { key: "other", label: "Other (General Place of Worship)", religionRegex: ".*" },
   ];
 
+  // dialog state
   const [finderOpen, setFinderOpen] = useState(false);
   const [locStage, setLocStage] = useState<"idle" | "asking" | "have" | "error">("idle");
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [locationQuery, setLocationQuery] = useState("");
   const [distanceKey, setDistanceKey] = useState<DistanceKey>("5mi");
+
+  // start broad to avoid "no results"
   const [faithFilter, setFaithFilter] = useState<string>("christian_any");
   const [faithSearch, setFaithSearch] = useState("");
 
@@ -323,26 +170,212 @@ export default function PrayersPage() {
   const [broadenNote, setBroadenNote] = useState<string | null>(null);
   const [enriching, setEnriching] = useState(false);
 
+  // scroll plumbing
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const resultsAnchorRef = useRef<HTMLDivElement | null>(null);
 
-  const metersForDistanceKey = useMemo(() => {
-    const map = { "1mi": 1609.34, "3mi": 4828.03, "5mi": 8046.72, "10mi": 16093.44 };
-    return map[distanceKey] || 8046.72;
-  }, [distanceKey]);
+  const metersForDistanceKey = useMemo(
+    () => DISTANCE_OPTIONS.find((d) => d.key === distanceKey)?.meters || 8046.72,
+    [distanceKey]
+  );
+  const prettyDistance = (km: number) => `${(km * 0.621371).toFixed(1)} mi`;
 
   const filteredFaithOptions = useMemo(() => {
     const q = faithSearch.trim().toLowerCase();
-    const options = FAITH_OPTIONS;
-    if (!q) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q));
+    if (!q) return FAITH_OPTIONS;
+    return FAITH_OPTIONS.filter((o) => o.label.toLowerCase().includes(q));
   }, [faithSearch]);
 
-  /* ---- geocoding, overpass, helpers… (unchanged from your last message) ---- */
-  // (to keep this reply short, these helpers are identical to your last code,
-  // except we never call string methods without guarding with isString/hasText)
+  const openFinder = () => {
+    setFinderOpen(true);
+    resetFinder();
+  };
+  const resetFinder = () => {
+    setLocStage("idle");
+    setCoords(null);
+    setLocationQuery("");
+    setNearby([]);
+    setNearbyError(null);
+    setBroadenNote(null);
+    setFetchingNearby(false);
+    setEnriching(false);
+    setDistanceKey("5mi");
+    setFaithFilter("christian_any");
+    setFaithSearch("");
+  };
 
-  const reverseGeocode = async (lat: number, lon: number) => {
+  /* ------------ Address + name helpers (IMPROVED) ------------ */
+
+  const normalizeName = (tags: Record<string, string> | undefined) => {
+    if (!tags) return "Place of Worship";
+    
+    // Try various name fields in order of preference
+    const name = tags["name"] || 
+                 tags["name:en"] || 
+                 tags["official_name"] || 
+                 tags["brand"] || 
+                 tags["operator"] ||
+                 "Place of Worship";
+    
+    return name;
+  };
+
+  const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
+    if (!tags) return "";
+    
+    // Check for pre-formatted address first
+    if (tags["addr:full"]) return tags["addr:full"];
+    
+    // Build address from components - be more flexible
+    const parts = [];
+    
+    // House number + street
+    const houseNum = tags["addr:housenumber"] || tags["addr:housename"];
+    const street = tags["addr:street"] || tags["addr:road"];
+    if (houseNum && street) {
+      parts.push(`${houseNum} ${street}`);
+    } else if (street) {
+      parts.push(street);
+    }
+    
+    // Neighborhood/suburb (optional)
+    const neighborhood = tags["addr:neighbourhood"] || tags["addr:suburb"];
+    if (neighborhood && !parts.some(p => p.includes(neighborhood))) {
+      parts.push(neighborhood);
+    }
+    
+    // City/town (important)
+    const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"];
+    if (city) {
+      parts.push(city);
+    }
+    
+    // State (important for US)
+    const state = tags["addr:state"];
+    if (state) {
+      parts.push(state);
+    }
+    
+    // ZIP code
+    const zip = tags["addr:postcode"];
+    if (zip) {
+      parts.push(zip);
+    }
+    
+    const fullAddress = parts.join(", ");
+    
+    // Return address even if incomplete - don't require street AND city
+    return fullAddress || "";
+  };
+
+  async function reverseGeocodeAddress(lat: number, lon: number): Promise<string | null> {
+    try {
+      const url = new URL("https://nominatim.openstreetmap.org/reverse");
+      url.searchParams.set("format", "jsonv2");
+      url.searchParams.set("lat", String(lat));
+      url.searchParams.set("lon", String(lon));
+      url.searchParams.set("addressdetails", "1");
+      url.searchParams.set("zoom", "18"); // Higher zoom for more detailed address
+      
+      const res = await fetch(url.toString(), {
+        headers: { 
+          "Accept-Language": "en", 
+          "User-Agent": "SplikzApp/1.0" 
+        },
+      });
+      
+      if (!res.ok) return null;
+      
+      const j = (await res.json()) as any;
+      const a = j.address || {};
+      
+      // Build a more comprehensive address
+      const addressParts = [];
+      
+      // House number and street
+      if (a.house_number && (a.road || a.street)) {
+        addressParts.push(`${a.house_number} ${a.road || a.street}`);
+      } else if (a.road || a.street) {
+        addressParts.push(a.road || a.street);
+      }
+      
+      // Neighborhood/suburb
+      if (a.neighbourhood || a.suburb) {
+        addressParts.push(a.neighbourhood || a.suburb);
+      }
+      
+      // City/town
+      const city = a.city || a.town || a.village || a.municipality;
+      if (city) {
+        addressParts.push(city);
+      }
+      
+      // State
+      if (a.state) {
+        addressParts.push(a.state);
+      }
+      
+      // ZIP code
+      if (a.postcode) {
+        addressParts.push(a.postcode);
+      }
+      
+      const fullAddr = addressParts.join(", ");
+      
+      // If we got a good address, use it; otherwise fall back to display_name
+      if (fullAddr.length > 10) { // Basic check for meaningful address
+        return fullAddr;
+      }
+      
+      // Clean up display_name as fallback
+      if (j.display_name) {
+        // Remove everything after the first comma that looks like coordinates
+        const displayName = j.display_name.split(',')[0];
+        return displayName.length > 5 ? displayName : j.display_name;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error("Reverse geocoding error:", error);
+      return null;
+    }
+  }
+
+  // Updated ensureAddressesForAll function to be more aggressive
+  async function ensureAddressesForAll(list: NearbyChurch[]) {
+    setEnriching(true);
+    try {
+      const itemsNeedingAddresses = list.filter(item => 
+        !item.address || 
+        item.address === "Address not available" || 
+        item.address.startsWith("Near ") || // Our coordinate fallback
+        item.address.length < 10 // Very short addresses are probably incomplete
+      );
+      
+      for (const item of itemsNeedingAddresses) {
+        try {
+          const addr = await reverseGeocodeAddress(item.lat, item.lon);
+          if (addr && addr.length > 5) { // Got a meaningful address
+            setNearby((prev) => 
+              prev.map((p) => 
+                p.id === item.id ? { ...p, address: addr } : p
+              )
+            );
+          }
+          // Rate limiting - be respectful to Nominatim
+          await new Promise((r) => setTimeout(r, 500));
+        } catch (error) {
+          console.error(`Failed to geocode address for ${item.name}:`, error);
+          // Continue with other items even if one fails
+        }
+      }
+    } finally {
+      setEnriching(false);
+    }
+  }
+
+  /* ----------------- Nominatim helpers ----------------- */
+  async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
     try {
       const url = new URL("https://nominatim.openstreetmap.org/reverse");
       url.searchParams.set("format", "jsonv2");
@@ -361,9 +394,9 @@ export default function PrayersPage() {
     } catch {
       return null;
     }
-  };
+  }
 
-  const geocodeToCoords = async (q: string) => {
+  async function geocodeToCoords(q: string): Promise<{ lat: number; lon: number } | null> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
@@ -386,21 +419,22 @@ export default function PrayersPage() {
       if (error.name === "AbortError") throw new Error("Location search timed out. Please try again.");
       throw error;
     }
-  };
+  }
 
-  const overpassFetch = async (query: string) => {
-    const endpoints = [
-      "https://overpass.kumi.systems/api/interpreter",
-      "https://overpass-api.de/api/interpreter",
-      "https://overpass.osm.ch/api/interpreter",
-    ];
-    let lastErr: any = null;
-    for (const [i, ep] of endpoints.entries()) {
+  /* ---------------- Overpass (mirrors + resilient) ---------------- */
+  const OVERPASS_ENDPOINTS = [
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.osm.ch/api/interpreter",
+  ];
+
+  async function overpassFetch(query: string) {
+    const tryOnce = async (endpoint: string, attempt: number) => {
       const controller = new AbortController();
-      const timeoutMs = 12000 + i * 2000;
+      const timeoutMs = 12000 + attempt * 2000;
       const t = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch(ep, {
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "text/plain;charset=UTF-8",
@@ -419,6 +453,15 @@ export default function PrayersPage() {
         return await res.json();
       } catch (e) {
         clearTimeout(t);
+        throw e;
+      }
+    };
+
+    let lastErr: any = null;
+    for (const ep of [...OVERPASS_ENDPOINTS].sort(() => Math.random() - 0.5)) {
+      try {
+        return await tryOnce(ep, lastErr ? 1 : 0);
+      } catch (e) {
         lastErr = e;
       }
     }
@@ -427,7 +470,7 @@ export default function PrayersPage() {
         ? "Search timed out. Please try again."
         : `All Overpass mirrors failed. Please try again in a moment. (${lastErr?.message || "Unknown error"})`
     );
-  };
+  }
 
   const haversineKm = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
     const R = 6371;
@@ -435,7 +478,7 @@ export default function PrayersPage() {
     const dLon = ((b.lon - a.lon) * Math.PI) / 180;
     const la1 = (a.lat * Math.PI) / 180;
     const la2 = (b.lat * Math.PI) / 180;
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) ** 1 * Math.sin(dLon / 2) ** 2;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(h));
   };
 
@@ -505,91 +548,6 @@ export default function PrayersPage() {
     );
   };
 
-  const normalizeName = (tags: Record<string, string> | undefined) => {
-    if (!tags) return "Place of Worship";
-    return (
-      tags["name"] ||
-      tags["name:en"] ||
-      tags["official_name"] ||
-      tags["brand"] ||
-      tags["operator"] ||
-      "Place of Worship"
-    );
-  };
-
-  const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
-    if (!tags) return "";
-    if (tags["addr:full"]) return tags["addr:full"];
-    const parts: string[] = [];
-    const houseNum = tags["addr:housenumber"] || tags["addr:housename"];
-    const street = tags["addr:street"] || tags["addr:road"];
-    if (houseNum && street) parts.push(`${houseNum} ${street}`);
-    else if (street) parts.push(street);
-    const neighborhood = tags["addr:neighbourhood"] || tags["addr:suburb"];
-    if (neighborhood && !parts.some((p) => p.includes(neighborhood))) parts.push(neighborhood);
-    const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"];
-    if (city) parts.push(city);
-    const state = tags["addr:state"];
-    if (state) parts.push(state);
-    const zip = tags["addr:postcode"];
-    if (zip) parts.push(zip);
-    return parts.join(", ");
-  };
-
-  const reverseGeocodeAddress = async (lat: number, lon: number) => {
-    try {
-      const url = new URL("https://nominatim.openstreetmap.org/reverse");
-      url.searchParams.set("format", "jsonv2");
-      url.searchParams.set("lat", String(lat));
-      url.searchParams.set("lon", String(lon));
-      url.searchParams.set("addressdetails", "1");
-      url.searchParams.set("zoom", "18");
-      const res = await fetch(url.toString(), {
-        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
-      });
-      if (!res.ok) return null;
-      const j = (await res.json()) as any;
-      const a = j.address || {};
-      const parts: string[] = [];
-      if (a.house_number && (a.road || a.street)) parts.push(`${a.house_number} ${a.road || a.street}`);
-      else if (a.road || a.street) parts.push(a.road || a.street);
-      if (a.neighbourhood || a.suburb) parts.push(a.neighbourhood || a.suburb);
-      const city = a.city || a.town || a.village || a.municipality;
-      if (city) parts.push(city);
-      if (a.state) parts.push(a.state);
-      if (a.postcode) parts.push(a.postcode);
-      const full = parts.join(", ");
-      if (full.length > 10) return full;
-      if (j.display_name) {
-        const displayName = j.display_name.split(",")[0];
-        return displayName.length > 5 ? displayName : j.display_name;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  const ensureAddressesForAll = async (list: NearbyChurch[]) => {
-    setEnriching(true);
-    try {
-      const need = list.filter(
-        (x) => !hasText(x.address, 5) || startsWithSafe(x.address, "Near ")
-      );
-      for (const item of need) {
-        try {
-          const addr = await reverseGeocodeAddress(item.lat, item.lon);
-          if (hasText(addr, 6)) {
-            setNearby((prev) => prev.map((p) => (p.id === item.id ? { ...p, address: addr! } : p)));
-          }
-          await new Promise((r) => setTimeout(r, 450));
-        } catch {}
-      }
-    } finally {
-      setEnriching(false);
-    }
-  };
-
   const runNearbySearch = async () => {
     try {
       setNearbyError(null);
@@ -600,7 +558,7 @@ export default function PrayersPage() {
 
       let center = coords;
       if (!center) {
-        if (!hasText(locationQuery)) {
+        if (!locationQuery.trim()) {
           setNearbyError("Enter a city or ZIP, or use your location.");
           setFetchingNearby(false);
           return;
@@ -632,7 +590,7 @@ export default function PrayersPage() {
         elements = json.elements || [];
       }
 
-      // 3) if still empty & denominational → religion-only
+      // 3) if still empty & denominational → broaden to religion-only
       if (!elements.length && faith.denomRegex) {
         setBroadenNote(
           `No exact matches for "${faith.label}". Broadened to ${
@@ -651,17 +609,27 @@ export default function PrayersPage() {
         }
       }
 
+      // Updated mapping logic with improved address handling
       const mapped: NearbyChurch[] = elements
         .map((el) => {
           const name = normalizeName(el.tags);
           const rLat = el.lat ?? el.center?.lat;
           const rLon = el.lon ?? el.center?.lon;
           if (typeof rLat !== "number" || typeof rLon !== "number") return null;
+
           const distanceKm = haversineKm(center!, { lat: rLat, lon: rLon });
           const maxDistanceKm = metersForDistanceKey / 1000 + 0.1;
           if (distanceKm > maxDistanceKm) return null;
-          const fromTags = assembleAddressFromTags(el.tags);
-          const address = hasText(fromTags, 5) ? fromTags : `Near ${rLat.toFixed(4)}, ${rLon.toFixed(4)}`;
+
+          const addrFromTags = assembleAddressFromTags(el.tags);
+          
+          // Always try to provide some address, even if partial
+          let address = addrFromTags;
+          if (!address || address.length < 5) {
+            // If we have minimal info from tags, at least show coordinates as fallback
+            address = `Near ${rLat.toFixed(4)}, ${rLon.toFixed(4)}`;
+          }
+
           return {
             id: `${el.type}/${el.id}`,
             name,
@@ -674,9 +642,13 @@ export default function PrayersPage() {
         })
         .filter(Boolean) as NearbyChurch[];
 
+      // dedupe & sort
       const unique = mapped.reduce((acc, item) => {
         const existing = acc.find(
-          (r) => r.name === item.name && Math.abs(r.lat - item.lat) < 0.0001 && Math.abs(r.lon - item.lon) < 0.0001
+          (r) =>
+            r.name === item.name &&
+            Math.abs(r.lat - item.lat) < 0.0001 &&
+            Math.abs(r.lon - item.lon) < 0.0001
         );
         if (!existing) acc.push(item);
         return acc;
@@ -685,9 +657,12 @@ export default function PrayersPage() {
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
 
+      // ensure all have a postal address
       await ensureAddressesForAll(byDistance);
 
-      if (byDistance.length === 0) setNearbyError("No results found. Try a larger radius or a different denomination.");
+      if (byDistance.length === 0) {
+        setNearbyError("No results found. Try a larger radius or a different denomination.");
+      }
     } catch (err: any) {
       console.error("Church search error:", err);
       setNearbyError(err.message || "Couldn't load places of worship. Please try again.");
@@ -701,14 +676,36 @@ export default function PrayersPage() {
     [coords]
   );
 
+  // Helper function to build Google Maps URL with proper address
+  const buildGoogleMapsUrl = (place: NearbyChurch) => {
+    // If we have a good address, use it; otherwise fall back to coordinates
+    if (place.address && place.address !== "Address not available" && !place.address.startsWith("Near ")) {
+      // Use the full address for the search
+      const addressQuery = `${place.name}, ${place.address}`;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
+    } else {
+      // Fall back to coordinates if no good address
+      return `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`;
+    }
+  };
+
+  // === Auto-scroll to results anchor when results appear ===
   useEffect(() => {
-    const el = resultsAnchorRef.current;
     if (!finderOpen) return;
     if (fetchingNearby) return;
     if (nearby.length === 0 && !nearbyError) return;
-    setTimeout(() => {
-      el?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 80);
+    // Smooth scroll so results aren't hidden on mobile
+    const el = resultsAnchorRef.current;
+    if (el) {
+      // use a short delay to ensure layout is painted
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    } else if (scrollAreaRef.current) {
+      setTimeout(() => {
+        scrollAreaRef.current!.scrollTo({ top: scrollAreaRef.current!.scrollHeight, behavior: "smooth" });
+      }, 80);
+    }
   }, [finderOpen, fetchingNearby, nearby.length, nearbyError]);
 
   /* ================================== RENDER ================================== */
@@ -721,47 +718,21 @@ export default function PrayersPage() {
           Daily Prayers <span className="sm:inline block">and Testimonies</span>
         </h1>
 
-        <div className="flex gap-2 sm:ml-auto w-full sm:w-auto">
-          <Button
-            onClick={() => setUploadOpen(true)}
-            className="bg-primary text-primary-foreground hover:opacity-90 rounded-xl w-full sm:w-auto"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Post photo/video
-          </Button>
-
-          <Button
-            onClick={() => {
-              setFinderOpen(true);
-              // reset finder state
-              setLocStage("idle");
-              setCoords(null);
-              setLocationQuery("");
-              setNearby([]);
-              setNearbyError(null);
-              setBroadenNote(null);
-              setFetchingNearby(false);
-              setEnriching(false);
-              setDistanceKey("5mi");
-              setFaithFilter("christian_any");
-              setFaithSearch("");
-            }}
-            className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold rounded-xl shadow-2xl w-full sm:w-auto"
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative flex items-center justify-center gap-2">
-              <MapPin className="h-[18px] w-[18px]" />
-              <span className="sm:hidden">Find churches</span>
-              <span className="hidden sm:inline">Find local churches near you</span>
-            </div>
-          </Button>
-        </div>
+        <Button
+          onClick={openFinder}
+          className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold rounded-xl shadow-2xl
+                     w-full sm:w-auto min-h-11 px-4 sm:px-4"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+          <div className="relative flex items-center justify-center gap-2">
+            <MapPin className="h-[18px] w-[18px]" />
+            <span className="sm:hidden">Find churches</span>
+            <span className="hidden sm:inline">Find local churches near you</span>
+          </div>
+        </Button>
       </div>
 
-      {/* Prayers media rail */}
-      <PrayersMediaRail currentUserId={userId} />
-
-      {/* composer + feed */}
+      {/* composer */}
       <PrayerComposer onPosted={(p: Prayer) => setItems((cur) => [p, ...cur])} />
 
       {error && (
@@ -805,6 +776,7 @@ export default function PrayersPage() {
       {/* ===================== FINDER DIALOG ===================== */}
       <Dialog open={finderOpen} onOpenChange={setFinderOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl">
+          {/* Single explicit close button */}
           <button
             aria-label="Close"
             onClick={() => setFinderOpen(false)}
@@ -832,6 +804,7 @@ export default function PrayersPage() {
             </DialogDescription>
           </DialogHeader>
 
+          {/* Scrollable content with visible scrollbar */}
           <div ref={scrollAreaRef} className="relative z-10 h-[70vh] overflow-y-auto">
             <div className="px-4 sm:px-6 py-5 space-y-6 pb-24">
               {/* Location */}
@@ -845,9 +818,8 @@ export default function PrayersPage() {
                     placeholder="City or ZIP (e.g., Chicago, 60601)"
                     value={locationQuery}
                     onChange={(e) => {
-                      const v = e.target.value;
-                      setLocationQuery(v);
-                      if (hasText(v) && coords) {
+                      setLocationQuery(e.target.value);
+                      if (e.target.value.trim() && coords) {
                         setCoords(null);
                         setLocStage("idle");
                       }
@@ -908,6 +880,7 @@ export default function PrayersPage() {
                       onChange={(e) => setFaithSearch(e.target.value)}
                       className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
                     />
+                    {/* Scrollable faith options with visible scrollbar */}
                     <div className="max-h-48 overflow-y-auto">
                       <div className="grid grid-cols-1 gap-2">
                         {filteredFaithOptions.map((opt) => (
@@ -934,7 +907,7 @@ export default function PrayersPage() {
               <div className="flex justify-center pt-2">
                 <Button
                   onClick={runNearbySearch}
-                  disabled={fetchingNearby || (!coords && !hasText(locationQuery))}
+                  disabled={fetchingNearby || (!coords && !locationQuery.trim())}
                   className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold
                              w-full sm:w-auto px-6 py-4 text-base rounded-2xl shadow-2xl min-h-[52px]"
                 >
@@ -970,54 +943,50 @@ export default function PrayersPage() {
               )}
 
               {/* Results */}
-              {nearby.length > 0 && !fetchingNearby && (
+              {!fetchingNearby && nearby.length > 0 && (
                 <div className="space-y-4">
                   <h3 className="text-white text-lg sm:text-xl font-semibold">
                     Found {nearby.length} nearby
                   </h3>
                   <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                    <div className="max-h-[50vh] sm:max_h-[65vh] overflow-y-auto">
-                      {nearby.map((place, index) => {
-                        const goodAddress = hasText(place.address, 5) && !startsWithSafe(place.address, "Near ");
-                        const distanceMi = (place.distanceKm * 0.621371).toFixed(1);
-                        const href = goodAddress
-                          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.name}, ${place.address}`)}`
-                          : `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`;
-                        return (
-                          <div
-                            key={place.id}
-                            className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
-                              index !== nearby.length - 1 ? "border-b border-white/10" : ""
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
-                                {place.name}
-                              </div>
-                              <div className="text-gray-300 text-sm leading-relaxed mb-2">
-                                {goodAddress ? place.address : "Address loading…"}
-                              </div>
-                              <div className="text-yellow-300 text-sm font-medium">{distanceMi} mi away</div>
+                    {/* Results list with visible scrollbar */}
+                    <div className="max-h-[50vh] sm:max-h-[65vh] overflow-y-auto">
+                      {nearby.map((place, index) => (
+                        <div
+                          key={place.id}
+                          className={`flex items-start sm:items-center justify-between gap-3 p-4 hover:bg-white/5 transition-all duration-300 ${
+                            index !== nearby.length - 1 ? "border-b border-white/10" : ""
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-white font-semibold text-base sm:text-lg mb-1 line-clamp-2">
+                              {place.name}
                             </div>
-                            <a
-                              href={href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
-                              title={`Open ${place.name} in Google Maps`}
-                            >
-                              <span className="hidden sm:inline">View</span>
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
+                            <div className="text-gray-300 text-sm leading-relaxed mb-2">
+                              {place.address || "Loading address…"}
+                            </div>
+                            <div className="text-yellow-300 text-sm font-medium">
+                              {prettyDistance(place.distanceKm)} away
+                            </div>
                           </div>
-                        );
-                      })}
+                          <a
+                            href={buildGoogleMapsUrl(place)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-shrink-0 flex items-center gap-2 px-4 py-3 text-sm bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-xl shadow-lg min-h-[44px]"
+                            title={`Open ${place.name} in Google Maps`}
+                          >
+                            <span className="hidden sm:inline">View</span>
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
               )}
 
-              {!fetchingNearby && nearby.length === 0 && (coords || hasText(locationQuery)) && !nearbyError && (
+              {!fetchingNearby && nearby.length === 0 && (coords || locationQuery.trim()) && !nearbyError && (
                 <div className="text-center p-6 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-gray-300 text-base">
                   No results found. Try a larger radius or a different denomination.
                 </div>
@@ -1026,15 +995,6 @@ export default function PrayersPage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* ===== Upload modal (new) ===== */}
-      <PrayerMediaUpload
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        onUploaded={() => {
-          /* rail refreshes via realtime */
-        }}
-      />
     </div>
   );
 }
