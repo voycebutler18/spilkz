@@ -5,7 +5,14 @@ import { supabase } from "@/integrations/supabase/client";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,18 +21,16 @@ import SplikCard from "@/components/splik/SplikCard";
 
 import { Loader2, RefreshCw, Sparkles, Camera, X, Plus } from "lucide-react";
 
-// ⬅️ Use the SAME right-rail pieces as your HomePage
+// HomePage-named rails (you added these files):
 import { MomentsBar } from "@/components/moments/MomentsBar";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
-
-// If you have a hook already, you can use it; otherwise reuse UA check:
-const isMobile =
-  typeof window !== "undefined" && /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent);
 
 /* ──────────────────────────────────────────────────────────────────────────
    Config & helpers (UNCHANGED)
 ────────────────────────────────────────────────────────────────────────── */
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
+const isMobile =
+  typeof window !== "undefined" && /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent);
 
 const cRandom = () => {
   if (typeof crypto !== "undefined" && (crypto as any).getRandomValues) {
@@ -103,7 +108,7 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   MAIN PAGE — HomePage layout, no Header.tsx
+   MAIN PAGE — HomePage layout, NO Header.tsx here
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const navigate = useNavigate();
@@ -112,20 +117,23 @@ const Explore = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState<any>(null);
 
-  // guest CTA (unchanged)
+  // guest CTA
   const [showGuestCta, setShowGuestCta] = useState(false);
 
-  // upload dialog (unchanged)
+  // upload dialog
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
 
+  // lets MomentsBar refresh immediately after uploads
+  const [reloadToken, setReloadToken] = useState(0);
+
   const { toast } = useToast();
   const feedRef = useRef<HTMLDivElement | null>(null);
 
-  /* auth (UNCHANGED) */
+  /* auth */
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) =>
@@ -134,7 +142,7 @@ const Explore = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // guest CTA persistence (UNCHANGED)
+  // guest CTA persistence
   useEffect(() => {
     const key = "hide-guest-cta";
     const hidden = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
@@ -148,7 +156,7 @@ const Explore = () => {
     setShowGuestCta(false);
   };
 
-  /* feed loader (UNCHANGED) */
+  /* feed loader */
   const fetchHomeFeed = async (showRefreshToast = false) => {
     try {
       showRefreshToast ? setRefreshing(true) : setLoading(true);
@@ -184,8 +192,8 @@ const Explore = () => {
           (profs || []).forEach((p: any) => (byId[p.id] = p));
         }
         const withProfiles = shuffledRows.map((r) => ({ ...r, profile: byId[r.user_id] }));
-        setFeedSpliks(withProfiles);
 
+        setFeedSpliks(withProfiles);
         preconnect(withProfiles[0]?.video_url || null);
         warmFirstVideoMeta(withProfiles[0]?.video_url || null);
       } else {
@@ -210,7 +218,7 @@ const Explore = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  /* autoplay controller (UNCHANGED) */
+  /* mobile-safe autoplay controller (single playing) */
   useEffect(() => {
     const host = feedRef.current;
     if (!host) return;
@@ -256,7 +264,6 @@ const Explore = () => {
         if (target && target !== currentPlayingVideo) {
           pauseAll(target);
           setup(target);
-
           try {
             await target.play();
             currentPlayingVideo = target;
@@ -325,7 +332,7 @@ const Explore = () => {
     };
   }, [feedSpliks]);
 
-  /* upload (UNCHANGED) */
+  /* upload */
   const uploadPhoto = async () => {
     if (!user) {
       toast({ title: "Sign in required", description: "Log in to upload a photo", variant: "destructive" });
@@ -344,6 +351,7 @@ const Explore = () => {
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${user.id}/${Date.now()}-${safeName}`;
 
+      // 1) upload to photos bucket
       const { error: upErr } = await supabase.storage
         .from(PHOTOS_BUCKET)
         .upload(path, file, { cacheControl: "3600", upsert: false });
@@ -353,21 +361,27 @@ const Explore = () => {
       const photo_url = pub?.publicUrl;
       if (!photo_url) throw new Error("Failed to resolve public URL");
 
-      await supabase.from("vibe_photos").insert({
+      // 2) insert into vibe_photos (rail)
+      const payload: Record<string, any> = {
         user_id: user.id,
         photo_url,
         description: photoDescription.trim(),
-        location: photoLocation.trim() || null,
-      });
+      };
+      if (photoLocation.trim()) payload.location = photoLocation.trim();
 
-      // also insert as a photo post in spliks
-      await supabase.from("spliks").insert({
+      const { error: insertErr } = await supabase.from("vibe_photos").insert(payload);
+      if (insertErr) throw insertErr;
+
+      // 3) also insert as a photo post in 'spliks'
+      const title = photoDescription.trim().slice(0, 80) || "Photo";
+      const mime = file.type || "image/jpeg";
+      const { error: splikErr } = await supabase.from("spliks").insert({
         user_id: user.id,
-        title: photoDescription.trim().slice(0, 80) || "Photo",
+        title,
         description: photoDescription.trim(),
         duration: 0,
         file_size: file.size,
-        mime_type: file.type || "image/jpeg",
+        mime_type: mime,
         status: "active",
         trim_start: null,
         trim_end: null,
@@ -377,6 +391,10 @@ const Explore = () => {
         thumbnail_url: photo_url,
         cover_time: 0,
       });
+      if (splikErr) throw splikErr;
+
+      // Let MomentsBar refresh immediately
+      setReloadToken((n) => n + 1);
 
       toast({ title: "Photo posted!", description: "Your photo is live." });
       setFile(null);
@@ -398,13 +416,13 @@ const Explore = () => {
   /* ──────────────── RENDER — HomePage layout only ──────────────── */
   return (
     <div className="min-h-screen bg-background">
-      {/* NO Header.tsx here */}
+      {/* NOTE: No Header.tsx rendered here */}
 
       <div className="flex">
         {/* Main Content (center feed) */}
         <div className={`flex-1 ${!isMobile ? "mr-80" : ""}`}>
           <div className="max-w-2xl mx-auto px-4 py-4">
-            {/* Top bar inside feed (refresh + guest CTA) */}
+            {/* Top inside-feed bar (refresh + guest CTA) */}
             <div className="flex items-center justify-between mb-4">
               <h1 className="text-xl font-bold">Home</h1>
               <Button
@@ -499,15 +517,12 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* Right Sidebar — use the HomePage rail */}
+        {/* Right Sidebar — same idea as HomePage (fixed) */}
         {!isMobile && (
-          <div
-            className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto"
-            // If you DO have a global top bar height, swap top-0/pt-20 for top-14/pt-6, etc.
-          >
-            <MomentsBar />
+          <div className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto">
+            <MomentsBar title="Splikz Photos" currentUserId={user?.id} reloadToken={reloadToken} />
             <div className="mt-6">
-              <ActivityFeed />
+              <ActivityFeed limit={60} />
             </div>
           </div>
         )}
@@ -533,7 +548,7 @@ const Explore = () => {
         )}
       </div>
 
-      {/* Upload dialog (unchanged) */}
+      {/* Upload dialog */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
