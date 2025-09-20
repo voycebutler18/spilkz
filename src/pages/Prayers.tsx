@@ -122,7 +122,7 @@ function PrayersMediaRail({ currentUserId }: { currentUserId?: string | null }) 
   };
 
   return (
-    <div className="surface p-3 md:p-4">
+    <div className="bg-card/50 border rounded-lg p-3 md:p-4">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm md:text-base font-semibold">Prayers — Recent Photos & Videos</h3>
         <span className="text-xs text-muted-foreground">{items.length}</span>
