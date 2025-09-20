@@ -1,10 +1,8 @@
 // src/pages/Prayers.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { fetchPrayers, Prayer } from "@/lib/prayers";
 import PrayerComposer from "@/components/prayers/PrayerComposer";
 import PrayerCard from "@/components/prayers/PrayerCard";
-import PrayerMediaUpload, { PrayerMediaItem } from "@/components/prayers/PrayerMediaUpload";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 
@@ -31,173 +29,15 @@ import {
   Loader2,
   Sparkles,
   X,
-  Plus,
-  Trash2,
 } from "lucide-react";
 
-/* =================== Helpers for media rail =================== */
-const PRAYER_BUCKET = import.meta.env.VITE_PRAYERS_BUCKET || "prayers_media";
-const pathFromPublicUrl = (url: string) => {
-  try {
-    const u = new URL(url);
-    const parts = u.pathname.split("/");
-    const idx = parts.findIndex((p) => p === PRAYER_BUCKET);
-    if (idx >= 0) return decodeURIComponent(parts.slice(idx + 1).join("/"));
-  } catch {}
-  return null;
-};
-
-/* =================== Prayers Media Rail =================== */
-function PrayersMediaRail({ currentUserId }: { currentUserId?: string | null }) {
-  const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<PrayerMediaItem[]>([]);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("prayer_media")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(60);
-        if (error) throw error;
-        if (!alive) return;
-        const rows = (data || []).map((r: any) => ({
-          id: String(r.id),
-          user_id: r.user_id as string,
-          kind: (r.kind as "photo" | "video") || "photo",
-          url: r.url as string,
-          thumbnail_url: r.thumbnail_url ?? null,
-          duration: r.duration ?? null,
-          description: r.description ?? null,
-          created_at: r.created_at as string,
-        })) as PrayerMediaItem[];
-        setItems(rows);
-      } catch (e) {
-        console.error("prayer_media load error", e);
-        if (alive) setItems([]);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-
-    load();
-
-    const ch = supabase
-      .channel("prayers-media-rail")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "prayer_media" }, load)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "prayer_media" }, load)
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-      alive = false;
-    };
-  }, []);
-
-  const onDelete = async (item: PrayerMediaItem) => {
-    if (!currentUserId || currentUserId !== item.user_id) return;
-    setDeletingId(item.id);
-    try {
-      const { error: delErr } = await supabase
-        .from("prayer_media")
-        .delete()
-        .eq("id", item.id)
-        .eq("user_id", currentUserId);
-      if (delErr) throw delErr;
-
-      const p = pathFromPublicUrl(item.url);
-      if (p) await supabase.storage.from(PRAYER_BUCKET).remove([p]);
-
-      setItems((prev) => prev.filter((x) => x.id !== item.id));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  return (
-    <div className="bg-card/50 border rounded-lg p-3 md:p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm md:text-base font-semibold">Prayers — Recent Photos & Videos</h3>
-        <span className="text-xs text-muted-foreground">{items.length}</span>
-      </div>
-
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">Loading…</div>
-      ) : items.length === 0 ? (
-        <div className="py-8 text-center text-muted-foreground text-sm">
-          Nothing posted yet. Be the first to share a prayer photo or 3-sec video.
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 md:gap-3">
-          {items.map((it) => (
-            <div key={it.id} className="relative group rounded-lg overflow-hidden border border-border/40 bg-muted/30">
-              {it.kind === "photo" ? (
-                <img
-                  src={it.url}
-                  alt={it.description || "Prayer photo"}
-                  className="w-full h-36 md:h-40 object-cover"
-                  loading="lazy"
-                />
-              ) : (
-                <video
-                  src={it.url}
-                  className="w-full h-36 md:h-40 object-cover"
-                  muted
-                  playsInline
-                  preload="metadata"
-                  controls
-                />
-              )}
-
-              {currentUserId === it.user_id && (
-                <button
-                  onClick={() => onDelete(it)}
-                  disabled={deletingId === it.id}
-                  className="absolute top-2 right-2 inline-flex items-center justify-center h-8 w-8 rounded-full bg-black/60 text-white hover:bg-black/75"
-                  title="Delete"
-                >
-                  {deletingId === it.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================= PRAYERS FEED + FINDER ============================= */
+/* ============================= PRAYERS FEED ============================= */
 
 export default function PrayersPage() {
   const [items, setItems] = useState<Prayer[]>([]);
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
-
-  // uploader modal
-  const [uploadOpen, setUploadOpen] = useState(false);
-
-  // who am I? (for delete controls in rail)
-  const [userId, setUserId] = useState<string | null>(null);
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null));
-    const { data } = supabase.auth.onAuthStateChange((_e, session) =>
-      setUserId(session?.user?.id ?? null)
-    );
-    return () => data.subscription.unsubscribe();
-  }, []);
 
   const load = async (append = false) => {
     try {
@@ -235,6 +75,7 @@ export default function PrayersPage() {
 
   /* ============================= CHURCH FINDER POPUP ============================= */
 
+  // (US) miles only
   type DistanceKey = "1mi" | "3mi" | "5mi" | "10mi";
   const DISTANCE_OPTIONS: { key: DistanceKey; label: string; meters: number }[] = [
     { key: "1mi", label: "1 mile", meters: 1609.34 },
@@ -318,6 +159,8 @@ export default function PrayersPage() {
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [locationQuery, setLocationQuery] = useState("");
   const [distanceKey, setDistanceKey] = useState<DistanceKey>("5mi");
+
+  // start broad to avoid "no results"
   const [faithFilter, setFaithFilter] = useState<string>("christian_any");
   const [faithSearch, setFaithSearch] = useState("");
 
@@ -361,36 +204,67 @@ export default function PrayersPage() {
     setFaithSearch("");
   };
 
-  /* ------------ Address + name helpers ------------ */
+  /* ------------ Address + name helpers (IMPROVED) ------------ */
+
   const normalizeName = (tags: Record<string, string> | undefined) => {
     if (!tags) return "Place of Worship";
-    return (
-      tags["name"] ||
-      tags["name:en"] ||
-      tags["official_name"] ||
-      tags["brand"] ||
-      tags["operator"] ||
-      "Place of Worship"
-    );
+    
+    // Try various name fields in order of preference
+    const name = tags["name"] || 
+                 tags["name:en"] || 
+                 tags["official_name"] || 
+                 tags["brand"] || 
+                 tags["operator"] ||
+                 "Place of Worship";
+    
+    return name;
   };
 
   const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
     if (!tags) return "";
+    
+    // Check for pre-formatted address first
     if (tags["addr:full"]) return tags["addr:full"];
-    const parts: string[] = [];
+    
+    // Build address from components - be more flexible
+    const parts = [];
+    
+    // House number + street
     const houseNum = tags["addr:housenumber"] || tags["addr:housename"];
     const street = tags["addr:street"] || tags["addr:road"];
-    if (houseNum && street) parts.push(`${houseNum} ${street}`);
-    else if (street) parts.push(street);
+    if (houseNum && street) {
+      parts.push(`${houseNum} ${street}`);
+    } else if (street) {
+      parts.push(street);
+    }
+    
+    // Neighborhood/suburb (optional)
     const neighborhood = tags["addr:neighbourhood"] || tags["addr:suburb"];
-    if (neighborhood && !parts.some((p) => p.includes(neighborhood))) parts.push(neighborhood);
+    if (neighborhood && !parts.some(p => p.includes(neighborhood))) {
+      parts.push(neighborhood);
+    }
+    
+    // City/town (important)
     const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"];
-    if (city) parts.push(city);
+    if (city) {
+      parts.push(city);
+    }
+    
+    // State (important for US)
     const state = tags["addr:state"];
-    if (state) parts.push(state);
+    if (state) {
+      parts.push(state);
+    }
+    
+    // ZIP code
     const zip = tags["addr:postcode"];
-    if (zip) parts.push(zip);
+    if (zip) {
+      parts.push(zip);
+    }
+    
     const fullAddress = parts.join(", ");
+    
+    // Return address even if incomplete - don't require street AND city
     return fullAddress || "";
   };
 
@@ -401,27 +275,65 @@ export default function PrayersPage() {
       url.searchParams.set("lat", String(lat));
       url.searchParams.set("lon", String(lon));
       url.searchParams.set("addressdetails", "1");
-      url.searchParams.set("zoom", "18");
+      url.searchParams.set("zoom", "18"); // Higher zoom for more detailed address
+      
       const res = await fetch(url.toString(), {
-        headers: { "Accept-Language": "en", "User-Agent": "SplikzApp/1.0" },
+        headers: { 
+          "Accept-Language": "en", 
+          "User-Agent": "SplikzApp/1.0" 
+        },
       });
+      
       if (!res.ok) return null;
+      
       const j = (await res.json()) as any;
       const a = j.address || {};
-      const parts: string[] = [];
-      if (a.house_number && (a.road || a.street)) parts.push(`${a.house_number} ${a.road || a.street}`);
-      else if (a.road || a.street) parts.push(a.road || a.street);
-      if (a.neighbourhood || a.suburb) parts.push(a.neighbourhood || a.suburb);
+      
+      // Build a more comprehensive address
+      const addressParts = [];
+      
+      // House number and street
+      if (a.house_number && (a.road || a.street)) {
+        addressParts.push(`${a.house_number} ${a.road || a.street}`);
+      } else if (a.road || a.street) {
+        addressParts.push(a.road || a.street);
+      }
+      
+      // Neighborhood/suburb
+      if (a.neighbourhood || a.suburb) {
+        addressParts.push(a.neighbourhood || a.suburb);
+      }
+      
+      // City/town
       const city = a.city || a.town || a.village || a.municipality;
-      if (city) parts.push(city);
-      if (a.state) parts.push(a.state);
-      if (a.postcode) parts.push(a.postcode);
-      const full = parts.join(", ");
-      if (full.length > 10) return full;
+      if (city) {
+        addressParts.push(city);
+      }
+      
+      // State
+      if (a.state) {
+        addressParts.push(a.state);
+      }
+      
+      // ZIP code
+      if (a.postcode) {
+        addressParts.push(a.postcode);
+      }
+      
+      const fullAddr = addressParts.join(", ");
+      
+      // If we got a good address, use it; otherwise fall back to display_name
+      if (fullAddr.length > 10) { // Basic check for meaningful address
+        return fullAddr;
+      }
+      
+      // Clean up display_name as fallback
       if (j.display_name) {
-        const displayName = j.display_name.split(",")[0];
+        // Remove everything after the first comma that looks like coordinates
+        const displayName = j.display_name.split(',')[0];
         return displayName.length > 5 ? displayName : j.display_name;
       }
+      
       return null;
     } catch (error) {
       console.error("Reverse geocoding error:", error);
@@ -429,24 +341,33 @@ export default function PrayersPage() {
     }
   }
 
+  // Updated ensureAddressesForAll function to be more aggressive
   async function ensureAddressesForAll(list: NearbyChurch[]) {
     setEnriching(true);
     try {
-      const need = list.filter(
-        (x) =>
-          !x.address ||
-          x.address === "Address not available" ||
-          (x.address ?? "").startsWith("Near ") ||
-          x.address.length < 10
+      const itemsNeedingAddresses = list.filter(item => 
+        !item.address || 
+        item.address === "Address not available" || 
+        item.address.startsWith("Near ") || // Our coordinate fallback
+        item.address.length < 10 // Very short addresses are probably incomplete
       );
-      for (const item of need) {
+      
+      for (const item of itemsNeedingAddresses) {
         try {
           const addr = await reverseGeocodeAddress(item.lat, item.lon);
-          if (addr && addr.length > 5) {
-            setNearby((prev) => prev.map((p) => (p.id === item.id ? { ...p, address: addr } : p)));
+          if (addr && addr.length > 5) { // Got a meaningful address
+            setNearby((prev) => 
+              prev.map((p) => 
+                p.id === item.id ? { ...p, address: addr } : p
+              )
+            );
           }
-          await new Promise((r) => setTimeout(r, 450));
-        } catch {}
+          // Rate limiting - be respectful to Nominatim
+          await new Promise((r) => setTimeout(r, 500));
+        } catch (error) {
+          console.error(`Failed to geocode address for ${item.name}:`, error);
+          // Continue with other items even if one fails
+        }
       }
     } finally {
       setEnriching(false);
@@ -688,6 +609,7 @@ export default function PrayersPage() {
         }
       }
 
+      // Updated mapping logic with improved address handling
       const mapped: NearbyChurch[] = elements
         .map((el) => {
           const name = normalizeName(el.tags);
@@ -700,8 +622,11 @@ export default function PrayersPage() {
           if (distanceKm > maxDistanceKm) return null;
 
           const addrFromTags = assembleAddressFromTags(el.tags);
+          
+          // Always try to provide some address, even if partial
           let address = addrFromTags;
           if (!address || address.length < 5) {
+            // If we have minimal info from tags, at least show coordinates as fallback
             address = `Near ${rLat.toFixed(4)}, ${rLon.toFixed(4)}`;
           }
 
@@ -732,6 +657,7 @@ export default function PrayersPage() {
       const byDistance = unique.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 100);
       setNearby(byDistance);
 
+      // ensure all have a postal address
       await ensureAddressesForAll(byDistance);
 
       if (byDistance.length === 0) {
@@ -750,12 +676,37 @@ export default function PrayersPage() {
     [coords]
   );
 
+  // Helper function to build Google Maps URL with proper address
   const buildGoogleMapsUrl = (place: NearbyChurch) => {
-    const addr = place.address ?? "";
-    const hasGoodAddress = addr && !addr.startsWith("Near ");
-    const q = hasGoodAddress ? `${place.name}, ${addr}` : `${place.lat},${place.lon}`;
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    // If we have a good address, use it; otherwise fall back to coordinates
+    if (place.address && place.address !== "Address not available" && !place.address.startsWith("Near ")) {
+      // Use the full address for the search
+      const addressQuery = `${place.name}, ${place.address}`;
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
+    } else {
+      // Fall back to coordinates if no good address
+      return `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`;
+    }
   };
+
+  // === Auto-scroll to results anchor when results appear ===
+  useEffect(() => {
+    if (!finderOpen) return;
+    if (fetchingNearby) return;
+    if (nearby.length === 0 && !nearbyError) return;
+    // Smooth scroll so results aren't hidden on mobile
+    const el = resultsAnchorRef.current;
+    if (el) {
+      // use a short delay to ensure layout is painted
+      setTimeout(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    } else if (scrollAreaRef.current) {
+      setTimeout(() => {
+        scrollAreaRef.current!.scrollTo({ top: scrollAreaRef.current!.scrollHeight, behavior: "smooth" });
+      }, 80);
+    }
+  }, [finderOpen, fetchingNearby, nearby.length, nearbyError]);
 
   /* ================================== RENDER ================================== */
 
@@ -767,32 +718,19 @@ export default function PrayersPage() {
           Daily Prayers <span className="sm:inline block">and Testimonies</span>
         </h1>
 
-        <div className="flex gap-2 sm:ml-auto w-full sm:w-auto">
-          <Button
-            onClick={() => setUploadOpen(true)}
-            className="bg-primary text-primary-foreground hover:opacity-90 rounded-xl w-full sm:w-auto"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Post photo/video
-          </Button>
-
-          <Button
-            onClick={openFinder}
-            className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold rounded-xl shadow-2xl
-                       w-full sm:w-auto min-h-11 px-4 sm:px-4"
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative flex items-center justify-center gap-2">
-              <MapPin className="h-[18px] w-[18px]" />
-              <span className="sm:hidden">Find churches</span>
-              <span className="hidden sm:inline">Find local churches near you</span>
-            </div>
-          </Button>
-        </div>
+        <Button
+          onClick={openFinder}
+          className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold rounded-xl shadow-2xl
+                     w-full sm:w-auto min-h-11 px-4 sm:px-4"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+          <div className="relative flex items-center justify-center gap-2">
+            <MapPin className="h-[18px] w-[18px]" />
+            <span className="sm:hidden">Find churches</span>
+            <span className="hidden sm:inline">Find local churches near you</span>
+          </div>
+        </Button>
       </div>
-
-      {/* media rail */}
-      <PrayersMediaRail currentUserId={userId} />
 
       {/* composer */}
       <PrayerComposer onPosted={(p: Prayer) => setItems((cur) => [p, ...cur])} />
@@ -835,9 +773,10 @@ export default function PrayersPage() {
         </Button>
       </div>
 
-      {/* Finder dialog */}
+      {/* ===================== FINDER DIALOG ===================== */}
       <Dialog open={finderOpen} onOpenChange={setFinderOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden bg-slate-900/95 backdrop-blur-2xl border border-white/20 shadow-2xl rounded-3xl">
+          {/* Single explicit close button */}
           <button
             aria-label="Close"
             onClick={() => setFinderOpen(false)}
@@ -865,6 +804,7 @@ export default function PrayersPage() {
             </DialogDescription>
           </DialogHeader>
 
+          {/* Scrollable content with visible scrollbar */}
           <div ref={scrollAreaRef} className="relative z-10 h-[70vh] overflow-y-auto">
             <div className="px-4 sm:px-6 py-5 space-y-6 pb-24">
               {/* Location */}
@@ -940,6 +880,7 @@ export default function PrayersPage() {
                       onChange={(e) => setFaithSearch(e.target.value)}
                       className="mb-3 bg-white/10 border-white/20 text-white placeholder-gray-400 text-base py-3"
                     />
+                    {/* Scrollable faith options with visible scrollbar */}
                     <div className="max-h-48 overflow-y-auto">
                       <div className="grid grid-cols-1 gap-2">
                         {filteredFaithOptions.map((opt) => (
@@ -1008,6 +949,7 @@ export default function PrayersPage() {
                     Found {nearby.length} nearby
                   </h3>
                   <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
+                    {/* Results list with visible scrollbar */}
                     <div className="max-h-[50vh] sm:max-h-[65vh] overflow-y-auto">
                       {nearby.map((place, index) => (
                         <div
@@ -1053,13 +995,6 @@ export default function PrayersPage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Upload modal — rail auto-updates via realtime */}
-      <PrayerMediaUpload
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        onUploaded={() => {}}
-      />
     </div>
   );
 }
