@@ -79,6 +79,7 @@ export default function CreatorProfile() {
   const [showFollowersList, setShowFollowersList] = useState(false);
   const [showFollowingList, setShowFollowingList] = useState(false);
   const [activeTab, setActiveTab] = useState("posts");
+  const [totalBoosts, setTotalBoosts] = useState(0);
 
   const unsubRef = useRef<null | (() => void)>(null);
 
@@ -181,6 +182,7 @@ export default function CreatorProfile() {
         await fetchBoostedSpliks(profileData.id, cancelled);
         await fetchPhotos(profileData.id, cancelled);
         await refreshCounts(profileData.id);
+        await fetchTotalBoosts(profileData.id, cancelled);
       } catch (e) {
         console.error("Error resolving profile:", e);
         if (!cancelled) {
@@ -358,6 +360,21 @@ export default function CreatorProfile() {
     }
   };
 
+  const fetchTotalBoosts = async (userId: string, cancelled?: boolean) => {
+    try {
+      const { count, error } = await supabase
+        .from("boosts")
+        .select("id", { count: "exact" })
+        .eq("user_id", userId);
+
+      if (error) throw error;
+      if (!cancelled) setTotalBoosts(count || 0);
+    } catch (e) {
+      console.error("Error fetching total boosts:", e);
+      if (!cancelled) setTotalBoosts(0);
+    }
+  };
+
   const formatDate = (date: string) =>
     new Date(date).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
@@ -462,7 +479,7 @@ export default function CreatorProfile() {
                 <div className="text-sm text-gray-400">Following</div>
               </button>
               <div className="text-center">
-                <div className="text-lg font-semibold text-white">{Math.floor(Math.random() * 15000 + 1000).toLocaleString()}</div>
+                <div className="text-lg font-semibold text-white">{totalBoosts.toLocaleString()}</div>
                 <div className="text-sm text-gray-400">Total Boosts</div>
               </div>
             </div>
