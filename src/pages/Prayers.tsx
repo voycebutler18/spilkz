@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { fetchPrayers, Prayer } from "@/lib/prayers";
 import PrayerComposer from "@/components/prayers/PrayerComposer";
 import PrayerCard from "@/components/prayers/PrayerCard";
-import PrayerMediaUpload, { PrayerMediaItem } from "@/components/prayers/PrayerMediaUpload";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 
@@ -31,154 +30,7 @@ import {
   Loader2,
   Sparkles,
   X,
-  Plus,
-  Trash2,
 } from "lucide-react";
-
-/* =================== Helpers for media rail =================== */
-const PRAYER_BUCKET = import.meta.env.VITE_PRAYERS_BUCKET || "prayers_media";
-const pathFromPublicUrl = (url: string) => {
-  try {
-    const u = new URL(url);
-    const parts = u.pathname.split("/");
-    const idx = parts.findIndex((p) => p === PRAYER_BUCKET);
-    if (idx >= 0) return decodeURIComponent(parts.slice(idx + 1).join("/"));
-  } catch {}
-  return null;
-};
-
-/* =================== Prayers Media Rail =================== */
-function PrayersMediaRail({ currentUserId }: { currentUserId?: string | null }) {
-  const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<PrayerMediaItem[]>([]);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("prayer_media")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(60);
-        if (error) throw error;
-        if (!alive) return;
-        const rows = (data || []).map((r: any) => ({
-          id: String(r.id),
-          user_id: r.user_id as string,
-          kind: (r.kind as "photo" | "video") || "photo",
-          url: r.url as string,
-          thumbnail_url: r.thumbnail_url ?? null,
-          duration: r.duration ?? null,
-          description: r.description ?? null,
-          created_at: r.created_at as string,
-        })) as PrayerMediaItem[];
-        setItems(rows);
-      } catch (e) {
-        console.error("prayer_media load error", e);
-        if (alive) setItems([]);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-
-    load();
-
-    const ch = supabase
-      .channel("prayers-media-rail")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "prayer_media" }, load)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "prayer_media" }, load)
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-      alive = false;
-    };
-  }, []);
-
-  const onDelete = async (item: PrayerMediaItem) => {
-    if (!currentUserId || currentUserId !== item.user_id) return;
-    setDeletingId(item.id);
-    try {
-      const { error: delErr } = await supabase
-        .from("prayer_media")
-        .delete()
-        .eq("id", item.id)
-        .eq("user_id", currentUserId);
-      if (delErr) throw delErr;
-
-      const p = pathFromPublicUrl(item.url);
-      if (p) await supabase.storage.from(PRAYER_BUCKET).remove([p]);
-
-      setItems((prev) => prev.filter((x) => x.id !== item.id));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  return (
-    <div className="surface p-3 md:p-4">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm md:text-base font-semibold">Prayers — Recent Photos & Videos</h3>
-        <span className="text-xs text-muted-foreground">{items.length}</span>
-      </div>
-
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">Loading…</div>
-      ) : items.length === 0 ? (
-        <div className="py-8 text-center text-muted-foreground text-sm">
-          Nothing posted yet. Be the first to share a prayer photo or 3-sec video.
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 md:gap-3">
-          {items.map((it) => (
-            <div key={it.id} className="relative group rounded-lg overflow-hidden border border-border/40 bg-muted/30">
-              {it.kind === "photo" ? (
-                <img
-                  src={it.url}
-                  alt={it.description || "Prayer photo"}
-                  className="w-full h-36 md:h-40 object-cover"
-                  loading="lazy"
-                />
-              ) : (
-                <video
-                  src={it.url}
-                  className="w-full h-36 md:h-40 object-cover"
-                  muted
-                  playsInline
-                  preload="metadata"
-                  controls
-                />
-              )}
-
-              {currentUserId === it.user_id && (
-                <button
-                  onClick={() => onDelete(it)}
-                  disabled={deletingId === it.id}
-                  className="absolute top-2 right-2 inline-flex items-center justify-center h-8 w-8 rounded-full bg-black/60 text-white hover:bg-black/75"
-                  title="Delete"
-                >
-                  {deletingId === it.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================= PRAYERS FEED + FINDER ============================= */
 
 export default function PrayersPage() {
   const [items, setItems] = useState<Prayer[]>([]);
@@ -186,10 +38,7 @@ export default function PrayersPage() {
   const [cursor, setCursor] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
 
-  // uploader modal
-  const [uploadOpen, setUploadOpen] = useState(false);
-
-  // who am I? (for delete controls in rail)
+  // Add back the user authentication
   const [userId, setUserId] = useState<string | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUserId(user?.id ?? null));
@@ -767,32 +616,19 @@ export default function PrayersPage() {
           Daily Prayers <span className="sm:inline block">and Testimonies</span>
         </h1>
 
-        <div className="flex gap-2 sm:ml-auto w-full sm:w-auto">
-          <Button
-            onClick={() => setUploadOpen(true)}
-            className="bg-primary text-primary-foreground hover:opacity-90 rounded-xl w-full sm:w-auto"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Post photo/video
-          </Button>
-
-          <Button
-            onClick={openFinder}
-            className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold rounded-xl shadow-2xl
-                       w-full sm:w-auto min-h-11 px-4 sm:px-4"
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-            <div className="relative flex items-center justify-center gap-2">
-              <MapPin className="h-[18px] w-[18px]" />
-              <span className="sm:hidden">Find churches</span>
-              <span className="hidden sm:inline">Find local churches near you</span>
-            </div>
-          </Button>
-        </div>
+        <Button
+          onClick={openFinder}
+          className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 border-0 text-white font-semibold rounded-xl shadow-2xl
+                     w-full sm:w-auto min-h-11 px-4 sm:px-4"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+          <div className="relative flex items-center justify-center gap-2">
+            <MapPin className="h-[18px] w-[18px]" />
+            <span className="sm:hidden">Find churches</span>
+            <span className="hidden sm:inline">Find local churches near you</span>
+          </div>
+        </Button>
       </div>
-
-      {/* media rail */}
-      <PrayersMediaRail currentUserId={userId} />
 
       {/* composer */}
       <PrayerComposer onPosted={(p: Prayer) => setItems((cur) => [p, ...cur])} />
@@ -1008,7 +844,7 @@ export default function PrayersPage() {
                     Found {nearby.length} nearby
                   </h3>
                   <div className="rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl overflow-hidden">
-                    <div className="max-h-[50vh] sm:max_h-[65vh] overflow-y-auto">
+                    <div className="max-h-[50vh] sm:max-h-[65vh] overflow-y-auto">
                       {nearby.map((place, index) => (
                         <div
                           key={place.id}
@@ -1053,13 +889,6 @@ export default function PrayersPage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Upload modal — rail auto-updates via realtime */}
-      <PrayerMediaUpload
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        onUploaded={() => {}}
-      />
     </div>
   );
 }
