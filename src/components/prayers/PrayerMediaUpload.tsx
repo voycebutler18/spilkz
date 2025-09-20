@@ -1,257 +1,293 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+// src/components/prayers/PrayerMediaUpload.tsx
+import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/components/ui/use-toast";
-import { Camera, Upload, Loader2, Trash2, Video, Image as ImageIcon } from "lucide-react";
+import { Upload, X, Loader2, Image, Video } from "lucide-react";
+import { toast } from "sonner";
 
-type Props = {
+export interface PrayerMediaItem {
+  id: string;
+  user_id: string;
+  kind: "photo" | "video";
+  url: string;
+  thumbnail_url?: string | null;
+  duration?: number | null;
+  description?: string | null;
+  created_at: string;
+}
+
+interface PrayerMediaUploadProps {
   open: boolean;
-  onOpenChange: (v: boolean) => void;
-  // When a new prayer post is created, let the parent prepend it to the feed
-  onPosted?: (newPrayer: any) => void;
-};
+  onOpenChange: (open: boolean) => void;
+  onUploaded: (item: PrayerMediaItem) => void;
+}
 
-const PRAYER_BUCKET = import.meta.env.VITE_PRAYER_BUCKET || "prayer_media";
+const PRAYER_BUCKET = import.meta.env.VITE_PRAYERS_BUCKET || "prayers_media";
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_VIDEO_DURATION = 30; // 30 seconds
 
-const isImage = (file: File) => file.type.startsWith("image/");
-const isVideo = (file: File) => file.type.startsWith("video/");
-
-export default function PrayerMediaUpload({ open, onOpenChange, onPosted }: Props) {
-  const { toast } = useToast();
-  const [user, setUser] = useState<any>(null);
-
-  const [file, setFile] = useState<File | null>(null);
-  const [desc, setDesc] = useState("");
+export default function PrayerMediaUpload({ open, onOpenChange, onUploaded }: PrayerMediaUploadProps) {
   const [uploading, setUploading] = useState(false);
-  const [duration, setDuration] = useState<number | null>(null); // seconds for video
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [description, setDescription] = useState("");
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
 
-  // Keep info about the object we just uploaded (to allow delete-on-cancel)
-  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) =>
-      setUser(session?.user ?? null)
-    );
-    return () => sub?.subscription?.unsubscribe();
+  const resetForm = useCallback(() => {
+    setFile(null);
+    setPreview(null);
+    setDescription("");
+    setVideoDuration(null);
+    setUploading(false);
   }, []);
 
-  // Probe video duration before upload: 3s max
-  const probeDuration = async (f: File) => {
-    return new Promise<number>((resolve, reject) => {
-      const url = URL.createObjectURL(f);
-      const v = document.createElement("video");
-      v.preload = "metadata";
-      v.src = url;
-      v.onloadedmetadata = () => {
-        const d = v.duration;
-        URL.revokeObjectURL(url);
-        resolve(isFinite(d) ? d : 0);
-      };
-      v.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error("Unable to read video metadata"));
-      };
-    });
-  };
+  const handleFileSelect = useCallback((selectedFile: File) => {
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      toast.error("File too large. Maximum size is 50MB.");
+      return;
+    }
 
-  const reset = () => {
-    setFile(null);
-    setDesc("");
-    setDuration(null);
-    setUploadedPath(null);
-  };
+    const isVideo = selectedFile.type.startsWith("video/");
+    const isImage = selectedFile.type.startsWith("image/");
 
-  const onPick = async (f: File | null) => {
-    setFile(f);
-    setDuration(null);
-    if (f && isVideo(f)) {
-      try {
-        const d = await probeDuration(f);
-        setDuration(d);
-        if (d > 3.05) {
-          toast({
-            title: "Video too long",
-            description: "Please upload a clip up to 3 seconds.",
-            variant: "destructive",
-          });
-          setFile(null);
+    if (!isVideo && !isImage) {
+      toast.error("Please select an image or video file.");
+      return;
+    }
+
+    setFile(selectedFile);
+    
+    const url = URL.createObjectURL(selectedFile);
+    setPreview(url);
+
+    // Check video duration
+    if (isVideo) {
+      const video = document.createElement("video");
+      video.src = url;
+      video.onloadedmetadata = () => {
+        const duration = video.duration;
+        setVideoDuration(duration);
+        if (duration > MAX_VIDEO_DURATION) {
+          toast.error(`Video too long. Maximum duration is ${MAX_VIDEO_DURATION} seconds.`);
         }
-      } catch {
-        toast({ title: "Couldn’t read video", description: "Try a different file.", variant: "destructive" });
-        setFile(null);
-      }
+      };
     }
-  };
+  }, []);
 
-  const doUpload = async () => {
-    if (!user) {
-      toast({ title: "Sign in required", description: "Log in to upload.", variant: "destructive" });
-      return;
-    }
-    if (!file) {
-      toast({ title: "No file", description: "Pick a photo or a 3-second video.", variant: "destructive" });
-      return;
-    }
-    if (isVideo(file) && duration && duration > 3.05) {
-      toast({ title: "Video too long", description: "Max 3 seconds.", variant: "destructive" });
-      return;
-    }
+  const handleUpload = async () => {
+    if (!file) return;
 
     try {
       setUploading(true);
-      // 1) upload to dedicated PRAYER bucket
-      const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-      const path = `${user.id}/${Date.now()}-${safeName}`;
-      const { error: upErr } = await supabase.storage.from(PRAYER_BUCKET).upload(path, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
-      if (upErr) throw upErr;
 
-      const { data: pub } = supabase.storage.from(PRAYER_BUCKET).getPublicUrl(path);
-      const media_url = pub?.publicUrl;
-      if (!media_url) throw new Error("Could not resolve media URL.");
+      // Get current user
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        toast.error("You must be logged in to upload media.");
+        return;
+      }
 
-      setUploadedPath(path);
+      // Check video duration again
+      if (videoDuration && videoDuration > MAX_VIDEO_DURATION) {
+        toast.error(`Video is too long (${videoDuration.toFixed(1)}s). Maximum is ${MAX_VIDEO_DURATION}s.`);
+        return;
+      }
 
-      // 2) insert record into a dedicated table (see SQL below)
-      const kind: "photo" | "video" = isImage(file) ? "photo" : "video";
+      const isVideo = file.type.startsWith("video/");
+      const fileExt = file.name.split(".").pop()?.toLowerCase() || "";
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
 
-      // Create the prayer post + media row in one go (if your schema keeps media on prayers table, adapt here)
-      // Table: prayer_media (id, user_id, kind, media_url, desc, duration, created_at)
-      const { data: mediaRow, error: mediaErr } = await supabase
+      // Upload to storage
+      const { error: uploadError } = await supabase.storage
+        .from(PRAYER_BUCKET)
+        .upload(fileName, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        toast.error("Failed to upload file. Please try again.");
+        return;
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from(PRAYER_BUCKET)
+        .getPublicUrl(fileName);
+
+      if (!urlData?.publicUrl) {
+        toast.error("Failed to get file URL.");
+        return;
+      }
+
+      // Insert into database
+      const insertData = {
+        user_id: user.id,
+        kind: (isVideo ? "video" : "photo") as "photo" | "video",
+        url: urlData.publicUrl,
+        description: description.trim() || null,
+        duration: isVideo ? videoDuration : null,
+      };
+
+      const { data: dbData, error: dbError } = await supabase
         .from("prayer_media")
-        .insert({
-          user_id: user.id,
-          kind,
-          media_url,
-          description: desc.trim() || null,
-          duration: kind === "video" ? Math.round((duration ?? 0) * 1000) : 0, // ms
-        })
-        .select("*")
+        .insert(insertData)
+        .select()
         .single();
 
-      if (mediaErr) throw mediaErr;
+      if (dbError) {
+        console.error("Database error:", dbError);
+        // Try to clean up uploaded file
+        await supabase.storage.from(PRAYER_BUCKET).remove([fileName]);
+        toast.error("Failed to save media record. Please try again.");
+        return;
+      }
 
-      // If your feed uses a `prayers` table, you likely want to create a post entry that references this media
-      // Minimal insert that most schemas can tolerate (adjust columns as needed)
-      // (Optional) If you don't want a post, remove this block.
-      const { data: prayerPost } = await supabase
-        .from("prayers")
-        .insert({
-          user_id: user.id,
-          content: desc?.trim() || null,
-          media_url,
-          media_type: kind,       // if column exists
-          media_ref_id: mediaRow?.id, // if column exists
-        })
-        .select("*")
-        .maybeSingle();
+      toast.success(`${isVideo ? "Video" : "Photo"} uploaded successfully!`);
+      
+      const mediaItem: PrayerMediaItem = {
+        id: String(dbData.id),
+        user_id: dbData.user_id,
+        kind: dbData.kind,
+        url: dbData.url,
+        thumbnail_url: dbData.thumbnail_url,
+        duration: dbData.duration,
+        description: dbData.description,
+        created_at: dbData.created_at,
+      };
 
-      if (onPosted && prayerPost) onPosted(prayerPost);
-
-      toast({ title: "Uploaded!", description: `Your ${kind === "photo" ? "photo" : "video"} is live on Prayers.` });
-      reset();
+      onUploaded(mediaItem);
       onOpenChange(false);
-    } catch (e: any) {
-      console.error(e);
-      toast({ title: "Upload failed", description: e?.message || "Please try again", variant: "destructive" });
+      resetForm();
+
+    } catch (error) {
+      console.error("Upload error:", error);
+      toast.error("An unexpected error occurred. Please try again.");
     } finally {
       setUploading(false);
     }
   };
 
-  // Allow deleting the uploaded object (owner only); use when upload succeeded but user cancels
-  const deleteUploadedFromBucket = async () => {
-    if (!uploadedPath) return;
-    try {
-      await supabase.storage.from(PRAYER_BUCKET).remove([uploadedPath]);
-      setUploadedPath(null);
-    } catch (e) {
-      // non-fatal
+  const handleClose = () => {
+    if (!uploading) {
+      onOpenChange(false);
+      resetForm();
     }
   };
 
-  const close = async () => {
-    // If we uploaded a file to storage but didn’t finalize (no DB row), clean it up
-    if (uploadedPath) {
-      await deleteUploadedFromBucket();
-    }
-    reset();
-    onOpenChange(false);
-  };
+  const isVideo = file?.type.startsWith("video/");
+  const canUpload = file && (!isVideo || (videoDuration && videoDuration <= MAX_VIDEO_DURATION));
 
   return (
-    <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : close())}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload to Daily Prayers</DialogTitle>
-          <DialogDescription>Photos or 3-second videos. Stored in a separate bucket.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="h-5 w-5" />
+            Share Prayer Media
+          </DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="file">Choose media</Label>
-            <Input
-              id="file"
-              type="file"
-              accept="image/*,video/*"
-              onChange={(e) => onPick(e.target.files?.[0] || null)}
-            />
-            {file && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                {isImage(file) ? <ImageIcon className="h-4 w-4" /> : <Video className="h-4 w-4" />}
-                <span className="truncate">{file.name}</span>
-                {isVideo(file) && duration != null && (
-                  <span className="ml-auto">{duration.toFixed(2)}s</span>
-                )}
+        <div className="space-y-4">
+          {!file ? (
+            <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
+              <div className="flex justify-center mb-4">
+                <div className="flex gap-4">
+                  <Image className="h-8 w-8 text-muted-foreground" />
+                  <Video className="h-8 w-8 text-muted-foreground" />
+                </div>
               </div>
-            )}
-            {isVideo(file || ({} as File)) && (
-              <p className="text-xs text-muted-foreground">Max length: 3 seconds.</p>
-            )}
-          </div>
+              <p className="text-sm text-muted-foreground mb-4">
+                Upload a photo or video (max {MAX_VIDEO_DURATION}s, 50MB)
+              </p>
+              <Input
+                type="file"
+                accept="image/*,video/*"
+                onChange={(e) => {
+                  const selectedFile = e.target.files?.[0];
+                  if (selectedFile) {
+                    handleFileSelect(selectedFile);
+                  }
+                }}
+                className="cursor-pointer"
+              />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="relative rounded-lg overflow-hidden bg-muted/10 border">
+                {isVideo ? (
+                  <video
+                    src={preview!}
+                    className="w-full h-48 object-cover"
+                    controls
+                    muted
+                    playsInline
+                  />
+                ) : (
+                  <img
+                    src={preview!}
+                    alt="Preview"
+                    className="w-full h-48 object-cover"
+                  />
+                )}
+                
+                <button
+                  onClick={resetForm}
+                  disabled={uploading}
+                  className="absolute top-2 right-2 p-2 bg-black/60 text-white rounded-full hover:bg-black/75"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="desc">Caption (optional)</Label>
-            <Textarea
-              id="desc"
-              value={desc}
-              onChange={(e) => setDesc(e.target.value.slice(0, 220))}
-              placeholder="Say something about this prayer photo/video (max 220 chars)"
-            />
-            <div className="text-xs text-muted-foreground text-right">{desc.length}/220</div>
-          </div>
+              {isVideo && videoDuration && (
+                <div className="text-sm text-muted-foreground">
+                  Duration: {videoDuration.toFixed(1)}s
+                  {videoDuration > MAX_VIDEO_DURATION && (
+                    <span className="text-red-500 ml-2">
+                      (Too long - max {MAX_VIDEO_DURATION}s)
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <Textarea
+                placeholder="Add a description (optional)"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={uploading}
+                rows={3}
+              />
+
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={handleClose}
+                  disabled={uploading}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleUpload}
+                  disabled={!canUpload || uploading}
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    "Upload"
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-
-        <div className="flex justify-between">
-          <Button variant="ghost" onClick={close} disabled={uploading}>
-            Cancel
-          </Button>
-          <Button onClick={doUpload} disabled={uploading || !file}>
-            {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-            Upload
-          </Button>
-        </div>
-
-        {uploadedPath && (
-          <div className="mt-2 flex items-center justify-between rounded-md border p-2 text-xs">
-            <span className="text-muted-foreground truncate">Uploaded: {uploadedPath}</span>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={deleteUploadedFromBucket}
-              title="Delete uploaded file from bucket"
-            >
-              <Trash2 className="h-4 w-4 mr-1" /> Delete
-            </Button>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );
