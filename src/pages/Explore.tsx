@@ -21,7 +21,7 @@ import SplikCard from "@/components/splik/SplikCard";
 
 import { Loader2, RefreshCw, Sparkles, Camera, X } from "lucide-react";
 
-// rails named like HomePage:
+// HomePage-named rails:
 import { MomentsBar } from "@/components/moments/MomentsBar";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 
@@ -415,7 +415,7 @@ const Explore = () => {
 
   /* ──────────────── RENDER — HomePage layout only ──────────────── */
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background overflow-x-hidden">
       {/* NOTE: No Header.tsx rendered here */}
 
       <div className="flex">
@@ -462,7 +462,7 @@ const Explore = () => {
             )}
 
             {/* Feed */}
-            <div ref={feedRef} className="space-y-6">
+            <div ref={feedRef} className="space-y-6 max-w-full overflow-x-hidden">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
@@ -517,17 +517,15 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* Right Sidebar — same idea as HomePage (fixed) */}
+        {/* Right Sidebar — same idea as HomePage (fixed, scrollbars hidden) */}
         {!isMobile && (
-          <div className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto">
+          <div className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto hide-scroll">
             <MomentsBar title="Splikz Photos" currentUserId={user?.id} reloadToken={reloadToken} />
             <div className="mt-6">
               <ActivityFeed limit={60} />
             </div>
           </div>
         )}
-
-        {/* ❗ Mobile floating panel REMOVED as requested */}
       </div>
 
       {/* Upload dialog */}
@@ -538,33 +536,33 @@ const Explore = () => {
             <DialogDescription>Write a short description (required). Add a location if you want.</DialogDescription>
           </DialogHeader>
 
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="file">Choose image</Label>
-            <Input id="file" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          </div>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="file">Choose image</Label>
+              <Input id="file" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+            </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="desc">Description</Label>
-            <Textarea
-              id="desc"
-              value={photoDescription}
-              onChange={(e) => setPhotoDescription(e.target.value.slice(0, 200))}
-              placeholder="Say something about this photo (max 200 chars)"
-            />
-            <div className="text-xs text-muted-foreground text-right">{photoDescription.length}/200</div>
-          </div>
+            <div className="grid gap-2">
+              <Label htmlFor="desc">Description</Label>
+              <Textarea
+                id="desc"
+                value={photoDescription}
+                onChange={(e) => setPhotoDescription(e.target.value.slice(0, 200))}
+                placeholder="Say something about this photo (max 200 chars)"
+              />
+              <div className="text-xs text-muted-foreground text-right">{photoDescription.length}/200</div>
+            </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="loc">Location (optional)</Label>
-            <Input
-              id="loc"
-              value={photoLocation}
-              onChange={(e) => setPhotoLocation(e.target.value.slice(0, 80))}
-              placeholder="City, venue, etc."
-            />
+            <div className="grid gap-2">
+              <Label htmlFor="loc">Location (optional)</Label>
+              <Input
+                id="loc"
+                value={photoLocation}
+                onChange={(e) => setPhotoLocation(e.target.value.slice(0, 80))}
+                placeholder="City, venue, etc."
+              />
+            </div>
           </div>
-        </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)} disabled={uploading}>
@@ -577,6 +575,12 @@ const Explore = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Utility to hide scrollbars wherever .hide-scroll is used */}
+      <style>{`
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
+      `}</style>
     </div>
   );
 };
