@@ -400,245 +400,261 @@ export default function CreatorProfile() {
 
   const nameOrUsername = displayName(profile);
 
-  // Mock posts based on spliks and photos for the grid display
-  const mockPosts = [...spliks, ...photos].map((item, i) => ({
+  // Combine all posts for the grid display
+  const allPosts = [...spliks, ...photos].map((item) => ({
     id: item.id.toString(),
     thumbnail: item.thumbnail_url || item.photo_url || `/api/placeholder/300/300`,
     type: item.video_url ? "video" : "image",
     boosts: Math.floor(Math.random() * 1000),
     comments: Math.floor(Math.random() * 100),
+    splik: item
   }));
 
   return (
-    <div className="max-w-4xl mx-auto p-4">
-      {/* Profile Header */}
-      <Card className="p-6 bg-card border-border shadow-card mb-6">
-        <div className="flex flex-col md:flex-row gap-6">
+    <div className="min-h-screen bg-gray-900 text-white">
+      {/* Profile Header Section */}
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="flex flex-col lg:flex-row items-start gap-8">
           {/* Avatar */}
           <div className="flex-shrink-0">
-            <Avatar className="w-32 h-32 border-4 border-primary/20">
-              <AvatarImage src={profile.avatar_url || ""} />
-              <AvatarFallback className="bg-gradient-primary text-white text-4xl font-bold">
-                {nameOrUsername.charAt(0).toUpperCase()}
+            <Avatar className="w-32 h-32 lg:w-40 lg:h-40">
+              <AvatarImage src={profile.avatar_url || ""} className="object-cover" />
+              <AvatarFallback className="text-4xl font-bold bg-purple-600 text-white">
+                {(profile.username || nameOrUsername).charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
           </div>
 
           {/* Profile Info */}
-          <div className="flex-1">
-            <div className="flex flex-col md:flex-row md:items-center gap-4 mb-4">
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold">{profile.username || nameOrUsername}</h1>
-                <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20">
-                  ✓ Verified
-                </Badge>
-              </div>
-              
-              <div className="flex gap-2">
-                {currentUserId === profile.id ? (
-                  <Button variant="outline" className="gap-2">
-                    <Settings className="w-4 h-4" />
-                    Edit Profile
-                  </Button>
-                ) : (
-                  <FollowButton
-                    profileId={profile.id}
-                    username={profile.username || ""}
-                    className="bg-primary hover:bg-primary/90"
-                  />
-                )}
-                <Button variant="ghost" size="sm">
-                  <MoreHorizontal className="w-4 h-4" />
-                </Button>
-              </div>
+          <div className="flex-1 min-w-0">
+            {/* Username and Follow Button */}
+            <div className="flex items-center gap-4 mb-6">
+              <h1 className="text-2xl lg:text-3xl font-normal text-white">
+                {profile.username || nameOrUsername}
+              </h1>
+              {currentUserId !== profile.id && (
+                <FollowButton
+                  profileId={profile.id}
+                  username={profile.username || ""}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-1.5 rounded-md text-sm font-medium"
+                />
+              )}
             </div>
 
-            {/* Stats */}
-            <div className="flex gap-6 mb-4">
+            {/* Stats Row */}
+            <div className="flex gap-8 mb-6">
               <div className="text-center">
-                <div className="text-xl font-bold">{(profile.spliks_count || 0).toLocaleString()}</div>
-                <div className="text-sm text-muted-foreground">Posts</div>
+                <div className="text-lg font-semibold text-white">{profile.spliks_count || 0}</div>
+                <div className="text-sm text-gray-400">Posts</div>
               </div>
               <button
                 onClick={() => setShowFollowersList(true)}
                 className="text-center hover:opacity-80 transition-opacity"
               >
-                <div className="text-xl font-bold">{(profile.followers_count || 0).toLocaleString()}</div>
-                <div className="text-sm text-muted-foreground">Followers</div>
+                <div className="text-lg font-semibold text-white">{profile.followers_count || 0}</div>
+                <div className="text-sm text-gray-400">Followers</div>
               </button>
               <button
                 onClick={() => setShowFollowingList(true)}
                 className="text-center hover:opacity-80 transition-opacity"
               >
-                <div className="text-xl font-bold">{(profile.following_count || 0).toLocaleString()}</div>
-                <div className="text-sm text-muted-foreground">Following</div>
+                <div className="text-lg font-semibold text-white">{profile.following_count || 0}</div>
+                <div className="text-sm text-gray-400">Following</div>
               </button>
               <div className="text-center">
-                <div className="text-xl font-bold">{Math.floor(Math.random() * 15000 + 1000).toLocaleString()}</div>
-                <div className="text-sm text-muted-foreground">Total Boosts</div>
+                <div className="text-lg font-semibold text-white">{Math.floor(Math.random() * 15000 + 1000).toLocaleString()}</div>
+                <div className="text-sm text-gray-400">Total Boosts</div>
               </div>
             </div>
 
             {/* Bio */}
             {profile.bio && (
-              <p className="mb-4 leading-relaxed">{profile.bio}</p>
+              <p className="text-white mb-4 leading-relaxed max-w-lg">
+                {profile.bio}
+              </p>
             )}
 
-            {/* Additional Info */}
-            <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+            {/* Location and Join Date */}
+            <div className="flex flex-col gap-1 text-sm text-gray-400">
               {profile.city && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
                   <MapPin className="w-4 h-4" />
-                  {profile.city}
+                  <span>{profile.city}</span>
                 </div>
               )}
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 <LinkIcon className="w-4 h-4" />
-                <span className="text-primary hover:underline">
-                  {profile.username ? `${profile.username}.com` : "website.com"}
-                </span>
+                <span className="text-purple-400">{profile.username ? `${profile.username}.com` : "website.com"}</span>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4" />
-                Joined {formatDate(profile.created_at)}
+                <span>Joined {formatDate(profile.created_at)}</span>
               </div>
             </div>
           </div>
         </div>
-      </Card>
+      </div>
 
       {/* Content Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3 mb-6">
-          <TabsTrigger value="posts" className="gap-2">
-            <Grid3X3 className="w-4 h-4" />
-            Posts
-          </TabsTrigger>
-          <TabsTrigger value="saved" className="gap-2">
-            <Bookmark className="w-4 h-4" />
-            Saved
-          </TabsTrigger>
-          <TabsTrigger value="boosted" className="gap-2">
-            <Heart className="w-4 h-4" />
-            Boosted
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="posts">
-          <div className="grid grid-cols-3 md:grid-cols-4 gap-1">
-            {mockPosts.map((post) => (
-              <div
-                key={post.id}
-                className="relative aspect-square bg-muted rounded-lg overflow-hidden group cursor-pointer"
+      <div className="max-w-4xl mx-auto px-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          {/* Tab Navigation */}
+          <div className="border-b border-gray-700 mb-8">
+            <TabsList className="bg-transparent p-0 h-auto">
+              <TabsTrigger 
+                value="posts" 
+                className="bg-transparent border-b-2 border-transparent data-[state=active]:border-white data-[state=active]:bg-transparent text-gray-400 data-[state=active]:text-white py-4 px-8 rounded-none font-medium hover:text-white transition-colors"
               >
-                <img
-                  src={post.thumbnail}
-                  alt="Post"
-                  className="w-full h-full object-cover transition-smooth group-hover:scale-105"
-                />
-                
-                {/* Overlay */}
-                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-smooth flex items-center justify-center">
-                  <div className="flex items-center gap-4 text-white">
-                    <div className="flex items-center gap-1">
-                      <Heart className="w-5 h-5 fill-current" />
-                      <span className="font-medium">{post.boosts}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Users className="w-5 h-5" />
-                      <span className="font-medium">{post.comments}</span>
-                    </div>
-                  </div>
-                </div>
+                <Grid3X3 className="w-4 h-4 mr-2" />
+                Posts
+              </TabsTrigger>
+              
+              <TabsTrigger 
+                value="saved" 
+                className="bg-transparent border-b-2 border-transparent data-[state=active]:border-white data-[state=active]:bg-transparent text-gray-400 data-[state=active]:text-white py-4 px-8 rounded-none font-medium hover:text-white transition-colors"
+              >
+                <Bookmark className="w-4 h-4 mr-2" />
+                Saved
+              </TabsTrigger>
+              
+              <TabsTrigger 
+                value="boosted" 
+                className="bg-transparent border-b-2 border-transparent data-[state=active]:border-white data-[state=active]:bg-transparent text-gray-400 data-[state=active]:text-white py-4 px-8 rounded-none font-medium hover:text-white transition-colors"
+              >
+                <Heart className="w-4 h-4 mr-2" />
+                Boosted
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
-                {/* Video indicator */}
-                {post.type === "video" && (
-                  <div className="absolute top-2 right-2">
-                    <Badge className="bg-background/80 text-foreground text-xs">
-                      3s
-                    </Badge>
+          {/* Tab Content */}
+          <TabsContent value="posts" className="m-0">
+            {allPosts.length > 0 ? (
+              <div className="grid grid-cols-3 gap-1">
+                {allPosts.map((post) => (
+                  <div
+                    key={post.id}
+                    className="relative aspect-square bg-gray-800 cursor-pointer group"
+                    onClick={() => {
+                      if (post.type === "video") {
+                        // Handle video click - navigate to video player or open modal
+                        console.log("Playing video:", post.splik);
+                      }
+                    }}
+                  >
+                    <img
+                      src={post.thumbnail}
+                      alt="Post"
+                      className="w-full h-full object-cover"
+                    />
+                    
+                    {/* Video indicator */}
+                    {post.type === "video" && (
+                      <div className="absolute top-2 right-2">
+                        <div className="bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
+                          3s
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="flex items-center gap-6 text-white">
+                        <div className="flex items-center gap-1">
+                          <Heart className="w-5 h-5 fill-current" />
+                          <span className="font-medium">{post.boosts}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <MessageSquare className="w-5 h-5" />
+                          <span className="font-medium">{post.comments}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                )}
+                ))}
               </div>
-            ))}
-          </div>
+            ) : (
+              <div className="text-center py-20">
+                <div className="w-24 h-24 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-6">
+                  <Camera className="h-12 w-12 text-gray-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-white mb-2">No posts yet</h3>
+                <p className="text-gray-400">When this person shares photos and videos, they'll appear here.</p>
+              </div>
+            )}
+          </TabsContent>
 
-          {mockPosts.length === 0 && (
-            <div className="text-center py-12">
-              <Grid3X3 className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-semibold mb-2">No posts yet</h3>
-              <p className="text-muted-foreground">
-                Start sharing your moments with the world
-              </p>
+          <TabsContent value="saved" className="m-0">
+            <div className="text-center py-20">
+              <div className="w-24 h-24 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-6">
+                <Bookmark className="h-12 w-12 text-gray-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-2">No saved posts</h3>
+              <p className="text-gray-400">Posts you save will appear here</p>
             </div>
-          )}
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="saved">
-          <div className="text-center py-12">
-            <Bookmark className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-            <h3 className="text-lg font-semibold mb-2">No saved posts</h3>
-            <p className="text-muted-foreground">
-              Posts you save will appear here
-            </p>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="boosted">
-          {boostedLoading ? (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mx-auto mb-4" />
-              <p className="text-muted-foreground">Loading boosted posts...</p>
-            </div>
-          ) : boostedSpliks.length > 0 ? (
-            <div className="grid grid-cols-3 md:grid-cols-4 gap-1">
-              {boostedSpliks.map((splik) => (
-                <div
-                  key={splik.id}
-                  className="relative aspect-square bg-muted rounded-lg overflow-hidden group cursor-pointer"
-                >
-                  <img
-                    src={splik.thumbnail_url || `/api/placeholder/300/300`}
-                    alt="Boosted Post"
-                    className="w-full h-full object-cover transition-smooth group-hover:scale-105"
-                  />
-                  
-                  {/* Overlay */}
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-smooth flex items-center justify-center">
-                    <div className="flex items-center gap-4 text-white">
-                      <div className="flex items-center gap-1">
-                        <Heart className="w-5 h-5 fill-current" />
-                        <span className="font-medium">{Math.floor(Math.random() * 1000)}</span>
+          <TabsContent value="boosted" className="m-0">
+            {boostedLoading ? (
+              <div className="text-center py-20">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent mx-auto mb-4" />
+                <p className="text-gray-400">Loading boosted posts...</p>
+              </div>
+            ) : boostedSpliks.length > 0 ? (
+              <div className="grid grid-cols-3 gap-1">
+                {boostedSpliks.map((splik) => (
+                  <div
+                    key={splik.id}
+                    className="relative aspect-square bg-gray-800 cursor-pointer group"
+                    onClick={() => {
+                      if (splik.video_url) {
+                        console.log("Playing boosted video:", splik);
+                      }
+                    }}
+                  >
+                    <img
+                      src={splik.thumbnail_url || `/api/placeholder/300/300`}
+                      alt="Boosted Post"
+                      className="w-full h-full object-cover"
+                    />
+                    
+                    {/* Video indicator */}
+                    {splik.video_url && (
+                      <div className="absolute top-2 right-2">
+                        <div className="bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
+                          3s
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Users className="w-5 h-5" />
-                        <span className="font-medium">{Math.floor(Math.random() * 100)}</span>
+                    )}
+
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="flex items-center gap-6 text-white">
+                        <div className="flex items-center gap-1">
+                          <Heart className="w-5 h-5 fill-current" />
+                          <span className="font-medium">{Math.floor(Math.random() * 1000)}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <MessageSquare className="w-5 h-5" />
+                          <span className="font-medium">{Math.floor(Math.random() * 100)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {/* Video indicator */}
-                  {splik.video_url && (
-                    <div className="absolute top-2 right-2">
-                      <Badge className="bg-background/80 text-foreground text-xs">
-                        3s
-                      </Badge>
-                    </div>
-                  )}
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-20">
+                <div className="w-24 h-24 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-6">
+                  <Heart className="h-12 w-12 text-gray-400" />
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <Heart className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-semibold mb-2">No boosted posts</h3>
-              <p className="text-muted-foreground">
-                Posts you boost will appear here
-              </p>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+                <h3 className="text-xl font-semibold text-white mb-2">No boosted posts</h3>
+                <p className="text-gray-400">Posts you boost will appear here</p>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
 
       <FollowersList
         profileId={profile.id}
