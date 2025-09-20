@@ -2,14 +2,6 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 
 type ActivityKind = "photo" | "video" | "quote";
 
@@ -18,7 +10,7 @@ type Activity = {
   user_id: string | null;
   kind: ActivityKind;
   created_at: string;
-  media_url?: string | null; // mini preview for photos
+  media_url?: string | null;
 };
 
 type Profile = {
@@ -45,13 +37,15 @@ function timeAgo(ts: number) {
   const h = Math.floor(m / 60); if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24); return `${d}d`;
 }
+
 const bestName = (p?: Profile) =>
   (p?.username && p.username.trim()) ||
   (p?.display_name && p.display_name.trim()) ||
   (p?.id ? `user_${p.id.slice(0, 6)}` : "User");
+
 const profileSlug = (p?: Profile) =>
   (p?.username && p.username.trim()) || p?.id || "";
-/** NEW: treat image URLs as "photo" regardless of type coming from the view */
+
 const looksLikeImageUrl = (u?: string | null) =>
   !!u && /\.(jpe?g|png|gif|webp)$/i.test(u);
 
@@ -60,8 +54,6 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
   const [groups, setGroups] = React.useState<Group[]>([]);
   const [profiles, setProfiles] = React.useState<Record<string, Profile>>({});
-  const [open, setOpen] = React.useState(false);
-  const [active, setActive] = React.useState<Group | null>(null);
   const sigRef = React.useRef("");
 
   React.useEffect(() => {
@@ -115,7 +107,6 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
       if (error) throw error;
 
-      // FIX: coerce kind to "photo" when media_url is an image
       const rows: Activity[] = (data || []).map((r: any) => {
         const incoming: ActivityKind = (r.type as ActivityKind) || "photo";
         const kind: ActivityKind = looksLikeImageUrl(r.media_url) ? "photo" : incoming;
@@ -141,7 +132,6 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
 
     load().catch(() => {});
 
-    // Subscribe to changes (right_rail_feed if it's a table; plus underlying tables)
     const ch = supabase
       .channel("right-rail-activity")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "right_rail_feed" }, load)
@@ -171,143 +161,86 @@ export default function RightActivityRail({ limit = 60 }: { limit?: number }) {
     return parts.join(" · ") || "activity";
   };
 
-  const openModalFor = (g: Group) => {
-    setActive(g);
-    setOpen(true);
-  };
-
-  const closeModal = () => {
-    setOpen(false);
-    setTimeout(() => setActive(null), 150);
-  };
-
   return (
-    <>
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-neutral-200">Activity</h3>
-          <span className="text-xs text-neutral-500">{groups.length}</span>
-        </div>
-
-        <div className="mt-4 space-y-3">
-          {groups.length === 0 && (
-            <p className="text-sm text-neutral-400">
-              New videos, photos, and Daily Prayers from the last 24h will show up here.
-            </p>
-          )}
-
-          {groups.map((g) => {
-            const prof = g.user_id ? profiles[g.user_id] : undefined;
-            const name = bestName(prof);
-            const avatar = prof?.avatar_url || null;
-
-            return (
-              <button
-                key={`${g.user_id ?? "null"}_${g.latest_at}`}
-                className="w-full flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-white/5 transition text-left"
-                onClick={() => openModalFor(g)}
-                title={`${name} activity`}
-              >
-                <span
-                  className="h-10 w-10 rounded-full overflow-hidden bg-gradient-to-br from-fuchsia-500 to-indigo-500 ring-2 ring-neutral-800 shrink-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (g.user_id) navigate(`/creator/${profileSlug(prof) || g.user_id}`);
-                  }}
-                >
-                  {avatar ? (
-                    <img src={avatar} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="grid h-full w-full place-items-center text-white font-semibold">
-                      {name[0]?.toUpperCase() || "U"}
-                    </span>
-                  )}
-                </span>
-
-                <div className="min-w-0">
-                  <div className="text-sm text-neutral-100 truncate">
-                    <span
-                      className="font-semibold hover:underline cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (g.user_id) navigate(`/creator/${profileSlug(prof) || g.user_id}`);
-                      }}
-                      title={name}
-                    >
-                      {name}
-                    </span>{" "}
-                    <span className="text-neutral-300">had {summaryText(g)}</span>
-                  </div>
-
-                  <div className="text-[12px] text-neutral-500">
-                    {timeAgo(new Date(g.latest_at).getTime())}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+    <div className="bg-gray-900 text-white p-4 w-80 h-full overflow-y-auto">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-semibold text-white">Activity</h3>
+        <span className="text-sm text-gray-400">{groups.length}</span>
       </div>
 
-      <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : closeModal())}>
-        <DialogContent className="sm:max-w-md">
-          {active && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center justify-between">
-                  <span>
-                    Activity — {bestName(active.user_id ? profiles[active.user_id] : undefined)}
+      <div className="space-y-4">
+        {groups.length === 0 && (
+          <p className="text-sm text-gray-400">
+            New videos, photos, and Daily Prayers from the last 24h will show up here.
+          </p>
+        )}
+
+        {groups.map((g) => {
+          const prof = g.user_id ? profiles[g.user_id] : undefined;
+          const name = bestName(prof);
+          const avatar = prof?.avatar_url || null;
+          
+          // Get the most recent item with media for preview
+          const latestItemWithMedia = g.items
+            .filter(item => item.media_url)
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+
+          return (
+            <button
+              key={`${g.user_id ?? "null"}_${g.latest_at}`}
+              className="w-full flex items-center gap-3 p-3 hover:bg-gray-800 transition text-left rounded-lg"
+              onClick={() => {
+                if (g.user_id) {
+                  navigate(`/creator/${profileSlug(prof) || g.user_id}`);
+                }
+              }}
+            >
+              {/* User Avatar */}
+              <div className="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-purple-500 to-pink-500 shrink-0">
+                {avatar ? (
+                  <img src={avatar} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="grid h-full w-full place-items-center text-white font-semibold text-sm">
+                    {name[0]?.toUpperCase() || "U"}
                   </span>
-                  {active.user_id && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setOpen(false);
-                        const p = active.user_id ? profiles[active.user_id] : undefined;
-                        navigate(`/creator/${profileSlug(p) || active.user_id}`);
-                      }}
-                    >
-                      View profile
-                    </Button>
+                )}
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-white">
+                  <span className="font-semibold">{name}</span>{" "}
+                  <span className="text-gray-300">had {summaryText(g)}</span>
+                </div>
+                <div className="text-xs text-gray-500">
+                  {timeAgo(new Date(g.latest_at).getTime())}
+                </div>
+              </div>
+
+              {/* Media Preview */}
+              {latestItemWithMedia && latestItemWithMedia.media_url && (
+                <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-800 shrink-0">
+                  {latestItemWithMedia.kind === "video" ? (
+                    <video 
+                      src={latestItemWithMedia.media_url} 
+                      className="w-full h-full object-cover"
+                      muted
+                      preload="metadata"
+                    />
+                  ) : (
+                    <img 
+                      src={latestItemWithMedia.media_url} 
+                      alt="" 
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
                   )}
-                </DialogTitle>
-                <DialogDescription>Last {TIME_WINDOW_HOURS} hours — text + mini previews</DialogDescription>
-              </DialogHeader>
-
-              <div className="mt-2 space-y-2">
-                {active.items
-                  .slice()
-                  .sort((a, b) => b.created_at.localeCompare(a.created_at))
-                  .map((it) => {
-                    const when = timeAgo(new Date(it.created_at).getTime());
-                    const text =
-                      it.kind === "photo"
-                        ? "posted a photo"
-                        : it.kind === "video"
-                        ? "posted a video"
-                        : "posted in Daily Prayers";
-                    return (
-                      <div key={`${it.kind}_${it.id}`} className="flex items-center gap-3 text-sm">
-                        <span className="text-neutral-500 w-14 shrink-0">{when}</span>
-                        {it.kind === "photo" && it.media_url ? (
-                          <span className="h-10 w-10 shrink-0 rounded-md overflow-hidden border border-neutral-800">
-                            <img src={it.media_url} alt="" className="h-full w-full object-cover" loading="lazy" />
-                          </span>
-                        ) : null}
-                        <span className="text-neutral-200">{text}</span>
-                      </div>
-                    );
-                  })}
-              </div>
-
-              <div className="mt-4 flex justify-end">
-                <Button onClick={closeModal}>Close</Button>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
