@@ -208,28 +208,21 @@ export default function PrayersPage() {
 
   const normalizeName = (tags: Record<string, string> | undefined) => {
     if (!tags) return "Place of Worship";
-    
-    // Try various name fields in order of preference
-    const name = tags["name"] || 
-                 tags["name:en"] || 
-                 tags["official_name"] || 
-                 tags["brand"] || 
-                 tags["operator"] ||
-                 "Place of Worship";
-    
+    const name =
+      tags["name"] ||
+      tags["name:en"] ||
+      tags["official_name"] ||
+      tags["brand"] ||
+      tags["operator"] ||
+      "Place of Worship";
     return name;
   };
 
   const assembleAddressFromTags = (tags: Record<string, string> | undefined) => {
     if (!tags) return "";
-    
-    // Check for pre-formatted address first
     if (tags["addr:full"]) return tags["addr:full"];
-    
-    // Build address from components - be more flexible
+
     const parts = [];
-    
-    // House number + street
     const houseNum = tags["addr:housenumber"] || tags["addr:housename"];
     const street = tags["addr:street"] || tags["addr:road"];
     if (houseNum && street) {
@@ -237,34 +230,28 @@ export default function PrayersPage() {
     } else if (street) {
       parts.push(street);
     }
-    
-    // Neighborhood/suburb (optional)
+
     const neighborhood = tags["addr:neighbourhood"] || tags["addr:suburb"];
-    if (neighborhood && !parts.some(p => p.includes(neighborhood))) {
+    if (neighborhood && !parts.some((p) => p.includes(neighborhood))) {
       parts.push(neighborhood);
     }
-    
-    // City/town (important)
+
     const city = tags["addr:city"] || tags["addr:town"] || tags["addr:village"];
     if (city) {
       parts.push(city);
     }
-    
-    // State (important for US)
+
     const state = tags["addr:state"];
     if (state) {
       parts.push(state);
     }
-    
-    // ZIP code
+
     const zip = tags["addr:postcode"];
     if (zip) {
       parts.push(zip);
     }
-    
+
     const fullAddress = parts.join(", ");
-    
-    // Return address even if incomplete - don't require street AND city
     return fullAddress || "";
   };
 
@@ -275,65 +262,54 @@ export default function PrayersPage() {
       url.searchParams.set("lat", String(lat));
       url.searchParams.set("lon", String(lon));
       url.searchParams.set("addressdetails", "1");
-      url.searchParams.set("zoom", "18"); // Higher zoom for more detailed address
-      
+      url.searchParams.set("zoom", "18");
+
       const res = await fetch(url.toString(), {
-        headers: { 
-          "Accept-Language": "en", 
-          "User-Agent": "SplikzApp/1.0" 
+        headers: {
+          "Accept-Language": "en",
+          "User-Agent": "SplikzApp/1.0",
         },
       });
-      
+
       if (!res.ok) return null;
-      
+
       const j = (await res.json()) as any;
       const a = j.address || {};
-      
-      // Build a more comprehensive address
       const addressParts = [];
-      
-      // House number and street
+
       if (a.house_number && (a.road || a.street)) {
         addressParts.push(`${a.house_number} ${a.road || a.street}`);
       } else if (a.road || a.street) {
         addressParts.push(a.road || a.street);
       }
-      
-      // Neighborhood/suburb
+
       if (a.neighbourhood || a.suburb) {
         addressParts.push(a.neighbourhood || a.suburb);
       }
-      
-      // City/town
+
       const city = a.city || a.town || a.village || a.municipality;
       if (city) {
         addressParts.push(city);
       }
-      
-      // State
+
       if (a.state) {
         addressParts.push(a.state);
       }
-      
-      // ZIP code
+
       if (a.postcode) {
         addressParts.push(a.postcode);
       }
-      
+
       const fullAddr = addressParts.join(", ");
-      
-      // If we got a good address, use it; otherwise fall back to display_name
-      if (fullAddr.length > 10) { // Basic check for meaningful address
+      if (fullAddr.length > 10) {
         return fullAddr;
       }
-      
-      // Clean up display_name as fallback
+
       if (j.display_name) {
-        // Remove everything after the first comma that looks like coordinates
-        const displayName = j.display_name.split(',')[0];
+        const displayName = j.display_name.split(",")[0];
         return displayName.length > 5 ? displayName : j.display_name;
       }
-      
+
       return null;
     } catch (error) {
       console.error("Reverse geocoding error:", error);
@@ -345,28 +321,25 @@ export default function PrayersPage() {
   async function ensureAddressesForAll(list: NearbyChurch[]) {
     setEnriching(true);
     try {
-      const itemsNeedingAddresses = list.filter(item => 
-        !item.address || 
-        item.address === "Address not available" || 
-        item.address.startsWith("Near ") || // Our coordinate fallback
-        item.address.length < 10 // Very short addresses are probably incomplete
+      const itemsNeedingAddresses = list.filter(
+        (item) =>
+          !item.address ||
+          item.address === "Address not available" ||
+          (item.address ?? "").startsWith("Near ") ||
+          item.address.length < 10
       );
-      
+
       for (const item of itemsNeedingAddresses) {
         try {
           const addr = await reverseGeocodeAddress(item.lat, item.lon);
-          if (addr && addr.length > 5) { // Got a meaningful address
-            setNearby((prev) => 
-              prev.map((p) => 
-                p.id === item.id ? { ...p, address: addr } : p
-              )
+          if (addr && addr.length > 5) {
+            setNearby((prev) =>
+              prev.map((p) => (p.id === item.id ? { ...p, address: addr } : p))
             );
           }
-          // Rate limiting - be respectful to Nominatim
           await new Promise((r) => setTimeout(r, 500));
         } catch (error) {
           console.error(`Failed to geocode address for ${item.name}:`, error);
-          // Continue with other items even if one fails
         }
       }
     } finally {
@@ -622,11 +595,10 @@ export default function PrayersPage() {
           if (distanceKm > maxDistanceKm) return null;
 
           const addrFromTags = assembleAddressFromTags(el.tags);
-          
+
           // Always try to provide some address, even if partial
           let address = addrFromTags;
           if (!address || address.length < 5) {
-            // If we have minimal info from tags, at least show coordinates as fallback
             address = `Near ${rLat.toFixed(4)}, ${rLon.toFixed(4)}`;
           }
 
@@ -676,17 +648,12 @@ export default function PrayersPage() {
     [coords]
   );
 
-  // Helper function to build Google Maps URL with proper address
+  // Helper function to build Google Maps URL with proper address (hardened)
   const buildGoogleMapsUrl = (place: NearbyChurch) => {
-    // If we have a good address, use it; otherwise fall back to coordinates
-    if (place.address && place.address !== "Address not available" && !place.address.startsWith("Near ")) {
-      // Use the full address for the search
-      const addressQuery = `${place.name}, ${place.address}`;
-      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`;
-    } else {
-      // Fall back to coordinates if no good address
-      return `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`;
-    }
+    const addr = place.address ?? "";
+    const hasGoodAddress = addr && !addr.startsWith("Near ");
+    const q = hasGoodAddress ? `${place.name}, ${addr}` : `${place.lat},${place.lon}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
   };
 
   // === Auto-scroll to results anchor when results appear ===
@@ -694,10 +661,8 @@ export default function PrayersPage() {
     if (!finderOpen) return;
     if (fetchingNearby) return;
     if (nearby.length === 0 && !nearbyError) return;
-    // Smooth scroll so results aren't hidden on mobile
     const el = resultsAnchorRef.current;
     if (el) {
-      // use a short delay to ensure layout is painted
       setTimeout(() => {
         el.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 80);
