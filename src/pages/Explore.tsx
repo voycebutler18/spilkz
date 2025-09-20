@@ -19,9 +19,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import SplikCard from "@/components/splik/SplikCard";
 
-import { Loader2, RefreshCw, Sparkles, Camera, X, Plus } from "lucide-react";
+import { Loader2, RefreshCw, Sparkles, Camera, X } from "lucide-react";
 
-// HomePage-named rails (you added these files):
+// rails named like HomePage:
 import { MomentsBar } from "@/components/moments/MomentsBar";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 
@@ -527,25 +527,7 @@ const Explore = () => {
           </div>
         )}
 
-        {/* Mobile mini panel like HomePage */}
-        {isMobile && (
-          <div className="fixed right-2 top-20 w-20 h-96 bg-card/95 backdrop-blur-lg border border-border rounded-xl p-2 overflow-y-auto">
-            <div className="space-y-3">
-              <button
-                className="flex flex-col items-center gap-1 cursor-pointer hover:bg-muted/50 p-2 rounded-lg w-full"
-                onClick={() => setUploadOpen(true)}
-                title="Upload"
-              >
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-fuchsia-500 to-indigo-500 p-0.5">
-                  <div className="w-full h-full rounded-full bg-background flex items-center justify-center">
-                    <Plus className="w-6 h-6 text-primary" />
-                  </div>
-                </div>
-                <span className="text-xs text-center">Upload</span>
-              </button>
-            </div>
-          </div>
-        )}
+        {/* ❗ Mobile floating panel REMOVED as requested */}
       </div>
 
       {/* Upload dialog */}
@@ -556,33 +538,33 @@ const Explore = () => {
             <DialogDescription>Write a short description (required). Add a location if you want.</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="file">Choose image</Label>
-              <Input id="file" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="desc">Description</Label>
-              <Textarea
-                id="desc"
-                value={photoDescription}
-                onChange={(e) => setPhotoDescription(e.target.value.slice(0, 200))}
-                placeholder="Say something about this photo (max 200 chars)"
-              />
-              <div className="text-xs text-muted-foreground text-right">{photoDescription.length}/200</div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="loc">Location (optional)</Label>
-              <Input
-                id="loc"
-                value={photoLocation}
-                onChange={(e) => setPhotoLocation(e.target.value.slice(0, 80))}
-                placeholder="City, venue, etc."
-              />
-            </div>
+        <div className="grid gap-4 py-2">
+          <div className="grid gap-2">
+            <Label htmlFor="file">Choose image</Label>
+            <Input id="file" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
           </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="desc">Description</Label>
+            <Textarea
+              id="desc"
+              value={photoDescription}
+              onChange={(e) => setPhotoDescription(e.target.value.slice(0, 200))}
+              placeholder="Say something about this photo (max 200 chars)"
+            />
+            <div className="text-xs text-muted-foreground text-right">{photoDescription.length}/200</div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label htmlFor="loc">Location (optional)</Label>
+            <Input
+              id="loc"
+              value={photoLocation}
+              onChange={(e) => setPhotoLocation(e.target.value.slice(0, 80))}
+              placeholder="City, venue, etc."
+            />
+          </div>
+        </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setUploadOpen(false)} disabled={uploading}>
