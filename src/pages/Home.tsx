@@ -1,70 +1,86 @@
-import { useState, useEffect } from "react";
+// src/pages/Home.tsx (or Index.tsx if that's your home route)
+import { useEffect, useState } from "react";
+import Header from "@/components/layout/Header";
+import Footer from "@/components/layout/Footer";
 import SplikCard from "@/components/splik/SplikCard";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { supabase, type Splik } from "@/lib/supabase";
-import Header from "@/components/layout/Header";
-import Footer from "@/components/layout/Footer";
 
-const Home = () => {
+// Make sure this exports a configured supabase client and (optionally) Splik type
+import { supabase } from "@/integrations/supabase/client";
+
+type Profile = {
+  id: string;
+  username?: string | null;
+  display_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  avatar_url?: string | null;
+};
+
+type Splik = {
+  id: string;
+  user_id: string;
+  title?: string | null;
+  description?: string | null;
+  video_url: string | null;
+  thumbnail_url?: string | null;
+  created_at?: string | null;
+  mime_type?: string | null;
+  // joined
+  profile?: Profile | null;
+};
+
+export default function Home() {
   const [spliks, setSpliks] = useState<Splik[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
-    const fetchSpliks = async () => {
+    let mounted = true;
+
+    (async () => {
       try {
+        setLoading(true);
+
+        // If you only want *videos*, keep the OR below; otherwise remove .or(...)
         const { data, error } = await supabase
-          .from('spliks')
-          .select('*')
-          .order('created_at', { ascending: false });
+          .from("spliks")
+          .select(
+            `
+            *,
+            profile:profiles(*)
+          `
+          ) // assumes FK: spliks.user_id -> profiles.id
+          .or("video_url.not.is.null,mime_type.ilike.video/%")
+          .order("created_at", { ascending: false });
 
         if (error) throw error;
-        
-        // Fetch profiles for each splik
-        const spliksWithProfiles = await Promise.all(
-          (data || []).map(async (splik) => {
-            const { data: profileData } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', splik.user_id)
-              .maybeSingle();
-            
-            return {
-              ...splik,
-              profile: profileData || undefined
-            };
-          })
-        );
-        
-        setSpliks(spliksWithProfiles);
-      } catch (error) {
-        console.error('Error fetching spliks:', error);
+        if (!mounted) return;
+
+        // Ensure shape matches our Splik type
+        const rows = (data || []).map((r: any) => ({
+          ...r,
+          profile: r.profile ?? null,
+        })) as Splik[];
+
+        setSpliks(rows);
+      } catch (e) {
+        console.error("Error fetching spliks:", e);
         toast({
           title: "Error",
-          description: "Failed to load spliks. Please refresh the page.",
+          description: "Failed to load the feed. Please refresh.",
           variant: "destructive",
         });
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
+    })();
+
+    return () => {
+      mounted = false;
     };
-
-    fetchSpliks();
   }, [toast]);
-
-  // These are now handled within SplikCard
-  const handleSplik = (splikId: string) => {
-    // Handled in SplikCard
-  };
-
-  const handleReact = (splikId: string) => {
-    // Handled in SplikCard
-  };
-
-  const handleShare = (splikId: string) => {
-    // Handled in SplikCard
-  };
 
   if (loading) {
     return (
@@ -81,9 +97,9 @@ const Home = () => {
   return (
     <div className="min-h-screen bg-background">
       <Header />
-      
+
       <div className="min-h-[calc(100vh-8rem)]">
-        {/* Hero Section */}
+        {/* Hero */}
         <div className="bg-gradient-to-b from-primary/10 to-background py-12 px-4">
           <div className="container max-w-4xl mx-auto text-center">
             <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent mb-4">
@@ -95,31 +111,31 @@ const Home = () => {
           </div>
         </div>
 
-        {/* Feed */}
-        <div className="container max-w-2xl mx-auto py-8 px-4">
-          {spliks.length === 0 ? (
-            <div className="text-center py-16">
-              <p className="text-xl text-muted-foreground">No videos at the moment</p>
-            </div>
-          ) : (
-            <div className="space-y-8">
-              {spliks.map((splik) => (
-                <SplikCard
-                  key={splik.id}
-                  splik={splik}
-                  onSplik={() => handleSplik(splik.id)}
-                  onReact={() => handleReact(splik.id)}
-                  onShare={() => handleShare(splik.id)}
-                />
-              ))}
-            </div>
-          )}
+        {/* Centered feed column – videos hug the middle with a small gutter */}
+        <div className="container mx-auto py-8 px-4">
+          <div className="max-w-[680px] mx-auto">
+            {spliks.length === 0 ? (
+              <div className="text-center py-16">
+                <p className="text-xl text-muted-foreground">No videos at the moment</p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {spliks.map((splik) => (
+                  <SplikCard
+                    key={splik.id}
+                    splik={splik}
+                    onSplik={() => {}}
+                    onReact={() => {}}
+                    onShare={() => {}}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      
+
       <Footer />
     </div>
   );
-};
-
-export default Home;
+}
