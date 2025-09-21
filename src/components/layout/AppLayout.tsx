@@ -13,8 +13,7 @@ import MobileTabBar from "@/components/layout/MobileTabBar";
 import { useUploadModal } from "@/contexts/UploadModalContext";
 import { supabase } from "@/integrations/supabase/client";
 
-/* Activity rails */
-import RightActivityRail from "@/components/highlights/RightActivityRail";
+/* Mobile activity only (keep) */
 import MobileActivity from "@/components/highlights/MobileActivity";
 
 /* Keep the profile/actions menu on mobile */
@@ -42,15 +41,16 @@ const AppLayout: React.FC = () => {
     <div className="min-h-screen bg-background text-foreground">
       {/* ─────────────── DESKTOP / TABLET ─────────────── */}
       <div className="hidden md:block">
-        {/* Global top bar (includes NoteBox badge/link) */}
+        {/* Global top bar */}
         <Header />
 
-        {/* 3-column shell: Left rail (fixed), Main content, Right rail */}
-        <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[260px_1fr] lg:grid-cols-[260px_1fr_320px]">
+        {/* 2-column shell: Left rail (fixed) + Main content
+            NOTE: We removed the third (right) rail entirely. */}
+        <div className="mx-auto grid max-w-7xl grid-cols-1 md:grid-cols-[260px_1fr]">
           {/* Fixed left rail (desktop only) */}
           <LeftSidebar />
 
-          {/* Main content area */}
+          {/* Main content area (center your page content) */}
           <main
             id="main"
             className="min-h-[calc(100vh-56px)] px-3 sm:px-4 py-4"
@@ -58,14 +58,6 @@ const AppLayout: React.FC = () => {
           >
             <Outlet />
           </main>
-
-          {/* Right activity rail (videos + Daily Prayers, last 24h) */}
-          <aside className="hidden lg:block border-l border-border/60 p-3">
-            <RightActivityRail
-              includeKinds={["video_post", "prayer_post"]}
-              limit={60}
-            />
-          </aside>
         </div>
 
         {/* Global footer */}
@@ -74,7 +66,7 @@ const AppLayout: React.FC = () => {
 
       {/* ─────────────── MOBILE ─────────────── */}
       <div className="md:hidden">
-        {/* Top bar for mobile (no extra NoteBox here; Header handles it on desktop) */}
+        {/* Top bar for mobile */}
         <div className="sticky top-0 z-40 h-12 border-b bg-background/95 backdrop-blur px-3 flex items-center justify-between">
           <button
             aria-label="Open menu"
@@ -88,13 +80,13 @@ const AppLayout: React.FC = () => {
             Splikz
           </Link>
 
-          {/* Keep the standard profile/actions button on mobile */}
+          {/* Profile/actions on mobile */}
           <div className="flex items-center">
             <RightProfileMenu />
           </div>
         </div>
 
-        {/* Mobile activity bar (last 24h) */}
+        {/* Keep mobile activity strip (optional; remove if you want it gone too) */}
         <MobileActivity />
 
         {/* Content with bottom padding so tab bar doesn’t overlap */}
