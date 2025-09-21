@@ -59,6 +59,10 @@ export type VideoPlayerProps = {
   onDelete?: () => void;
 };
 
+const isMobile =
+  typeof navigator !== "undefined" &&
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videoUrl,
   trailerUrl,
@@ -97,6 +101,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
 
+  // mobile quick-start helpers
+  const [ready, setReady] = useState(false);
+  const [showSpinner, setShowSpinner] = useState(isMobile);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
@@ -130,20 +138,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, [inline, isPlaying]);
 
+  // Mobile quick-start: attempt muted inline autoplay for native <video>
+  useEffect(() => {
+    if (!inline || !isMobile || playbackId) return; // iframe handled separately
+    const v = videoRef.current;
+    if (!v) return;
+
+    // ensure inline behavior on iOS
+    // @ts-ignore
+    v.setAttribute("playsinline", "true");
+    // @ts-ignore
+    v.setAttribute("webkit-playsinline", "true");
+    v.muted = true;
+    setIsMuted(true);
+    v.preload = "metadata";
+
+    const tryStart = async () => {
+      try {
+        await v.play();
+        setShowControls(false);
+      } catch {
+        // If it fails, the big play button remains
+      }
+    };
+
+    if (!isNaN(v.duration) && isFinite(v.duration)) {
+      tryStart();
+    } else {
+      const onLoadedMeta = () => tryStart();
+      v.addEventListener("loadedmetadata", onLoadedMeta);
+      return () => v.removeEventListener("loadedmetadata", onLoadedMeta);
+    }
+  }, [inline, playbackId]);
+
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (isPlaying) {
       videoRef.current.pause();
+      setIsPlaying(false);
     } else {
       videoRef.current
         .play()
+        .then(() => setIsPlaying(true))
         .catch(() => {
           videoRef.current!.muted = true;
           setIsMuted(true);
-          videoRef.current!.play().catch(() => {});
+          videoRef.current!.play().then(() => setIsPlaying(true)).catch(() => {});
         });
     }
-    setIsPlaying(!isPlaying);
   };
 
   const toggleMute = () => {
@@ -208,6 +250,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
+  const handleVideoCanPlay = () => {
+    setReady(true);
+    setShowSpinner(false);
+  };
+
   const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const err = e.currentTarget.error;
     let msg = "Video playback failed";
@@ -229,6 +276,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
     setVideoError(msg);
     setIsPlaying(false);
+    setShowSpinner(false);
   };
 
   const handleVideoEnd = () => {
@@ -254,7 +302,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <iframe
             key={playbackId}
             title={`${title} player`}
-            src={`https://iframe.cloudflarestream.com/${playbackId}?controls=true&autoplay=false`}
+            src={`https://iframe.cloudflarestream.com/${playbackId}?controls=true&autoplay=true&muted=true&playsinline=true`}
             className="absolute inset-0 w-full h-full border-0"
             allow="autoplay; fullscreen; picture-in-picture"
             allowFullScreen
@@ -268,14 +316,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           <video
             ref={videoRef}
             className="w-full h-full object-contain bg-black"
-            autoPlay={inline ? false : true}
+            poster={displayThumbnail}
+            autoPlay={false}                 // feed controls scroll-autoplay; attribute off
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
             onTimeUpdate={handleVideoTimeUpdate}
             onLoadedMetadata={handleVideoLoadedMetadata}
+            onCanPlay={handleVideoCanPlay}
             onError={handleVideoError}
             onEnded={handleVideoEnd}
             playsInline
+            // @ts-ignore
+            webkit-playsinline="true"
             preload="metadata"
             controls={false}
             muted={isMuted}
@@ -295,6 +347,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             ) : null}
             <p className="text-white text-center p-4">Your browser does not support the video tag.</p>
           </video>
+
+          {/* Spinner (mobile) until first frame is ready */}
+          {showSpinner && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+            </div>
+          )}
 
           {/* Error overlay */}
           {videoError && (
