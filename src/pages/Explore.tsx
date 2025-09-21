@@ -21,7 +21,7 @@ import SplikCard from "@/components/splik/SplikCard";
 
 import { Loader2, RefreshCw, Sparkles, Camera, X } from "lucide-react";
 
-// Rails
+// HomePage-named rails:
 import { MomentsBar } from "@/components/moments/MomentsBar";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 
@@ -108,7 +108,7 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   MAIN PAGE
+   MAIN PAGE — HomePage layout, NO Header.tsx here
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const navigate = useNavigate();
@@ -127,7 +127,7 @@ const Explore = () => {
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
 
-  // let MomentsBar refresh immediately after uploads
+  // lets MomentsBar refresh immediately after uploads
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -351,6 +351,7 @@ const Explore = () => {
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${user.id}/${Date.now()}-${safeName}`;
 
+      // 1) upload to photos bucket
       const { error: upErr } = await supabase.storage
         .from(PHOTOS_BUCKET)
         .upload(path, file, { cacheControl: "3600", upsert: false });
@@ -360,6 +361,7 @@ const Explore = () => {
       const photo_url = pub?.publicUrl;
       if (!photo_url) throw new Error("Failed to resolve public URL");
 
+      // 2) insert into vibe_photos (rail)
       const payload: Record<string, any> = {
         user_id: user.id,
         photo_url,
@@ -370,6 +372,7 @@ const Explore = () => {
       const { error: insertErr } = await supabase.from("vibe_photos").insert(payload);
       if (insertErr) throw insertErr;
 
+      // 3) also insert as a photo post in 'spliks'
       const title = photoDescription.trim().slice(0, 80) || "Photo";
       const mime = file.type || "image/jpeg";
       const { error: splikErr } = await supabase.from("spliks").insert({
@@ -390,6 +393,7 @@ const Explore = () => {
       });
       if (splikErr) throw splikErr;
 
+      // Let MomentsBar refresh immediately
       setReloadToken((n) => n + 1);
 
       toast({ title: "Photo posted!", description: "Your photo is live." });
@@ -409,28 +413,22 @@ const Explore = () => {
     }
   };
 
-  const shareSplik = (s: Splik) => {
-    const url = `${window.location.origin}/video/${s.id}`;
-    if ((navigator as any).share) {
-      (navigator as any).share({ title: "Check out this Splik!", url }).catch(() => {});
-    } else {
-      navigator.clipboard
-        .writeText(url)
-        .then(() => toast({ title: "Link copied!", description: "Copied to clipboard" }))
-        .catch(() => {});
-    }
-  };
-
   /* ──────────────── RENDER ──────────────── */
-  const topPost = feedSpliks[0];
-  const restPosts = feedSpliks.slice(1);
-
   return (
     <div className="min-h-screen bg-background overflow-x-hidden">
       <div className="flex">
         {/* Main Content (center feed) */}
         <div className={`flex-1 ${!isMobile ? "mr-80" : ""}`}>
-          <div className="max-w-2xl mx-auto px-4 py-4">
+          {/* relative so we can float Photos into the right gutter */}
+          <div className="max-w-2xl mx-auto px-4 py-4 relative">
+            {/* Float Splikz Photos farther right toward the page edge (desktop only) */}
+            {!loading && (
+              <div className="hidden lg:block absolute right-[-380px] top-0 w-[300px]">
+                <MomentsBar title="Splikz Photos" currentUserId={user?.id} reloadToken={reloadToken} />
+              </div>
+            )}
+
+            {/* Top inside-feed bar */}
             <div className="flex items-center justify-between mb-4">
               <h1 className="text-xl font-bold">Home</h1>
               <Button
@@ -469,25 +467,7 @@ const Explore = () => {
               </div>
             )}
 
-            {/* ⬇️ NEW: first video + Splikz Photos side-by-side (stacks on mobile) */}
-            {!loading && topPost && (
-              <div className="grid gap-4 md:grid-cols-2 mb-6">
-                <div className="min-w-0">
-                  <SplikCard
-                    key={topPost.id}
-                    splik={topPost}
-                    onReact={() => {}}
-                    onShare={() => shareSplik(topPost)}
-                    onPromote={(id) => navigate(`/promote/${id}`)}
-                  />
-                </div>
-                <div className="min-w-0 md:sticky md:top-20 self-start">
-                  <MomentsBar title="Splikz Photos" currentUserId={user?.id} reloadToken={reloadToken} />
-                </div>
-              </div>
-            )}
-
-            {/* Feed below the top row */}
+            {/* Feed */}
             <div ref={feedRef} className="space-y-6 max-w-full overflow-x-hidden">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-12">
@@ -510,18 +490,28 @@ const Explore = () => {
                   </CardContent>
                 </Card>
               ) : (
-                restPosts.map((s) => (
+                feedSpliks.map((s) => (
                   <SplikCard
                     key={s.id}
                     splik={s}
                     onReact={() => {}}
-                    onShare={() => shareSplik(s)}
+                    onShare={() => {
+                      const url = `${window.location.origin}/video/${s.id}`;
+                      if ((navigator as any).share) {
+                        (navigator as any).share({ title: "Check out this Splik!", url }).catch(() => {});
+                      } else {
+                        navigator.clipboard
+                          .writeText(url)
+                          .then(() => toast({ title: "Link copied!", description: "Copied to clipboard" }))
+                          .catch(() => {});
+                      }
+                    }}
                     onPromote={(id) => navigate(`/promote/${id}`)}
                   />
                 ))
               )}
 
-              {!loading && feedSpliks.length > 0 && (
+              {!loading && (
                 <div className="text-center py-8">
                   <p className="text-muted-foreground">You're all caught up! 🎉</p>
                   <p className="text-sm text-muted-foreground mt-1">
@@ -533,10 +523,9 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* Right Sidebar — keep only Activity here */}
+        {/* Right Sidebar — keep Activity here */}
         {!isMobile && (
           <div className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto hide-scroll">
-            {/* ⛔️ MomentsBar moved to main — don't render here to avoid duplicates */}
             <ActivityFeed limit={60} />
           </div>
         )}
@@ -590,7 +579,7 @@ const Explore = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Hide scrollbars where .hide-scroll is used */}
+      {/* Utility to hide scrollbars wherever .hide-scroll is used */}
       <style>{`
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
         .hide-scroll::-webkit-scrollbar { display: none; }
