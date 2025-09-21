@@ -21,12 +21,12 @@ import SplikCard from "@/components/splik/SplikCard";
 
 import { Loader2, RefreshCw, Sparkles, Camera, X } from "lucide-react";
 
-// HomePage-named rails:
+// Rails
 import { MomentsBar } from "@/components/moments/MomentsBar";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Config & helpers (UNCHANGED)
+   Config & helpers
 ────────────────────────────────────────────────────────────────────────── */
 const PHOTOS_BUCKET = import.meta.env.VITE_PHOTOS_BUCKET || "vibe_photos";
 const isMobile =
@@ -78,7 +78,7 @@ const warmFirstVideoMeta = (url?: string | null) => {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Types (UNCHANGED)
+   Types
 ────────────────────────────────────────────────────────────────────────── */
 type Profile = {
   id: string;
@@ -108,7 +108,7 @@ type Splik = {
 };
 
 /* ──────────────────────────────────────────────────────────────────────────
-   MAIN PAGE — HomePage layout, NO Header.tsx here
+   MAIN PAGE
 ────────────────────────────────────────────────────────────────────────── */
 const Explore = () => {
   const navigate = useNavigate();
@@ -127,7 +127,7 @@ const Explore = () => {
   const [photoDescription, setPhotoDescription] = useState("");
   const [photoLocation, setPhotoLocation] = useState("");
 
-  // lets MomentsBar refresh immediately after uploads
+  // refresh photos rail immediately after uploads
   const [reloadToken, setReloadToken] = useState(0);
 
   const { toast } = useToast();
@@ -351,7 +351,7 @@ const Explore = () => {
       const safeName = file.name.replace(/[^\w.\-]+/g, "_");
       const path = `${user.id}/${Date.now()}-${safeName}`;
 
-      // 1) upload to photos bucket
+      // 1) upload
       const { error: upErr } = await supabase.storage
         .from(PHOTOS_BUCKET)
         .upload(path, file, { cacheControl: "3600", upsert: false });
@@ -361,18 +361,17 @@ const Explore = () => {
       const photo_url = pub?.publicUrl;
       if (!photo_url) throw new Error("Failed to resolve public URL");
 
-      // 2) insert into vibe_photos (rail)
+      // 2) insert rail
       const payload: Record<string, any> = {
         user_id: user.id,
         photo_url,
         description: photoDescription.trim(),
       };
       if (photoLocation.trim()) payload.location = photoLocation.trim();
-
       const { error: insertErr } = await supabase.from("vibe_photos").insert(payload);
       if (insertErr) throw insertErr;
 
-      // 3) also insert as a photo post in 'spliks'
+      // 3) mirror into spliks as a photo post (thumb only)
       const title = photoDescription.trim().slice(0, 80) || "Photo";
       const mime = file.type || "image/jpeg";
       const { error: splikErr } = await supabase.from("spliks").insert({
@@ -393,9 +392,7 @@ const Explore = () => {
       });
       if (splikErr) throw splikErr;
 
-      // Let MomentsBar refresh immediately
       setReloadToken((n) => n + 1);
-
       toast({ title: "Photo posted!", description: "Your photo is live." });
       setFile(null);
       setPhotoDescription("");
@@ -413,15 +410,18 @@ const Explore = () => {
     }
   };
 
-  /* ──────────────── RENDER — HomePage layout only ──────────────── */
+  /* ─────────────── RENDER ─────────────── */
   return (
     <div className="min-h-screen bg-background overflow-x-hidden">
       <div className="flex">
-        {/* Main Content (center feed) */}
+        {/* Center feed */}
         <div className={`flex-1 ${!isMobile ? "mr-80" : ""}`}>
-          {/* ↓↓↓ remove horizontal padding so videos can hug the column */}
-          <div className="max-w-2xl mx-auto px-0 py-4">
-            {/* Top inside-feed bar (refresh + guest CTA) */}
+          {/* The .splikz-feed class + the style block at bottom gives you:
+              - a tighter column (max 720px desktop)
+              - video hugging the column edges with a tiny right gutter
+          */}
+          <div className="splikz-feed mx-auto px-3 sm:px-4 lg:px-5 py-4">
+            {/* top row */}
             <div className="flex items-center justify-between mb-4">
               <h1 className="text-xl font-bold">Home</h1>
               <Button
@@ -461,10 +461,7 @@ const Explore = () => {
             )}
 
             {/* Feed */}
-            <div
-              ref={feedRef}
-              className="space-y-6 max-w-full overflow-x-hidden feed-fullbleed"
-            >
+            <div ref={feedRef} className="space-y-6 max-w-full overflow-x-hidden">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
@@ -487,24 +484,25 @@ const Explore = () => {
                 </Card>
               ) : (
                 feedSpliks.map((s) => (
-                  <div key={s.id} className="w-full">
-                    <SplikCard
-                      splik={s}
-                      onReact={() => {}}
-                      onShare={() => {
-                        const url = `${window.location.origin}/video/${s.id}`;
-                        if ((navigator as any).share) {
-                          (navigator as any).share({ title: "Check out this Splik!", url }).catch(() => {});
-                        } else {
-                          navigator.clipboard
-                            .writeText(url)
-                            .then(() => toast({ title: "Link copied!", description: "Copied to clipboard" }))
-                            .catch(() => {});
-                        }
-                      }}
-                      onPromote={(id) => navigate(`/promote/${id}`)}
-                    />
-                  </div>
+                  <SplikCard
+                    key={s.id}
+                    splik={s}
+                    onReact={() => {}}
+                    onShare={() => {
+                      const url = `${window.location.origin}/video/${s.id}`;
+                      if ((navigator as any).share) {
+                        (navigator as any).share({ title: "Check out this Splik!", url }).catch(() => {});
+                      } else {
+                        navigator.clipboard
+                          .writeText(url)
+                          .then(() =>
+                            toast({ title: "Link copied!", description: "Copied to clipboard" })
+                          )
+                          .catch(() => {});
+                      }
+                    }}
+                    onPromote={(id) => navigate(`/promote/${id}`)}
+                  />
                 ))
               )}
 
@@ -520,11 +518,14 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* Right Sidebar — Photos + Activity */}
+        {/* Right Sidebar (fixed) */}
         {!isMobile && (
           <div className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto hide-scroll">
             <MomentsBar title="Splikz Photos" currentUserId={user?.id} reloadToken={reloadToken} />
             <div className="mt-6">
+              {/* Text already says “View all uploads”; ActivityFeed handles the toggle/expand.
+                 If you want thumbnail previews in that expanded list, I can patch the ActivityFeed
+                 file next. */}
               <ActivityFeed limit={60} />
             </div>
           </div>
@@ -536,13 +537,20 @@ const Explore = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Upload a photo</DialogTitle>
-            <DialogDescription>Write a short description (required). Add a location if you want.</DialogDescription>
+            <DialogDescription>
+              Write a short description (required). Add a location if you want.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label htmlFor="file">Choose image</Label>
-              <Input id="file" type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              <Input
+                id="file"
+                type="file"
+                accept="image/*"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+              />
             </div>
 
             <div className="grid gap-2">
@@ -553,7 +561,9 @@ const Explore = () => {
                 onChange={(e) => setPhotoDescription(e.target.value.slice(0, 200))}
                 placeholder="Say something about this photo (max 200 chars)"
               />
-              <div className="text-xs text-muted-foreground text-right">{photoDescription.length}/200</div>
+              <div className="text-xs text-muted-foreground text-right">
+                {photoDescription.length}/200
+              </div>
             </div>
 
             <div className="grid gap-2">
@@ -572,23 +582,48 @@ const Explore = () => {
               Cancel
             </Button>
             <Button onClick={uploadPhoto} disabled={uploading}>
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Camera className="h-4 w-4 mr-2" />}
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Camera className="h-4 w-4 mr-2" />
+              )}
               Post Photo
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Utility to hide scrollbars wherever .hide-scroll is used + make videos full-width */}
+      {/* Utilities */}
       <style>{`
+        /* Hide scrollbars where we use .hide-scroll */
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
         .hide-scroll::-webkit-scrollbar { display: none; }
 
-        /* Make any video inside the feed span the full column width */
-        .feed-fullbleed video {
+        /* Tighter center column that keeps a tiny right gutter.
+           On wide screens it maxes at 720px so the video feels centered. */
+        .splikz-feed {
+          width: 100%;
+          max-width: 720px;                 /* <- column width on desktop */
+          margin-left: auto;
+          margin-right: auto;
+          padding-right: 8px;               /* small right gutter so it "hugs" */
+        }
+
+        /* Make sure any <video> inside cards fills that column width cleanly */
+        .splikz-feed video,
+        .splikz-feed .video-container {
           width: 100% !important;
+          max-width: 100% !important;
           height: auto;
           display: block;
+        }
+
+        /* If your SplikCard uses an aspect wrapper, keep it 9:16 by default */
+        .splikz-feed .aspect-9-16 {
+          aspect-ratio: 9 / 16;
+          width: 100%;
+          overflow: hidden;
+          border-radius: 12px;
         }
       `}</style>
     </div>
