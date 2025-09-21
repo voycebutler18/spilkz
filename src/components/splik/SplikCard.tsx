@@ -32,7 +32,7 @@ type Splik = {
   video_url: string | null;
   thumbnail_url?: string | null;
   created_at?: string;
-  hype_count?: number | null; // optional precomputed count (used as a placeholder only)
+  hype_count?: number | null;
   mime_type?: string | null;
   profile?: Profile | null;
 };
@@ -46,28 +46,25 @@ type Props = {
   onReact?: () => void;
   onShare?: () => void;
 
-  /** Optional pre-batched state from the parent */
   initialIsSaved?: boolean;
   initialHasHyped?: boolean;
   initialHypeCount?: number;
 };
 
 const VISIBILITY_THRESHOLD = 0.6;
+const isMobile =
+  typeof navigator !== "undefined" &&
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-/** Public-safe count fetcher. */
 async function fetchBoostCountPublic(splikId: string): Promise<number> {
   try {
     const { data, error } = await supabase.rpc("count_boosts_batch", { ids: [splikId] });
     if (!error && data && data.length) return Number(data[0].total) || 0;
-  } catch {
-    /* ignore and try fallback */
-  }
-
+  } catch {}
   const { count } = await supabase
     .from("boosts")
     .select("*", { head: true, count: "exact" })
     .eq("splik_id", splikId);
-
   return count ?? 0;
 }
 
@@ -92,7 +89,6 @@ export default function SplikCard({
   const [isFollowing, setIsFollowing] = React.useState(false);
   const [followLoading, setFollowLoading] = React.useState(false);
 
-  // Seed UI from parent/db row while we fetch the real count publicly below.
   const [hypeCount, setHypeCount] = React.useState<number>(
     initialHypeCount ?? splik.hype_count ?? 0
   );
@@ -103,20 +99,22 @@ export default function SplikCard({
     initialIsSaved ?? false
   );
 
-  // Keep in sync if parent updates placeholders
   React.useEffect(() => {
     setHypeCount(initialHypeCount ?? splik.hype_count ?? 0);
   }, [initialHypeCount, splik.hype_count]);
   React.useEffect(() => setHasHyped(initialHasHyped ?? false), [initialHasHyped]);
   React.useEffect(() => setIsSaved(initialIsSaved ?? false), [initialIsSaved]);
 
-  // Local profile fallback (fetch only if missing)
   const [loadedProfile, setLoadedProfile] = React.useState<Profile | null>(null);
 
   const hasVideo =
     Boolean(splik.video_url) || (splik.mime_type?.startsWith("video/") ?? false);
 
   const isCreator = user?.id === splik.user_id;
+
+  // quick-start / UX
+  const [canShowFrame, setCanShowFrame] = React.useState(false); // hide black until canplay
+  const [showSpinner, setShowSpinner] = React.useState(isMobile); // spinner for mobile until ready
 
   /* ---------- auth ---------- */
   React.useEffect(() => {
@@ -152,15 +150,13 @@ export default function SplikCard({
     };
   }, [splik.user_id, splik.profile?.username, splik.profile?.display_name]);
 
-  /* ---------- public, source-of-truth boost count (works logged out) ---------- */
+  /* ---------- public, source-of-truth boost count ---------- */
   React.useEffect(() => {
     let cancelled = false;
-
     const load = async () => {
       const total = await fetchBoostCountPublic(splik.id);
       if (!cancelled) setHypeCount(total);
     };
-
     load();
 
     const ch = supabase
@@ -182,12 +178,11 @@ export default function SplikCard({
     };
   }, [splik.id]);
 
-  /* ---------- per-user states (bookmark / has boosted / following) ---------- */
+  /* ---------- per-user states ---------- */
   React.useEffect(() => {
     let cancelled = false;
     const run = async () => {
       if (!user?.id) return;
-
       try {
         if (initialIsSaved === undefined) {
           const { count } = await supabase
@@ -217,24 +212,15 @@ export default function SplikCard({
             .maybeSingle();
           if (!cancelled) setIsFollowing(!!followRow);
         }
-      } catch {
-        /* ignore */
-      }
+      } catch {}
     };
     run();
     return () => {
       cancelled = true;
     };
-  }, [
-    user?.id,
-    splik.id,
-    initialIsSaved,
-    initialHasHyped,
-    splik.hype_count,
-    isCreator,
-  ]);
+  }, [user?.id, splik.id, initialIsSaved, initialHasHyped, splik.hype_count, isCreator]);
 
-  /* ---------- autoplay / visibility for video posts ---------- */
+  /* ---------- autoplay / visibility ---------- */
   React.useEffect(() => {
     if (!hasVideo) return;
     const el = cardRef.current;
@@ -245,17 +231,16 @@ export default function SplikCard({
     let visible = false;
     let trying = false;
 
+    // inline + muted for mobile auto-start
     vid.playsInline = true;
     // @ts-ignore
     vid.webkitPlaysInline = true;
-    vid.preload = "auto";
+    vid.preload = "metadata";
     vid.muted = true;
     setIsMuted(true);
 
     const pause = () => {
-      try {
-        vid.pause();
-      } catch {}
+      try { vid.pause(); } catch {}
       setIsPlaying(false);
     };
 
@@ -264,26 +249,29 @@ export default function SplikCard({
       if (trying && !force) return;
       trying = true;
       try {
+        // Nudge currentTime to force first frame decode on some Android builds
         if (vid.readyState < 2 && vid.currentTime === 0) {
-          try {
-            vid.currentTime = 0.01;
-          } catch {}
-          await new Promise((r) => setTimeout(r, 50));
+          try { vid.currentTime = 0.01; } catch {}
+          await new Promise((r) => setTimeout(r, 40));
         }
         await vid.play();
         setIsPlaying(true);
       } catch {
-        vid.controls = true;
+        // keep muted & rely on user tap
         setIsPlaying(false);
       } finally {
         trying = false;
       }
     };
 
-    const handleLoadedData = () => {
+    const onLoadedData = () => {
+      setCanShowFrame(true);
+      setTimeout(() => setShowSpinner(false), 50);
       if (visible) attemptPlay(true);
     };
-    const handleCanPlay = () => {
+    const onCanPlay = () => {
+      setCanShowFrame(true);
+      setShowSpinner(false);
       if (visible) attemptPlay();
     };
 
@@ -299,18 +287,19 @@ export default function SplikCard({
           pause();
         }
       },
-      { threshold: [0, 0.35, VISIBILITY_THRESHOLD, 1] }
+      // start slightly earlier so users don't see a flash
+      { threshold: [0, 0.35, VISIBILITY_THRESHOLD, 1], rootMargin: "100px 0px 100px 0px" }
     );
     io.observe(el);
 
-    vid.addEventListener("loadeddata", handleLoadedData);
-    vid.addEventListener("canplay", handleCanPlay);
+    vid.addEventListener("loadeddata", onLoadedData);
+    vid.addEventListener("canplay", onCanPlay);
 
     return () => {
       destroyed = true;
       io.disconnect();
-      vid.removeEventListener("loadeddata", handleLoadedData);
-      vid.removeEventListener("canplay", handleCanPlay);
+      vid.removeEventListener("loadeddata", onLoadedData);
+      vid.removeEventListener("canplay", onCanPlay);
       pause();
     };
   }, [index, onPrimaryVisible, shouldLoad, hasVideo]);
@@ -322,25 +311,20 @@ export default function SplikCard({
       setUser(data.user);
       return data.user;
     }
-    toast({
-      title: "Sign in required",
-      description: "Please log in to react or save.",
-    });
+    toast({ title: "Sign in required", description: "Please log in to react or save." });
     throw new Error("auth_required");
   };
 
-  /* ---------- actions (optimistic) ---------- */
+  /* ---------- actions ---------- */
   const toggleHype = async () => {
     try {
       const u = await ensureAuth();
-
       if (hasHyped) {
         const result = await supabase
           .from("boosts")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
-
         if (!result.error) {
           setHasHyped(false);
           setHypeCount((n) => Math.max(0, n - 1));
@@ -349,59 +333,39 @@ export default function SplikCard({
         const result = await supabase
           .from("boosts")
           .insert({ splik_id: splik.id, user_id: u.id });
-
-        if (result.error && String(result.error.message || "").toLowerCase().includes("duplicate")) {
-          setHasHyped(true);
-        } else if (!result.error) {
+        if (!result.error) {
           setHasHyped(true);
           setHypeCount((n) => n + 1);
         }
       }
-
       const total = await fetchBoostCountPublic(splik.id);
       setHypeCount(total);
-    } catch (error) {
-      if ((error as any)?.message !== "auth_required") {
-        console.error("Boost error:", error);
-      }
+    } catch (e) {
+      if ((e as any)?.message !== "auth_required") console.error(e);
     }
   };
 
   const toggleFollow = async () => {
     if (followLoading) return;
-
     try {
       const u = await ensureAuth();
       setFollowLoading(true);
-
       if (isFollowing) {
         const result = await supabase
           .from("followers")
           .delete()
           .eq("follower_id", u.id)
           .eq("following_id", splik.user_id);
-
-        if (!result.error) {
-          setIsFollowing(false);
-          toast({ title: "Unfollowed", description: `You unfollowed ${name}` });
-        } else {
-          throw result.error;
-        }
+        if (!result.error) setIsFollowing(false);
       } else {
         const result = await supabase
           .from("followers")
           .insert([{ follower_id: u.id, following_id: splik.user_id }]);
-
-        if (!result.error) {
-          setIsFollowing(true);
-          toast({ title: "Following", description: `You are now following ${name}` });
-        } else {
-          throw result.error;
-        }
+        if (!result.error) setIsFollowing(true);
       }
-    } catch (error) {
-      if ((error as any)?.message !== "auth_required") {
-        console.error("Follow error:", error);
+    } catch (e) {
+      if ((e as any)?.message !== "auth_required") {
+        console.error(e);
         toast({
           title: "Error",
           description: "Could not update follow status. Please try again.",
@@ -416,30 +380,21 @@ export default function SplikCard({
   const toggleSave = async () => {
     try {
       const u = await ensureAuth();
-
       if (isSaved) {
-        const result = await supabase
+        const r = await supabase
           .from("bookmarks")
           .delete()
           .eq("splik_id", splik.id)
           .eq("user_id", u.id);
-
-        if (!result.error) {
-          setIsSaved(false);
-        }
+        if (!r.error) setIsSaved(false);
       } else {
-        const result = await supabase
+        const r = await supabase
           .from("bookmarks")
           .insert([{ splik_id: splik.id, user_id: u.id }]);
-
-        if (!result.error) {
-          setIsSaved(true);
-        }
+        if (!r.error) setIsSaved(true);
       }
-    } catch (error) {
-      if ((error as any)?.message !== "auth_required") {
-        console.error("Bookmark error:", error);
-      }
+    } catch (e) {
+      if ((e as any)?.message !== "auth_required") console.error(e);
     }
   };
 
@@ -449,10 +404,10 @@ export default function SplikCard({
     if (!hasVideo) return;
     const v = videoRef.current;
     if (!v) return;
-    const next = !v.muted;
-    v.muted = next;
-    setIsMuted(next);
-    if (!next && !isPlaying) {
+    const nextMuted = !v.muted;
+    v.muted = nextMuted;
+    setIsMuted(nextMuted);
+    if (!nextMuted && !isPlaying) {
       v.play().catch(() => {
         v.muted = true;
         setIsMuted(true);
@@ -460,7 +415,6 @@ export default function SplikCard({
     }
   };
 
-  // Reliable creator name + link
   const profile = splik.profile || loadedProfile || null;
   const fullName = [profile?.first_name, profile?.last_name].filter(Boolean).join(" ").trim();
   const name = profile?.display_name || fullName || profile?.username || "User";
@@ -474,20 +428,33 @@ export default function SplikCard({
       ref={cardRef}
       className="relative w-full h-screen bg-black overflow-hidden md:h-auto md:rounded-xl md:bg-card/60 md:ring-1 md:ring-border/60"
     >
-      {/* Media - Full Screen on Mobile, Card on Desktop */}
+      {/* Media */}
       <div className="relative bg-black md:rounded-t-xl overflow-hidden">
         {hasVideo ? (
           <>
+            {/* Poster below shows until the first frame can render */}
+            {!canShowFrame && (
+              <img
+                src={splik.thumbnail_url || ""}
+                alt={splik.title || "Video thumbnail"}
+                className="absolute inset-0 w-full h-screen object-cover md:h-[560px] lg:h-[640px] select-none"
+                draggable={false}
+              />
+            )}
+
             <video
               ref={videoRef}
               poster={splik.thumbnail_url || undefined}
-              className="block w-full h-screen object-cover bg-black md:h-[560px] lg:h-[640px]"
+              className={cn(
+                "block w-full object-cover bg-black transition-opacity duration-150",
+                "h-screen md:h-[560px] lg:h-[640px]",
+                canShowFrame ? "opacity-100" : "opacity-0"
+              )}
               src={shouldLoad && splik.video_url ? splik.video_url : ""}
               playsInline
               muted
               loop
-              preload="auto"
-              controls={false}
+              preload="metadata"
               // @ts-ignore
               webkit-playsinline="true"
               onClick={(e) => {
@@ -499,21 +466,32 @@ export default function SplikCard({
                   v.pause();
                   setIsPlaying(false);
                 } else {
-                  v.play()
-                    .then(() => setIsPlaying(true))
-                    .catch(() => (v.controls = true));
+                  v.play().then(() => setIsPlaying(true)).catch(() => {});
                 }
               }}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
-              onVolumeChange={() =>
-                setIsMuted(videoRef.current?.muted ?? true)
-              }
+              onVolumeChange={() => setIsMuted(videoRef.current?.muted ?? true)}
+              onLoadedData={() => {
+                setCanShowFrame(true);
+                setTimeout(() => setShowSpinner(false), 40);
+              }}
+              onCanPlay={() => {
+                setCanShowFrame(true);
+                setShowSpinner(false);
+              }}
+              onError={() => setShowSpinner(false)}
             />
 
-            {/* Mobile Overlay UI - Right Side (TikTok Style) */}
+            {/* Spinner until first frame (mobile) */}
+            {showSpinner && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              </div>
+            )}
+
+            {/* Mobile Overlay UI */}
             <div className="absolute right-3 bottom-20 flex flex-col items-center space-y-4 z-10 md:hidden">
-              {/* Creator Avatar + Follow */}
               <div className="relative">
                 <Link to={creatorHref}>
                   <img
@@ -528,55 +506,41 @@ export default function SplikCard({
                     disabled={followLoading}
                     className={cn(
                       "absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-6 h-6 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold transition-all duration-200",
-                      isFollowing
-                        ? "bg-gray-600 text-white"
-                        : "bg-red-500 text-white hover:bg-red-600",
+                      isFollowing ? "bg-gray-600 text-white" : "bg-red-500 text-white hover:bg-red-600",
                       followLoading && "opacity-50 cursor-not-allowed"
                     )}
                   >
-                    {followLoading ? "..." : (isFollowing ? "✓" : "+")}
+                    {followLoading ? "..." : isFollowing ? "✓" : "+"}
                   </button>
                 )}
               </div>
 
-              {/* Boost */}
-              <button
-                onClick={toggleHype}
-                className="flex flex-col items-center space-y-1"
-              >
-                <div className={cn(
-                  "w-12 h-12 rounded-full flex items-center justify-center",
-                  hasHyped ? "bg-orange-500" : "bg-white/20 backdrop-blur-sm"
-                )}>
+              <button onClick={toggleHype} className="flex flex-col items-center space-y-1">
+                <div
+                  className={cn(
+                    "w-12 h-12 rounded-full flex items-center justify-center",
+                    hasHyped ? "bg-orange-500" : "bg-white/20 backdrop-blur-sm"
+                  )}
+                >
                   <TrendingUp className="w-6 h-6 text-white" />
                 </div>
                 <span className="text-white text-xs font-semibold">
-                  {hypeCount > 0 ? (hypeCount > 999 ? `${Math.floor(hypeCount/1000)}K` : hypeCount) : ""}
+                  {hypeCount > 0 ? (hypeCount > 999 ? `${Math.floor(hypeCount / 1000)}K` : hypeCount) : ""}
                 </span>
               </button>
 
-              {/* Bookmark */}
-              <button
-                onClick={toggleSave}
-                className="flex flex-col items-center space-y-1"
-              >
-                <div className={cn(
-                  "w-12 h-12 rounded-full flex items-center justify-center",
-                  isSaved ? "bg-yellow-500" : "bg-white/20 backdrop-blur-sm"
-                )}>
-                  {isSaved ? (
-                    <BookmarkCheck className="w-6 h-6 text-white" />
-                  ) : (
-                    <Bookmark className="w-6 h-6 text-white" />
+              <button onClick={toggleSave} className="flex flex-col items-center space-y-1">
+                <div
+                  className={cn(
+                    "w-12 h-12 rounded-full flex items-center justify-center",
+                    isSaved ? "bg-yellow-500" : "bg-white/20 backdrop-blur-sm"
                   )}
+                >
+                  {isSaved ? <BookmarkCheck className="w-6 h-6 text-white" /> : <Bookmark className="w-6 h-6 text-white" />}
                 </div>
               </button>
 
-              {/* Share */}
-              <button
-                onClick={onShare}
-                className="flex flex-col items-center space-y-1"
-              >
+              <button onClick={onShare} className="flex flex-col items-center space-y-1">
                 <div className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
                   <Share2 className="w-6 h-6 text-white" />
                 </div>
@@ -586,21 +550,12 @@ export default function SplikCard({
             {/* Mobile Bottom Content Info */}
             <div className="absolute bottom-6 left-4 right-20 z-10 md:hidden">
               <div className="space-y-2">
-                <Link
-                  to={creatorHref}
-                  className="text-white font-semibold text-sm"
-                >
+                <Link to={creatorHref} className="text-white font-semibold text-sm">
                   @{profile?.username || "user"}
                 </Link>
-                {splik.title && (
-                  <p className="text-white text-sm line-clamp-2">
-                    {splik.title}
-                  </p>
-                )}
+                {splik.title && <p className="text-white text-sm line-clamp-2">{splik.title}</p>}
                 {splik.description && (
-                  <p className="text-white/80 text-sm line-clamp-3">
-                    {splik.description}
-                  </p>
+                  <p className="text-white/80 text-sm line-clamp-3">{splik.description}</p>
                 )}
               </div>
             </div>
@@ -618,7 +573,7 @@ export default function SplikCard({
               )}
             </button>
 
-            {/* Play/Pause Indicator for Mobile */}
+            {/* Play hint (mobile) */}
             {!isPlaying && (
               <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none md:hidden">
                 <div className="w-16 h-16 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center">
@@ -628,7 +583,7 @@ export default function SplikCard({
             )}
           </>
         ) : (
-          /* Photo-only: make image fill the same frame as video */
+          /* Photo-only: same frame */
           <div className="relative w-full h-screen md:h-[560px] lg:h-[640px] bg-black overflow-hidden">
             <img
               src={splik.thumbnail_url || ""}
@@ -641,36 +596,24 @@ export default function SplikCard({
         )}
       </div>
 
-      {/* Desktop Layout - Creator info and actions below video */}
+      {/* Desktop info/actions */}
       <div className="hidden md:block">
-        {/* Creator info */}
         <div className="flex items-center gap-3 px-4 pt-3">
-          <Link
-            to={creatorHref}
-            className="shrink-0 hover:opacity-80 transition-opacity"
-          >
+          <Link to={creatorHref} className="shrink-0 hover:opacity-80 transition-opacity">
             <img
               src={avatarUrl}
               alt={name}
               className="h-9 w-9 rounded-full ring-2 ring-primary/20 object-cover"
             />
           </Link>
-          <div className="min-w-0 flex-1">
-            <Link
-              to={creatorHref}
-              className="block font-medium hover:text-primary transition-colors truncate"
-            >
+        <div className="min-w-0 flex-1">
+            <Link to={creatorHref} className="block font-medium hover:text-primary transition-colors truncate">
               {name}
             </Link>
-            {splik.title && (
-              <p className="text-sm text-muted-foreground truncate">
-                {splik.title}
-              </p>
-            )}
+            {splik.title && <p className="text-sm text-muted-foreground truncate">{splik.title}</p>}
           </div>
         </div>
 
-        {/* Desktop Actions */}
         <div className="px-4 pb-4 pt-3">
           <div className="flex items-center gap-2">
             {!isCreator && (
@@ -685,10 +628,7 @@ export default function SplikCard({
             <Button
               variant={hasHyped ? "default" : "outline"}
               size="sm"
-              className={cn(
-                "gap-2",
-                hasHyped && "bg-orange-500 hover:bg-orange-600 text-white"
-              )}
+              className={cn("gap-2", hasHyped && "bg-orange-500 hover:bg-orange-600 text-white")}
               onClick={toggleHype}
               aria-pressed={hasHyped}
               title="Boost this content"
@@ -697,14 +637,7 @@ export default function SplikCard({
               {hasHyped ? "Boosted" : "Boost"} ({hypeCount})
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={toggleSave}
-              aria-pressed={isSaved}
-              title="Bookmark this content"
-            >
+            <Button variant="outline" size="sm" className="gap-2" onClick={toggleSave} aria-pressed={isSaved} title="Bookmark this content">
               {isSaved ? (
                 <>
                   <BookmarkCheck className="h-4 w-4" />
@@ -718,39 +651,20 @@ export default function SplikCard({
               )}
             </Button>
 
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              title="Send a note to the creator"
-            >
-              <Link
-                to={`/notes?to=${splik.user_id}&msg=${encodeURIComponent(
-                  `About your video "${splik.title || ""}": `
-                )}`}
-              >
+            <Button asChild variant="outline" size="sm" className="gap-2" title="Send a note to the creator">
+              <Link to={`/notes?to=${splik.user_id}&msg=${encodeURIComponent(`About your video "${splik.title || ""}": `)}`}>
                 Send a note
               </Link>
             </Button>
 
             <div className="ml-auto">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={onShare}
-              >
+              <Button variant="outline" size="sm" className="gap-2" onClick={onShare}>
                 <Share2 className="h-4 w-4" /> Share
               </Button>
             </div>
           </div>
 
-          {splik.description && (
-            <p className="mt-3 text-sm text-muted-foreground">
-              {splik.description}
-            </p>
-          )}
+          {splik.description && <p className="mt-3 text-sm text-muted-foreground">{splik.description}</p>}
         </div>
       </div>
     </div>
