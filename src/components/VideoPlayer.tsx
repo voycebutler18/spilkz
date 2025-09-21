@@ -22,39 +22,30 @@ import {
 type VideoKind = "main" | "trailer";
 
 export type VideoPlayerProps = {
-  // Media sources
   videoUrl?: string;
   trailerUrl?: string;
   playbackId?: string;
 
-  // Visuals
   coverUrl?: string;
   streamThumbnailUrl?: string;
   title: string;
   description?: string;
 
-  // Metadata / UX
   genre?: string;
   contentType: string;
 
-  // Optional stream meta
   streamStatus?: string;
   streamId?: string;
 
-  // Ads / meta (kept for compat)
   monetizationEnabled?: boolean;
   durationSeconds?: number;
   adBreaks?: number[];
   vastTagUrl?: string;
   contentId?: string;
 
-  /** If true, render the player inline (no Dialog). */
   inline?: boolean;
-
-  /** Hide the overlay header (prevents duplicate title lines on pages that show their own title). */
   hideOverlayHeader?: boolean;
 
-  /** Show a delete button for the owner. */
   canDelete?: boolean;
   onDelete?: () => void;
 };
@@ -243,31 +234,50 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
+  const baseVideoClass = isFullscreen
+    ? "w-full h-full object-contain bg-black"
+    : "block w-full h-auto max-h-[78vh] object-contain bg-black mx-auto";
+
   const PlayerSurface = (
     <div
       ref={playerRef}
-      className={`relative w-full h-full bg-black ${isFullscreen ? "video-player-fullscreen" : ""}`}
+      className={`relative w-full ${isFullscreen ? "h-screen" : ""} bg-black`}
     >
       {/* Cloudflare Stream */}
       {hasStreamPlayback && currentVideo === "main" ? (
-        <div className="relative w-full h-full">
-          <iframe
-            key={playbackId}
-            title={`${title} player`}
-            src={`https://iframe.cloudflarestream.com/${playbackId}?controls=true&autoplay=false`}
-            className="absolute inset-0 w-full h-full border-0"
-            allow="autoplay; fullscreen; picture-in-picture"
-            allowFullScreen
-            style={{ backgroundColor: "black", pointerEvents: "auto", zIndex: 0 }}
-            loading="eager"
-          />
-        </div>
+        isFullscreen ? (
+          <div className="absolute inset-0">
+            <iframe
+              key={playbackId}
+              title={`${title} player`}
+              src={`https://iframe.cloudflarestream.com/${playbackId}?controls=true&autoplay=false`}
+              className="absolute inset-0 w-full h-full border-0"
+              allow="autoplay; fullscreen; picture-in-picture"
+              allowFullScreen
+              style={{ backgroundColor: "black", pointerEvents: "auto", zIndex: 0 }}
+              loading="eager"
+            />
+          </div>
+        ) : (
+          <div className="relative w-full aspect-video">
+            <iframe
+              key={playbackId}
+              title={`${title} player`}
+              src={`https://iframe.cloudflarestream.com/${playbackId}?controls=true&autoplay=false`}
+              className="absolute inset-0 w-full h-full border-0"
+              allow="autoplay; fullscreen; picture-in-picture"
+              allowFullScreen
+              style={{ backgroundColor: "black", pointerEvents: "auto", zIndex: 0 }}
+              loading="eager"
+            />
+          </div>
+        )
       ) : (
         // Direct <video>
-        <div className="relative w-full h-full">
+        <div className="relative w-full">
           <video
             ref={videoRef}
-            className="w-full h-full object-contain bg-black"
+            className={baseVideoClass}
             autoPlay={inline ? false : true}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
@@ -280,7 +290,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             controls={false}
             muted={isMuted}
             crossOrigin="anonymous"
-            style={{ width: "100%", height: "100%", backgroundColor: "black" }}
           >
             {currentVideo === "trailer" && trailerUrl ? (
               <>
@@ -314,7 +323,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }`}
             onMouseEnter={() => setShowControls(true)}
           >
-            {/* top bar (can be hidden) */}
             {!hideOverlayHeader && (
               <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center">
                 <h2 className="text-white text-lg font-semibold">
@@ -347,7 +355,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
             )}
 
-            {/* center play */}
             {!isPlaying && (
               <div className="absolute inset-0 flex items-center justify-center">
                 <Button
@@ -361,9 +368,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               </div>
             )}
 
-            {/* bottom controls */}
             <div className="absolute bottom-0 left-0 right-0 p-4 md:p-6 pb-16 md:pb-6 space-y-2">
-              {/* progress */}
               <div className="relative">
                 <div className="absolute top-1/2 -translate-y-1/2 w-full h-1 bg-white/20 rounded-full">
                   <div
@@ -393,7 +398,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     <SkipForward className="h-5 w-5" />
                   </Button>
 
-                  {/* volume */}
                   <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={toggleMute} className="text-white hover:bg-white/20">
                       {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
@@ -437,15 +441,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   );
 
   if (inline) {
+    // Inline: let the video size itself; keep it centered and capped in height.
     return (
       <Card className="cinema-card overflow-hidden">
-        <div className="relative aspect-video bg-black">{PlayerSurface}</div>
+        <div className="relative bg-black">{PlayerSurface}</div>
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-2">
             <Badge variant="secondary">{contentType}</Badge>
             {genre && <Badge variant="outline">{genre}</Badge>}
           </div>
-          {/* Title intentionally omitted here; pages can render their own */}
           {description && <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{description}</p>}
           {canDelete && (
             <div className="flex justify-end">
@@ -468,15 +472,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     <Card className="cinema-card overflow-hidden">
       <div className="relative">
         <div
-          className="aspect-video bg-secondary/20 rounded-t-lg relative overflow-hidden group cursor-pointer"
+          className="bg-secondary/20 rounded-t-lg relative overflow-hidden group cursor-pointer"
           onClick={open}
         >
           {displayThumbnail ? (
-            <img src={displayThumbnail} alt={`${title} cover`} className="w-full h-full object-cover" loading="lazy" />
+            <img src={displayThumbnail} alt={`${title} cover`} className="w-full h-auto object-cover" loading="lazy" />
           ) : canPlaySomething ? (
-            <div className="w-full h-full bg-black" />
+            <div className="w-full h-48 bg-black" />
           ) : (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex items-center justify-center h-48">
               <Play className="h-12 w-12 text-primary" />
             </div>
           )}
@@ -520,5 +524,4 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   );
 };
 
-// Export both ways so existing imports keep working
 export default VideoPlayer;
