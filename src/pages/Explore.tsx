@@ -1,3 +1,4 @@
+
 // src/pages/Explore.tsx
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -416,11 +417,12 @@ const Explore = () => {
   /* ──────────────── RENDER — HomePage layout only ──────────────── */
   return (
     <div className="min-h-screen bg-background overflow-x-hidden">
+      {/* NOTE: No Header.tsx rendered here */}
+
       <div className="flex">
         {/* Main Content (center feed) */}
         <div className={`flex-1 ${!isMobile ? "mr-80" : ""}`}>
-          {/* ↓↓↓ remove horizontal padding so videos can hug the column */}
-          <div className="max-w-2xl mx-auto px-0 py-4">
+          <div className="max-w-2xl mx-auto px-4 py-4">
             {/* Top inside-feed bar (refresh + guest CTA) */}
             <div className="flex items-center justify-between mb-4">
               <h1 className="text-xl font-bold">Home</h1>
@@ -461,10 +463,7 @@ const Explore = () => {
             )}
 
             {/* Feed */}
-            <div
-              ref={feedRef}
-              className="space-y-6 max-w-full overflow-x-hidden feed-fullbleed"
-            >
+            <div ref={feedRef} className="space-y-6 max-w-full overflow-x-hidden">
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-primary mb-2" />
@@ -487,24 +486,23 @@ const Explore = () => {
                 </Card>
               ) : (
                 feedSpliks.map((s) => (
-                  <div key={s.id} className="w-full">
-                    <SplikCard
-                      splik={s}
-                      onReact={() => {}}
-                      onShare={() => {
-                        const url = `${window.location.origin}/video/${s.id}`;
-                        if ((navigator as any).share) {
-                          (navigator as any).share({ title: "Check out this Splik!", url }).catch(() => {});
-                        } else {
-                          navigator.clipboard
-                            .writeText(url)
-                            .then(() => toast({ title: "Link copied!", description: "Copied to clipboard" }))
-                            .catch(() => {});
-                        }
-                      }}
-                      onPromote={(id) => navigate(`/promote/${id}`)}
-                    />
-                  </div>
+                  <SplikCard
+                    key={s.id}
+                    splik={s}
+                    onReact={() => {}}
+                    onShare={() => {
+                      const url = `${window.location.origin}/video/${s.id}`;
+                      if ((navigator as any).share) {
+                        (navigator as any).share({ title: "Check out this Splik!", url }).catch(() => {});
+                      } else {
+                        navigator.clipboard
+                          .writeText(url)
+                          .then(() => toast({ title: "Link copied!", description: "Copied to clipboard" }))
+                          .catch(() => {});
+                      }
+                    }}
+                    onPromote={(id) => navigate(`/promote/${id}`)}
+                  />
                 ))
               )}
 
@@ -520,7 +518,7 @@ const Explore = () => {
           </div>
         </div>
 
-        {/* Right Sidebar — Photos + Activity */}
+        {/* Right Sidebar — same idea as HomePage (fixed, scrollbars hidden) */}
         {!isMobile && (
           <div className="fixed right-0 top-0 h-full w-80 bg-background border-l border-border p-4 pt-20 overflow-y-auto hide-scroll">
             <MomentsBar title="Splikz Photos" currentUserId={user?.id} reloadToken={reloadToken} />
@@ -579,17 +577,10 @@ const Explore = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Utility to hide scrollbars wherever .hide-scroll is used + make videos full-width */}
+      {/* Utility to hide scrollbars wherever .hide-scroll is used */}
       <style>{`
         .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
         .hide-scroll::-webkit-scrollbar { display: none; }
-
-        /* Make any video inside the feed span the full column width */
-        .feed-fullbleed video {
-          width: 100% !important;
-          height: auto;
-          display: block;
-        }
       `}</style>
     </div>
   );
